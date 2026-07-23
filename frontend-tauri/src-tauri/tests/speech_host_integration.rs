@@ -93,6 +93,30 @@ fn fake_engine_exercises_framing_warmup_vad_and_glossary_without_logging_content
     assert_eq!(transcript["result"]["detectedLanguage"], "de");
     assert_eq!(transcript["result"]["backend"], "cpu");
 
+    write_frame(
+        &mut stdin,
+        json!({
+            "schema": "fluxora.speech.request.v1",
+            "id": "contextual-transcribe-1",
+            "method": "transcribe",
+            "operationId": "voice-operation-context-1",
+            "metadata": {
+                "durationMs": 250,
+                "language": "auto",
+                "contextHints": ["Custom Grass Preset"],
+                "fakeDetectedLanguage": "ru",
+                "fakeTranscript": "включи custom grass preset"
+            }
+        }),
+        &pcm,
+    );
+    let contextual = read_response(&mut stdout);
+    assert_eq!(contextual["ok"], true);
+    assert_eq!(
+        contextual["result"]["transcript"],
+        "включи Custom Grass Preset"
+    );
+
     let silence = vec![0_u8; 4_000 * 4];
     write_frame(
         &mut stdin,
@@ -216,6 +240,10 @@ fn prepare_real_engine(binary: &Path, expected_backend: &str) {
         let pcm = std::fs::read(&pcm_path).expect("read configured raw f32 PCM fixture");
         assert_eq!(pcm.len() % std::mem::size_of::<f32>(), 0);
         let duration_ms = (pcm.len() / std::mem::size_of::<f32>()) as u64 * 1_000 / 16_000;
+        let context_hints = std::env::var("FLUXORA_TEST_SPEECH_HINT")
+            .ok()
+            .into_iter()
+            .collect::<Vec<_>>();
         write_frame(
             &mut stdin,
             json!({
@@ -223,7 +251,11 @@ fn prepare_real_engine(binary: &Path, expected_backend: &str) {
                 "id": "fixture-real-1",
                 "method": "transcribe",
                 "operationId": "voice-real-fixture-1",
-                "metadata": { "durationMs": duration_ms, "language": "auto" }
+                "metadata": {
+                    "durationMs": duration_ms,
+                    "language": "auto",
+                    "contextHints": context_hints
+                }
             }),
             &pcm,
         );
@@ -245,7 +277,8 @@ fn prepare_real_engine(binary: &Path, expected_backend: &str) {
                 transcript
                     .to_lowercase()
                     .contains(&expected_text.to_lowercase()),
-                "configured fixture transcript did not preserve the expected text"
+                "configured fixture transcript did not preserve the expected text: {transcript}; adaptivePassUsed={}",
+                fixture["result"]["adaptivePassUsed"]
             );
         }
         let total_ms = fixture["result"]["totalTimeMs"]

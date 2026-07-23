@@ -1,6 +1,6 @@
 {
   "schema": "fluxora.speech.glossary.v2",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "properNames": [
     { "canonical": "Fluxora", "aliases": ["fluxora", "flux ora", "flux aura", "flexora", "flex ora", "flex aura", "fluxera", "flaxora", "флюксора", "флаксора", "флагсора"] },
     { "canonical": "FluxPack", "aliases": ["fluxpack", "flux pack", "флюкспак", "флакс пак"] },
@@ -37,6 +37,10 @@
     { "canonical": "ENB", "aliases": ["enb", "e n b", "eh enn beh", "енб"] },
     { "canonical": "ReShade", "aliases": ["reshade", "re shade", "решейд"] },
     { "canonical": "Community Shaders", "aliases": ["community shaders", "комьюнити шейдерс"] },
+    { "canonical": "No Grass In Objects", "aliases": ["no grass in objects", "no grass in object", "ноу грас ин обджектс", "ноу грас ин обджект", "ноуграс и ноубджект", "ноуграс и ноуобджект", "но грессы и нервы джекц"] },
+    { "canonical": "Grass Control", "aliases": ["grass control", "грас контрол", "грасконтрол"] },
+    { "canonical": "Use-grass-cache", "aliases": ["use-grass-cache", "use grass cache", "юз грас кэш", "юс грас кэш"] },
+    { "canonical": "Only Load From Grass Cache", "aliases": ["only load from grass cache", "онли лоуд фром грас кэш", "онли лоад фром грас кэш", "дилот фром грозкэш"] },
     { "canonical": "SkyUI", "aliases": ["skyui", "sky ui", "скай ю ай"] },
     { "canonical": "RaceMenu", "aliases": ["racemenu", "race menu", "рейс меню"] },
     { "canonical": "USSEP", "aliases": ["ussep", "u s s e p", "юссеп"] },

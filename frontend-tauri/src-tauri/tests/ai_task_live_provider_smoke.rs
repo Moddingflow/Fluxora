@@ -128,63 +128,59 @@ fn main() {
 
     let result =
         fluxora_tauri_lib::run_native_ai_integration_fixture(&game, &install_root, &archive_path)
-            .expect("live Gemini action-first and implicit-repair smoke");
-    assert_eq!(
-        result.pointer("/response/status").and_then(Value::as_str),
-        Some("done")
+            .expect("live Gemini evidence-first NGIO smoke");
+    let ngio_response = result
+        .pointer("/ngioEvidenceFirst/response")
+        .expect("live NGIO response");
+    let ngio_status = ngio_response
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        matches!(ngio_status, "done" | "needs-input"),
+        "live NGIO smoke must either verify a managed override or ask one evidence-based settings question: {ngio_response}"
     );
-    assert_eq!(
-        result
-            .pointer("/response/fileToolDiagnostics/taskKind")
-            .and_then(Value::as_str),
-        Some("action")
+    assert!(
+        ngio_response
+            .pointer("/fileToolDiagnostics/newEvidenceCount")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0),
+        "live NGIO smoke must inspect the temporary build before finishing"
     );
-    assert_eq!(
-        result
-            .pointer("/response/fileToolDiagnostics/verifiedMutations")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        result
-            .get("overrideExistsAfterRollback")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/response/status")
-            .and_then(Value::as_str),
-        Some("done")
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/response/execution/mode")
-            .and_then(Value::as_str),
-        Some("repair")
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/response/execution/origin")
-            .and_then(Value::as_str),
-        Some("implicit")
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/response/fileToolDiagnostics/allowedRisk")
-            .and_then(Value::as_str),
-        Some("reversible")
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/response/fileToolDiagnostics/verifiedMutations")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        result
-            .pointer("/implicitAudio/overrideExistsAfterRollback")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
+    let bridge_methods = result
+        .pointer("/ngioEvidenceFirst/bridgeMethods")
+        .and_then(Value::as_array)
+        .expect("live NGIO bridge trace");
+    assert!(bridge_methods.iter().any(|method| method == "buildFiles.search"));
+    assert!(bridge_methods.iter().any(|method| method == "buildFiles.readText"));
+    if ngio_status == "done" {
+        assert!(
+            ngio_response
+                .pointer("/fileToolDiagnostics/verifiedMutations")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count > 0),
+            "a completed live NGIO smoke requires native verification"
+        );
+        assert_eq!(
+            result
+                .pointer("/ngioEvidenceFirst/overrideExistsAfterRollback")
+                .and_then(Value::as_bool),
+            Some(false),
+            "the temporary live managed override must be rolled back"
+        );
+    } else {
+        let question = ngio_response
+            .pointer("/execution/pendingQuestion")
+            .and_then(Value::as_str)
+            .or_else(|| ngio_response.get("text").and_then(Value::as_str))
+            .expect("live NGIO settings question");
+        assert!(
+            question.contains("Use-grass-cache")
+                || question.contains("Only-load-from-cache")
+                || question.to_lowercase().contains("кэш"),
+            "the live question must be about the inspected settings: {question}"
+        );
+        assert!(!question.to_ascii_lowercase().contains("path"));
+        assert!(!question.to_lowercase().contains("путь"));
+    }
 }

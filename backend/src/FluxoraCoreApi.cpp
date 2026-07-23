@@ -3703,6 +3703,8 @@ namespace
         writer.field(L"modifiedAt", metadata.modifiedAt);
         writer.field(L"readOnly", metadata.readOnly);
         writer.field(L"hidden", metadata.hidden);
+        writer.field(L"managedOverrideEligible", metadata.managedOverrideEligible);
+        writer.field(L"directMutationEligible", metadata.directMutationEligible);
         writer.stringArray(L"conflictingOwners", metadata.conflictingOwners);
         writer.field(L"indexRevision", metadata.indexRevision);
         writer.field(L"version", metadata.version);
@@ -4064,7 +4066,8 @@ namespace
                     static_cast<std::size_t>(buildFilesOptionalInt(params, L"limit", 20)),
                     buildFilesOptionalString(params, L"cursor"),
                     {},
-                    buildFilesOptionalString(params, L"revision")
+                    buildFilesOptionalString(params, L"revision"),
+                    buildFilesOptionalString(params, L"operationId")
                 }));
         }
         if (method == L"discover")
@@ -4092,7 +4095,8 @@ namespace
                     static_cast<std::size_t>(buildFilesOptionalInt(params, L"limit", 20)),
                     buildFilesOptionalString(params, L"cursor"),
                     {},
-                    buildFilesOptionalString(params, L"revision")}));
+                    buildFilesOptionalString(params, L"revision"),
+                    buildFilesOptionalString(params, L"operationId")}));
         }
         if (method == L"stat")
         {

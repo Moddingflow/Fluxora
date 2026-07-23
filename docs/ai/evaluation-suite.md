@@ -108,17 +108,23 @@ Rust host tests verify:
 - provider errors retain their real stage and retryability.
 - Russian, English, and German unwanted-state descriptions using the same
   implicit-repair contract while informational requests remain read-only;
-- host-owned `request_input`, `needs-input`, same-goal continuation, and no C++
-  dispatch for the host-owned call;
+- evidence-first host-owned `request_input`: absent during `discover`, still
+  locked after web-only evidence, available after native read-only evidence,
+  safe `evidence-required` correction for a hallucinated early call, exact
+  bounded blocking after repeats, `needs-input`, same-goal continuation, and no
+  C++ dispatch for the host-owned call;
 - `high` thinking for goal declaration, repair and diagnostics, `medium` for ordinary chat
   and summary compression, `temperature: 1.0`, hidden thought text, and
   preserved thought signatures;
 - exact invalid-field feedback, two bounded correction retries, successful-only
   read-only caching, default `build` search scope, preserved explicit scopes,
-  and premature-final recovery;
+  initial-search revision stripping without a cursor, one read-only stale-index
+  restart, exact repeated `stale-revision`, and premature-final recovery;
 - `ANY` for goal declaration and unfinished repairs, `AUTO` for answers/reads and `NONE` for the
   final report;
-- `tool-completed` only for `ok=true`, with separate `tool-blocked`,
+- `tool-started/file-search` only for non-empty `state=tool-calls`, never
+  `final` or `fallback`; present-progress started copy plus actual-tool completed
+  copy, `tool-completed` only for `ok=true`, with separate `tool-blocked`,
   `recovery-started` and `verification-completed` events;
 - `action` never completes without a verified native effect.
 - a new native chat session is preopened before the first Gemini tool round;
@@ -150,8 +156,10 @@ Focused `BuildFileWorkspaceService` and bridge tests cover complete indexing,
 stable distinct pages, stale revisions, matches beyond the first traversal
 window, `unique`/`ambiguous`/`not-found`, cooperative cancellation, reparse and
 path containment, protected/binary files, UTF-16 and Windows-1251, external
-read/write races, read-only Game/Downloads/Overwrite scopes, the 16-file and
-2-MiB batch limits, one mutation per file, atomic failure, managed overrides,
+read/write races, read-only Game/Downloads scopes, structured and reversible
+Overwrite INI/JSON mutations, the 16-mutation and
+2-MiB batch limits, distinct same-file INI keys, duplicate-key rejection,
+atomic failure, managed overrides,
 reread verification, diff, and rollback. The rollback suite additionally covers
 exact undo; independent undo of the first of two runs; later line insertion;
 overlapping-line and multi-file transactional conflicts; unchanged and modified
@@ -161,6 +169,15 @@ content-addressed deduplication; and whole-run eviction under the 256 MiB chat
 and 1 GiB global policies. Bridge coverage asserts additive `mode`, `reason`,
 and `preservedNewerChanges`, `getRollbackStates` operation correlation, and
 protocol-v1 compatibility.
+
+Winner-resolution regressions place the same normalized virtual config in a
+source mod, `Fluxora AI Overrides`, and Overwrite. They require grouping before
+pagination, `totalMatches` based on unique virtual paths, Overwrite's single
+effective ref, both shadowed owners in `conflictingOwners`, and the same ref for
+filename and source-owner-path queries. A second virtual path with the same
+filename remains a separate paged result. Broker unit coverage requires the
+typed `effective-winner-ref-mismatch`, `mutation-ineligible`,
+`multiple-virtual-targets`, and `unproven-file-ref` blockers.
 
 The feature-gated native integration fixture runs the real
 `fluxora-ai-host` against a localhost mock of the managed Gemini transport. Its
@@ -183,11 +200,56 @@ The same fixture then sends the original natural English problem description,
 `The battle music in this build is painfully loud.`, and requires
 `mode=repair`, `origin=implicit`, `allowedRisk=reversible`, a generic INI
 managed override, source preservation, native reread, verified diff and Undo.
+Two files match the broad `AudioMixer.ini` search; after the intended file is
+read, the host must prove the same opaque ref through its own exact-path search.
+The fixture also sends an inapplicable JSON recipe probe in the staging round;
+that bounded validation failure must not prevent the verified INI commit.
 A two-parameter INI produces exactly one host-owned `needs-input`; `the first
 one` continues the same `goalId`, changes only the selected parameter, verifies,
 and rolls back. A binary config must finish with exact `binary` blocking and no
 manual-edit advice. Host security tests additionally inject instructions through
 local config and web research and prove that neither changes risk or scope.
+
+The evidence-first regression adds
+`No Grass In Objects - Grass Control/SKSE/Plugins/GrassControl.ini` only inside
+the temporary fixture. Mock Gemini first hallucinates a path question, receives
+the host-owned `evidence-required` result, then must cause real
+`buildFiles.search` and `buildFiles.readText` calls, inspect
+`Use-grass-cache` plus `Only-load-from-cache`, and ask one question about those
+settings with `newEvidenceCount>0`. Captured run events require real
+`tool-started`/`tool-completed` tool names and exclude synthetic final/fallback
+search starts. A second neutral `RendererTuning.ini` scenario repeats the same
+flow, proving the production policy contains no mod name, repro prompt, or
+prepared answer special case.
+
+A separate NGIO batch regression stages `Use-grass-cache` and
+`Only-load-from-cache` through two `local.ini.stage_set_key` calls against the
+same opaque file ref. Passing requires both stage results to succeed, one
+`buildFiles.apply` commit to return one file with two diffs and native reread
+verification, the source mod to remain unchanged, and rollback to remove the
+single managed override. Repeating the same case-insensitive section/key remains
+blocked as a duplicate.
+
+The NGIO mock deliberately supplies an unrelated build-context `revision`
+without a cursor on its first filename search. Passing requires the host to
+discard that untrusted pagination token, complete the real native search, and
+never surface `native-failed`. Unit coverage separately proves that a genuinely
+stale read-only continuation restarts from the first page once, while write
+operations cannot use that recovery.
+
+Core regression coverage also pre-creates the same NGIO virtual path in
+`Fluxora AI Overrides`, then searches through the original mod-specific path.
+Passing requires the filename search to return the effective managed winner,
+apply two distinct INI keys atomically, preserve the source file and restore the
+previous managed file on rollback.
+
+The production-shape NGIO regression creates the same virtual path in the
+source mod, `Fluxora AI Overrides`, and Overwrite, making Overwrite the
+effective winner exactly as in the observed build. Passing requires
+`directMutationEligible=true`, both shadowed owners in `conflictingOwners`, no
+managed/source-mod writes, two verified INI postconditions in one atomic file
+change, and exact restoration of all three previous byte sequences on rollback.
+Exact text patches and file creation in Overwrite remain rejected.
 
 ### Gateway
 
@@ -234,7 +296,9 @@ node node_modules/@playwright/test/cli.js test e2e/ai-chat.spec.ts
 cd C:\Fluxora\frontend-tauri\src-tauri
 cargo test --all-targets
 cargo test --features native-ai-integration-fixture --test ai_task_native_integration -- --nocapture
-# Explicit opt-in only; performs a real Gemini request and local reversible file mutation:
+# Explicit opt-in only; performs real Gemini requests on a temporary build. The
+# evidence-first case must either verify and roll back a managed override or
+# return needs-input after real search/read with a settings-specific question:
 $env:FLUXORA_AI_LIVE_PROVIDER_SMOKE = '1'
 cargo test --release --features native-ai-integration-fixture --test ai_task_live_provider_smoke -- --nocapture
 $env:FLUXORA_AI_LIVE_PROVIDER_SMOKE = $null

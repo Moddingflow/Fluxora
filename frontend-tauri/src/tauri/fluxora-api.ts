@@ -2616,7 +2616,10 @@ const createTauriInvoker = (): IpcInvoker => ({
               'x-fluxora-channel-count': String(metadata.channelCount),
               'x-fluxora-duration-ms': String(metadata.durationMs),
               'x-fluxora-completion-mode': metadata.completionMode,
-              'x-fluxora-language': metadata.language
+              'x-fluxora-language': metadata.language,
+              ...(metadata.contextHints?.length
+                ? { 'x-fluxora-context-hints': encodeURIComponent(JSON.stringify(metadata.contextHints)) }
+                : {})
             }
           }
         );

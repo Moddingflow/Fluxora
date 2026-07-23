@@ -111,13 +111,31 @@ try {
     $file = Join-Path $project 'mods\Example\settings.json'
     $emptyFile = Join-Path $project 'mods\Example\empty.txt'
     $communitySettings = Join-Path $project 'mods\Cabbage CS Preset\SKSE\Plugins\CommunityShaders\SettingsUser.json'
+    $grassControl = Join-Path $project 'mods\No Grass In Objects\SKSE\Plugins\GrassControl.ini'
+    $managedGrass = Join-Path $project 'mods\Fluxora AI Overrides\SKSE\Plugins\GrassControl.ini'
+    $overwriteGrass = Join-Path $project 'overwrite\SKSE\Plugins\GrassControl.ini'
     [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($file)) | Out-Null
     [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($communitySettings)) | Out-Null
+    [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($grassControl)) | Out-Null
+    [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($managedGrass)) | Out-Null
+    [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($overwriteGrass)) | Out-Null
     [System.IO.File]::WriteAllText($file, "{`"enabled`":false}`r`n", $utf8)
     [System.IO.File]::WriteAllText($emptyFile, '', $utf8)
     [System.IO.File]::WriteAllText(
         $communitySettings,
         "{`"Menu`":{`"ToggleKey`":35,`"ShaderBlockNextKey`":34}}`r`n",
+        $utf8)
+    [System.IO.File]::WriteAllText(
+        $grassControl,
+        "[Grass]`r`nUse-grass-cache=false`r`nOnly-load-from-cache=true`r`n",
+        $utf8)
+    [System.IO.File]::WriteAllText(
+        $managedGrass,
+        "[Grass]`r`nUse-grass-cache=false`r`nOnly-load-from-cache=true`r`nManaged-only=keep`r`n",
+        $utf8)
+    [System.IO.File]::WriteAllText(
+        $overwriteGrass,
+        "[Grass]`r`nUse-grass-cache=false`r`nOnly-load-from-cache=true`r`nOverwrite-only=keep`r`n",
         $utf8)
 
     $begin = Send-Request -Method 'buildFiles.beginChat' -Params @{
@@ -210,6 +228,100 @@ try {
         throw 'Managed JSON Pointer override did not roll back cleanly.'
     }
 
+    $grassSearch = Send-Request -Method 'buildFiles.search' -OperationId 'op_bridge_grass_broad_search' -Params @{
+        chatId = 'chat-bridge'
+        scope = 'build'
+        query = 'GrassControl.ini'
+        limit = 20
+    }
+    $grassSourceSearch = Send-Request -Method 'buildFiles.search' -OperationId 'op_bridge_grass_source_search' -Params @{
+        chatId = 'chat-bridge'
+        scope = 'build'
+        query = 'No Grass In Objects/SKSE/Plugins/GrassControl.ini'
+        limit = 20
+    }
+    if ($grassSearch.result.data.entries.Count -ne 1 -or
+        $grassSearch.result.data.totalMatches -ne 1 -or
+        $grassSourceSearch.result.data.entries.Count -ne 1 -or
+        $grassSourceSearch.result.data.entries[0].fileRef -ne $grassSearch.result.data.entries[0].fileRef) {
+        throw 'buildFiles.search did not normalize the broad and source-specific GrassControl.ini queries to one winner ref.'
+    }
+    if ($grassSearch.result.data.entries[0].ownerMod -ne 'Overwrite' -or
+        $grassSearch.result.data.entries[0].managedOverrideEligible -ne $false -or
+        $grassSearch.result.data.entries[0].directMutationEligible -ne $true -or
+        -not (@($grassSearch.result.data.entries[0].conflictingOwners) -contains 'No Grass In Objects') -or
+        -not (@($grassSearch.result.data.entries[0].conflictingOwners) -contains 'Fluxora AI Overrides')) {
+        throw 'buildFiles.search did not return the directly mutable effective Overwrite config.'
+    }
+    $grassRef = [string]$grassSearch.result.data.entries[0].fileRef
+    $useCache = Send-Request -Method 'buildFiles.queryIni' -Params @{
+        chatId = 'chat-bridge'
+        fileRef = $grassRef
+        section = 'Grass'
+        key = 'Use-grass-cache'
+    }
+    $onlyCache = Send-Request -Method 'buildFiles.queryIni' -Params @{
+        chatId = 'chat-bridge'
+        fileRef = $grassRef
+        section = 'Grass'
+        key = 'Only-load-from-cache'
+    }
+    $grassApply = Send-Request -Method 'buildFiles.apply' -OperationId 'op_bridge_ini_batch' -Params @{
+        chatId = 'chat-bridge'
+        runId = 'run-ini-batch'
+        mutations = @(
+            @{
+                kind = 'ini-set'
+                fileRef = $grassRef
+                revision = [string]$grassSearch.result.data.entries[0].indexRevision
+                baseSha256 = [string]$useCache.result.data.sha256
+                section = 'Grass'
+                key = 'Use-grass-cache'
+                expectedValue = 'false'
+                value = 'true'
+                format = 'ini'
+            },
+            @{
+                kind = 'ini-set'
+                fileRef = $grassRef
+                revision = [string]$grassSearch.result.data.entries[0].indexRevision
+                baseSha256 = [string]$onlyCache.result.data.sha256
+                section = 'Grass'
+                key = 'Only-load-from-cache'
+                expectedValue = 'true'
+                value = 'false'
+                format = 'ini'
+            }
+        )
+    }
+    if ($null -ne $grassApply.error -or
+        @($grassApply.result.data.files).Count -ne 1 -or
+        $grassApply.result.data.files[0].ownerMod -ne 'Overwrite' -or
+        $grassApply.result.data.files[0].verification -ne 'ini-keys-matched-after-reread' -or
+        @($grassApply.result.data.files[0].hunks).Count -ne 2 -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Use-grass-cache=false')) -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Only-load-from-cache=true')) -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Managed-only=keep')) -or
+        -not ([System.IO.File]::ReadAllText($overwriteGrass).Contains('Use-grass-cache=true')) -or
+        -not ([System.IO.File]::ReadAllText($overwriteGrass).Contains('Only-load-from-cache=false')) -or
+        -not ([System.IO.File]::ReadAllText($overwriteGrass).Contains('Overwrite-only=keep')) -or
+        -not ([System.IO.File]::ReadAllText($grassControl).Contains('Use-grass-cache=false'))) {
+        $actualGrassApply = $grassApply | ConvertTo-Json -Depth 20 -Compress
+        throw "buildFiles.apply did not atomically apply two distinct INI keys. Actual: $actualGrassApply"
+    }
+    $grassRollback = Send-Request -Method 'buildFiles.rollbackRun' -OperationId 'op_bridge_ini_batch_rollback' -Params @{
+        chatId = 'chat-bridge'
+        runId = 'run-ini-batch'
+    }
+    if ($grassRollback.result.data.state -ne 'rolled-back' -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Use-grass-cache=false')) -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Only-load-from-cache=true')) -or
+        -not ([System.IO.File]::ReadAllText($managedGrass).Contains('Managed-only=keep')) -or
+        -not ([System.IO.File]::ReadAllText($overwriteGrass).Contains('Use-grass-cache=false')) -or
+        -not ([System.IO.File]::ReadAllText($overwriteGrass).Contains('Only-load-from-cache=true'))) {
+        throw 'Direct Overwrite multi-key INI mutation did not roll back cleanly.'
+    }
+
     $search = Send-Request -Method 'buildFiles.search' -Params @{
         chatId = 'chat-bridge'
         scope = 'build'
@@ -222,6 +334,9 @@ try {
     $fileRef = [string]$search.result.data.entries[0].fileRef
     if ([string]::IsNullOrWhiteSpace($fileRef) -or $fileRef.Contains($project)) {
         throw 'buildFiles.search leaked a path or omitted fileRef.'
+    }
+    if ($search.result.data.entries[0].managedOverrideEligible -ne $true) {
+        throw 'buildFiles.search did not expose managed override eligibility for the mod-owned file.'
     }
 
     $read = Send-Request -Method 'buildFiles.readText' -Params @{

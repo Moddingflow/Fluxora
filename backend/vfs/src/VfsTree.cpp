@@ -24,6 +24,20 @@ namespace fluxora::vfs
             return value;
         }
 
+        std::wstring normalizeRootPath(std::wstring value)
+        {
+            std::replace(value.begin(), value.end(), L'/', L'\\');
+            const std::size_t minimumLength =
+                value.size() >= 3 && value[1] == L':' && value[2] == L'\\'
+                    ? 3
+                    : 0;
+            while (value.size() > minimumLength && value.back() == L'\\')
+            {
+                value.pop_back();
+            }
+            return value;
+        }
+
         std::wstring joinPath(const std::wstring& base, const std::wstring& leaf)
         {
             if (base.empty())
@@ -684,14 +698,14 @@ namespace fluxora::vfs
     void VfsTree::build(const VfsMountConfig& config)
     {
         std::scoped_lock lock(cacheMutex_);
-        target_ = stripTrailingSlashes(config.target);
-        overwrite_ = stripTrailingSlashes(config.overwrite);
-        whiteoutRoot_ = stripTrailingSlashes(config.whiteoutRoot);
+        target_ = normalizeRootPath(config.target);
+        overwrite_ = normalizeRootPath(config.overwrite);
+        whiteoutRoot_ = normalizeRootPath(config.whiteoutRoot);
         mods_.clear();
         mods_.reserve(config.mods.size());
         for (const std::wstring& mod : config.mods)
         {
-            const std::wstring root = stripTrailingSlashes(mod);
+            const std::wstring root = normalizeRootPath(mod);
             if (hasDirectoryAttributes(root))
             {
                 mods_.push_back(root);

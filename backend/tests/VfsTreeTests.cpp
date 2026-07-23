@@ -91,6 +91,39 @@ namespace fluxora::tests
         EXPECT_TRUE(containsChild(*textures, L"shared.dds"));
     }
 
+    TEST(VfsTreeTests, BuildCanonicalizesDescriptorRootSeparators)
+    {
+        TempDirectory temp;
+        const std::filesystem::path target = temp.path() / L"Game" / L"Nested Target";
+        const std::filesystem::path mod = temp.path() / L"mods" / L"Profile Source";
+        const std::filesystem::path overwrite = temp.path() / L"profile-overwrite";
+        const std::filesystem::path whiteouts = temp.path() / L"whiteouts";
+        writeTextFile(mod / L"settings.ini", "profile");
+
+        const auto withForwardSlashes = [](const std::filesystem::path& path)
+        {
+            std::wstring value = path.wstring();
+            std::replace(value.begin(), value.end(), L'\\', L'/');
+            return value + L"/";
+        };
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            withForwardSlashes(target),
+            withForwardSlashes(overwrite),
+            {withForwardSlashes(mod)},
+            {},
+            withForwardSlashes(whiteouts)
+        });
+
+        EXPECT_EQ(tree.target().find(L'/'), std::wstring::npos);
+        EXPECT_EQ(tree.overwrite().find(L'/'), std::wstring::npos);
+        EXPECT_EQ(tree.whiteoutRoot().find(L'/'), std::wstring::npos);
+        const vfs::VfsTree::PathInfo settings = tree.classify(L"settings.ini");
+        ASSERT_EQ(settings.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(settings.winner, mod / L"settings.ini");
+    }
+
     TEST(VfsTreeTests, BuildExcludesRootBuilderTopLevelFolderFromDataMount)
     {
         TempDirectory temp;

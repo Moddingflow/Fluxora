@@ -127,6 +127,7 @@ pub struct AiExecutionCoordinator {
     verified_effects: Vec<Value>,
     recovery_attempts: HashMap<String, u8>,
     new_evidence_count: usize,
+    native_read_only_evidence_count: usize,
     stagnant_result_count: u8,
     phase_transitions: Vec<String>,
     pending_question: Option<String>,
@@ -156,6 +157,7 @@ impl AiExecutionCoordinator {
             verified_effects: Vec::new(),
             recovery_attempts: HashMap::new(),
             new_evidence_count: 0,
+            native_read_only_evidence_count: 0,
             stagnant_result_count: 0,
             phase_transitions: Vec::new(),
             pending_question: None,
@@ -192,7 +194,6 @@ impl AiExecutionCoordinator {
         coordinator
     }
 
-    #[cfg(test)]
     pub const fn phase(&self) -> AiExecutionPhase {
         self.phase
     }
@@ -225,6 +226,17 @@ impl AiExecutionCoordinator {
 
     pub const fn new_evidence_count(&self) -> usize {
         self.new_evidence_count
+    }
+
+    #[cfg(test)]
+    pub const fn native_read_only_evidence_count(&self) -> usize {
+        self.native_read_only_evidence_count
+    }
+
+    pub fn can_request_input(&self) -> bool {
+        self.state == AiExecutionState::Running
+            && self.phase != AiExecutionPhase::Discover
+            && self.native_read_only_evidence_count > 0
     }
 
     pub const fn stagnant_result_count(&self) -> u8 {
@@ -362,6 +374,11 @@ impl AiExecutionCoordinator {
             } else {
                 self.new_evidence_count =
                     self.new_evidence_count.saturating_add(evidence_delta.len());
+                if contract.risk == ToolRisk::ReadOnly {
+                    self.native_read_only_evidence_count = self
+                        .native_read_only_evidence_count
+                        .saturating_add(evidence_delta.len());
+                }
                 self.stagnant_result_count = 0;
                 self.advance_phase(contract.operation, contract.verification, result);
             }
@@ -548,13 +565,22 @@ fn recovery_action(code: &str) -> RecoveryAction {
         }
         "stale-version" | "stale-revision" => RecoveryAction::Retry("reread-current-revision"),
         "native-timeout" => RecoveryAction::Retry("reread-native-state-and-retry"),
+        "effective-winner-ref-mismatch" | "unproven-file-ref" => {
+            RecoveryAction::Retry("repeat-exact-search-and-use-effective-winner")
+        }
         "invalid-scope" | "invalid-arguments" | "validation-failed" => {
             RecoveryAction::Retry("normalize-arguments-and-retry")
         }
-        "ambiguous" | "conflict" | "needs-input" | "dirty-editor" => RecoveryAction::Question,
-        "outside-scope" | "path-escape" | "protected" | "permission-denied" => {
-            RecoveryAction::Terminal
-        }
+        "ambiguous"
+        | "conflict"
+        | "needs-input"
+        | "dirty-editor"
+        | "multiple-virtual-targets" => RecoveryAction::Question,
+        "outside-scope"
+        | "path-escape"
+        | "protected"
+        | "permission-denied"
+        | "mutation-ineligible" => RecoveryAction::Terminal,
         _ => RecoveryAction::Terminal,
     }
 }
@@ -713,6 +739,47 @@ mod tests {
         assert_eq!(coordinator.domain(), AiExecutionDomain::Mods);
         assert_eq!(coordinator.phase(), AiExecutionPhase::Report);
         assert_eq!(coordinator.state(), AiExecutionState::Completed);
+    }
+
+    #[test]
+    fn request_input_unlocks_only_after_native_read_only_evidence() {
+        let mut coordinator = AiExecutionCoordinator::new(
+            "goal-evidence-first-question",
+            AiExecutionKind::Action,
+            AiExecutionDomain::Files,
+        );
+
+        assert!(!coordinator.can_request_input());
+        coordinator.observe_host_evidence(
+            "web-research",
+            &json!({ "result": { "ok": true, "data": { "summary": "Untrusted docs" } } }),
+        );
+        assert_eq!(coordinator.phase(), AiExecutionPhase::Inspect);
+        assert!(coordinator.new_evidence_count() > 0);
+        assert!(
+            !coordinator.can_request_input(),
+            "web evidence must not unlock a question about an uninspected build"
+        );
+
+        let searched = coordinator.observe_tool_result(
+            "local.files.search",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "matches": [{
+                            "fileRef": "opaque-config-ref",
+                            "relativePath": "SKSE/Plugins/Example.ini"
+                        }]
+                    }
+                }
+            }),
+            "operation-evidence-first-question",
+        );
+
+        assert_eq!(searched.status, AiToolOutcomeStatus::Ok);
+        assert!(coordinator.can_request_input());
+        assert!(coordinator.native_read_only_evidence_count() > 0);
     }
 
     #[test]
@@ -968,6 +1035,14 @@ mod tests {
             ("expired-reference", "reopen-native-session-and-rediscover"),
             ("stale-revision", "reread-current-revision"),
             ("invalid-scope", "normalize-arguments-and-retry"),
+            (
+                "effective-winner-ref-mismatch",
+                "repeat-exact-search-and-use-effective-winner",
+            ),
+            (
+                "unproven-file-ref",
+                "repeat-exact-search-and-use-effective-winner",
+            ),
         ] {
             let mut coordinator = AiExecutionCoordinator::new(
                 format!("goal-{code}"),
@@ -989,7 +1064,12 @@ mod tests {
             assert_eq!(coordinator.state(), AiExecutionState::Running);
         }
 
-        for code in ["outside-scope", "path-escape", "protected"] {
+        for code in [
+            "outside-scope",
+            "path-escape",
+            "protected",
+            "mutation-ineligible",
+        ] {
             let mut coordinator = AiExecutionCoordinator::new(
                 format!("goal-{code}"),
                 AiExecutionKind::Action,
@@ -1036,6 +1116,10 @@ mod tests {
             (
                 "ambiguous",
                 "Two matching profiles remain. Choose Default or Testing.",
+            ),
+            (
+                "multiple-virtual-targets",
+                "Two virtual config files match. Choose the intended file.",
             ),
         ] {
             let mut coordinator = AiExecutionCoordinator::new(

@@ -70,14 +70,30 @@ decoding, bounded per-segment token generation, temperature 0, no translation
 or timestamps, and 1..8 threads clamped to logical cores minus one. The renderer
 always sends `auto`; Whisper detects the primary language and the typed result
 contains `detectedLanguage` plus `backend`. The EN/RU/DE UI locale remains only
-for consent and errors. Silero's first-to-last speech window removes outer
-silence before inference. Short recordings use one strictly bounded decoder segment
-and a duration-sized encoder context instead of paying for Whisper's default
-30-second window. The versioned glossary is a deterministic whole-term
-postprocessor: official names and abbreviations normalize in every language,
-ordinary terms use language-specific EN/RU/DE canonicals, and other languages
-receive proper-name normalization only. It is not injected as a long decoder
-prompt that can bias short multilingual recordings.
+for consent and errors.
+
+Mixed-language recognition is local and context-adaptive. The renderer derives
+a bounded list of Latin-bearing terms from the selected build's mod names, the
+active draft, and the four most recent chat messages. The Rust shell validates
+and percent-decodes that list before handing it to the speech host. Whisper's
+first pass remains an unprompted automatic-language transcription. If that raw
+text is phonetically close to one of the bounded build/chat terms, the host may
+run one additional pass with at most four matching terms as a short initial
+prompt. The prompted text replaces the neutral result only when it contains
+more of those exact contextual terms, so Russian or German prose is not forced
+into English. After decoding, a high-confidence phonetic span may be restored
+to the exact matching technical term while the surrounding prose is left
+untouched. Explicit compatibility languages still use one pass. Neither pass
+enables translation.
+
+Silero's first-to-last speech window removes outer silence before inference.
+Short recordings use one strictly bounded decoder segment and a duration-sized
+encoder context instead of paying for Whisper's default 30-second window. The
+versioned glossary remains a deterministic whole-term postprocessor: official
+names, common technical options, and abbreviations normalize in every language;
+ordinary terms use language-specific EN/RU/DE canonicals; and other languages
+receive proper-name normalization only. Exact context terms also restore their
+original spelling and casing after decoding.
 
 On Windows, Rust resets any saved WebView2 microphone decision to `DEFAULT` at
 startup and handles `PermissionRequested` without storing a profile decision.
@@ -87,7 +103,9 @@ other WebView permission kinds are left untouched. Initialization and reset
 fail closed.
 
 Audio is capped at five minutes and is never written to disk, placed in logs,
-included in support data, or sent to Gemini. Stop adds the local transcript to
+included in support data, or sent to Gemini. Context terms stay in memory and
+are sent only to Fluxora's local speech process; they are never logged or sent
+to a provider. Stop adds the local transcript to
 the existing draft and completes the voice operation. Send passes the same
 voice `operationId` into the normal single Gemini run; only that text follows
 the existing online AI privacy contract. Closing/collapsing/changing the AI tab,
@@ -101,8 +119,8 @@ also cancel while transcription is active. Immediately after Stop the visible
 timer, waveform, and text are replaced by a fixed cancellable spinner; only a
 localized screen-reader status remains. Host reset waiting is bounded to five
 seconds. Speech logs include backend, threads, model-load/VAD/inference/total
-times and real-time factor, but never audio, transcript, detected language, or
-glossary content.
+times, real-time factor, and whether the bounded adaptive pass ran, but never
+audio, transcript, detected language, context terms, or glossary content.
 
 ## Authoritative Execution Coordinator
 
@@ -235,12 +253,21 @@ direct URL fetching. The model has no shell, PowerShell, command execution,
 arbitrary process launch, or arbitrary URL tool.
 
 `local.execution.request_input` is also host-owned and is never forwarded to
-C++. It accepts one bounded concrete question for a repair, moves execution to
-`needs-input`, and returns the active goal to the renderer. Each tab persists
-its own optional `activeGoal`; a short answer is revalidated as `continuation`
-and must reuse the same `goalId` and original risk ceiling. Verified completion,
-cancellation, and terminal blocking clear it. Diagnostics may log mode, risk,
-and continuation, but never prompts, config contents, or user questions.
+C++. It is phase-gated: the declaration is absent during `discover` and becomes
+available only after a successful native read-only result adds verifiable build
+evidence. Web research alone cannot unlock it. A hallucinated early call gets a
+matched `evidence-required` function response and the same tool loop continues;
+after the existing two-correction budget is exhausted, the run ends with exact
+`request-input-evidence-required` blocking rather than `needs-input`. Accepted
+calls may ask one bounded concrete question only about verified candidate files,
+parameters, or values; they must never ask for a path or manual editing. Native
+`ambiguous`, `conflict`, and `needs-input` outcomes remain authoritative and may
+immediately surface their concrete question without waiting for the model-owned
+call. Each tab persists its own optional `activeGoal`; a short answer is
+revalidated as `continuation` and must reuse the same `goalId` and original risk
+ceiling. Verified completion, cancellation, and terminal blocking clear it.
+Safe diagnostics record only accepted/rejected decision, phase, evidence count,
+and reason code, never prompts, config contents, paths, or user questions.
 
 Function-call model parts, including their call identifiers and thought
 signatures, remain in provider history before matching function responses are
@@ -251,9 +278,22 @@ for the final report after native verification or an exact blocker.
 For a build request with a file workspace, failure to begin the tool session is
 terminal for that run. Tauri does not issue a second chat-only `chat.respond`
 request. Chat-only dispatch remains available only when the request has no file
-workspace. The user-visible `file-search` started event is emitted only after
-Gemini accepts the function declarations and the host returns an accepted tool
-session or final answer.
+workspace. The user-visible `tool-started/file-search` event is emitted only for
+a real, non-empty `state=tool-calls` result whose first actual tool is a search
+tool. `final` and `fallback` never synthesize a search event. Started messages
+use present-progress wording and the event's real creation time; successful
+result events use completed-action wording and carry the actual internal tool
+name.
+
+Paged discovery and search revisions are native index revisions, not build or
+chat revisions. When Gemini starts `local.files.search` or `local.text.search`
+without a cursor, the host clears any model-supplied revision before cache-key
+generation and native dispatch. A real continuation preserves its paired
+revision and cursor. If a read-only `buildFiles.discover`, `buildFiles.search`,
+or `buildFiles.searchText` continuation still returns `stale-revision`, Tauri
+restarts that same query once from its first page with the same `operationId`.
+Mutations are never retried by this recovery. A second failure remains the exact
+`stale-revision` blocker instead of being collapsed to `native-failed`.
 
 Before the first provider tool round, the Rust shell idempotently opens the
 native build-file chat session. `session-inactive` recovery remains available
@@ -277,8 +317,8 @@ retries. Missing or blank `scope` on `local.files.search` and
 creation, and native dispatch; explicit `game` and `downloads` values remain
 unchanged. Exact duplicate read-only calls are served from a per-run cache only
 after the original call succeeds. Failed native results are never cached.
-Repeated native validation errors share the bounded correction/no-progress
-budget and terminate with a deterministic blocker. Every successful tool
+Repeated native validation errors and premature model-owned input requests use
+bounded correction and terminate with deterministic blockers. Every successful tool
 result is reduced to a stable semantic fingerprint after volatile ids and
 timestamps are removed. New search pages, bounded read ranges, JSON/INI values,
 recipe inspection, native state changes, staging and verification therefore
@@ -339,12 +379,29 @@ operations are:
 - rollback of a verified committed change.
 
 Only roots registered for the selected build may be searched: build/mods,
-profile layers, game data, and bounded Downloads scope. Game, Downloads, and
-Overwrite are read-only; every mod patch or create is materialized only in the
-managed `Fluxora AI Overrides` layer. The core does not scan
+profile layers, game data, and bounded Downloads scope. Game and Downloads are
+read-only; every source-mod patch or create is materialized only in the managed
+`Fluxora AI Overrides` layer. An effective Overwrite config may be changed in
+place only through structured INI or JSON operations, with the same atomic
+checkpoint, reread verification and rollback contract. The core does not scan
 the machine. It refuses traversal outside a root, reparse/symlink escapes,
 protected Fluxora state, credentials, binary or unsupported formats, source or
 executable content, and oversized reads.
+
+File metadata includes core-owned `managedOverrideEligible` and
+`directMutationEligible` flags. The AI host records opaque file and parent refs
+for a unique mod-owned managed target; a directly mutable Overwrite result grants
+only its file ref. Build search groups all physical owners by normalized virtual
+path before pagination, resolves the current profile/Overwrite winner, returns
+only that winner's opaque ref, and lists the other owners in
+`conflictingOwners`. A filename query and a query containing the shadowed source
+owner path therefore resolve to the same effective `fileRef`. Several returned
+entries mean several distinct virtual paths, not several physical copies of one
+file. When several distinct targets remain, reading one candidate triggers a
+host-owned exact search using the native `relativePath`; staging is unlocked
+only when that search returns the same single eligible `fileRef`.
+`buildFiles.apply` repeats the unique-winner, revision, hash, expected-value,
+format and destination-policy checks before materializing a change.
 
 Search indexes the complete allowed scope and returns real pages with
 `totalMatches`, `nextCursor`, `complete`, `indexedCount`, and `revision`.
@@ -353,13 +410,26 @@ Content search checks all eligible bounded text files, reports progress, and
 cooperatively observes cancellation.
 
 Candidate resolution is core-owned and returns `unique`, `ambiguous`, or
-`not-found`. A write requires a unique effective VFS winner, current revision,
+`not-found`. Physical conflicts at one virtual path are resolved before those
+candidate states and before pagination. A write requires a unique effective VFS winner, current revision,
 a valid opaque `fileRef`, a matching prior-read hash, the expected old value,
 and a supported semantic mutation. Model confidence or arguments cannot bypass
 these checks.
 
-Staging is side-effect free. One commit accepts at most 16 distinct files, one
-mutation per file, and 2 MiB of changed text. C++ preflights the entire batch,
+For every build-scoped result, `buildFiles.search` resolves the matched source
+path to the current effective VFS winner before issuing the opaque `fileRef`.
+This includes existing `Fluxora AI Overrides` and Overwrite files, so a
+mod-specific search cannot mislabel a shadowed source file as writable. If
+Overwrite is the effective winner, the result is marked only for direct
+structured-config mutation. The broker authorizes only the core-returned winner
+ref. It reports `effective-winner-ref-mismatch`, `mutation-ineligible`,
+`multiple-virtual-targets`, or `unproven-file-ref` instead of collapsing these
+states into `validation-failed`; none permits a manual-edit fallback.
+
+Staging is side-effect free. One commit accepts at most 16 mutations across at
+most 16 distinct files and 2 MiB of changed text. A file normally has one
+mutation target; one INI file may contain multiple staged mutations only when
+their case-insensitive section/key targets are distinct. C++ preflights the entire batch,
 creates checkpoints, applies it atomically, rolls the batch back on any write or
 verification failure, rereads every target, and returns core-generated diffs
 plus rollback state. Exact text patch/create and supported INI/JSON semantic
@@ -418,7 +488,8 @@ non-empty `verifiedEffects`; only a file action additionally requires a native
 AI UI, host, bridge, core, operation, and crash logs remain separate. Logs may
 include operation/chat ids, provider/model, selected thinking level, tool name,
 round, phase, whether the result contributed a new fact, bounded evidence and
-stagnation counts, revision, result counts, and terminal reason. They must not include
+stagnation counts, request-input accepted/rejected decision and reason code,
+revision, result counts, and terminal reason. They must not include
 prompt text, file contents, diff bodies, credentials, provider keys, absolute
 paths, or provider response bodies. Failed provider HTTP bodies are not read
 into desktop error payloads.

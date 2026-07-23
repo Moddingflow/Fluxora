@@ -2703,6 +2703,8 @@ impl AiHostProcess {
             };
             if envelope.get("method").and_then(Value::as_str) == Some("ai.intermediateEvent") {
                 if let Some(event) = sanitize_ai_intermediate_event(&envelope, &operation_id) {
+                    #[cfg(feature = "native-ai-integration-fixture")]
+                    record_native_ai_fixture_event(&event);
                     let event_operation_id = event
                         .get("operationId")
                         .and_then(Value::as_str)
@@ -3659,11 +3661,16 @@ fn known_ai_file_tool_error_code(error: &str) -> Option<&'static str> {
         "binary",
         "unsupported-encoding",
         "too-large",
+        "stale-revision",
         "stale-version",
         "dirty-editor",
         "locked",
         "permission-denied",
         "validation-failed",
+        "effective-winner-ref-mismatch",
+        "multiple-virtual-targets",
+        "mutation-ineligible",
+        "unproven-file-ref",
         "rollback-conflict",
         "needs-input",
     ] {
@@ -3722,12 +3729,36 @@ fn ai_file_tool_failure_message(reason: &str) -> String {
             "The native Fluxora operation failed without a recognized recovery code. Check the correlated operation log."
                 .to_string()
         }
+        "stale-revision" => {
+            "Fluxora could not stabilize the build file index after one safe restart. Retry after current build file changes finish."
+                .to_string()
+        }
         "tool-session-invalid-response" => {
             "Fluxora could not continue the file-tool session safely (tool-session-invalid-response)."
                 .to_string()
         }
         "no-new-evidence" => {
             "Fluxora stopped the tool loop after three semantically repeated successful results produced no new evidence."
+                .to_string()
+        }
+        "request-input-evidence-required" => {
+            "Fluxora blocked the file action because the model repeatedly tried to ask for input before inspecting the selected build. No native read-only evidence was available."
+                .to_string()
+        }
+        "effective-winner-ref-mismatch" => {
+            "Fluxora rejected a stale or physical file reference. Repeat the exact search and use the effective-winner reference returned by the core."
+                .to_string()
+        }
+        "multiple-virtual-targets" => {
+            "Fluxora found more than one virtual file target. Choose the intended virtual file; no write was attempted."
+                .to_string()
+        }
+        "mutation-ineligible" => {
+            "Fluxora proved the effective target but it is not eligible for this structured mutation. No write was attempted."
+                .to_string()
+        }
+        "unproven-file-ref" => {
+            "Fluxora rejected an unproven file reference. Search the exact virtual target before staging."
                 .to_string()
         }
         _ => format!("Fluxora blocked the file operation safely ({reason})."),
@@ -3739,7 +3770,9 @@ fn ai_tool_terminal_error_classification(reason: &str) -> (&'static str, &'stati
         "outside-scope" | "path-escape" | "protected" | "permission-denied" => {
             ("safety", "native-guard")
         }
-        "no-new-evidence" | "no-progress-repetition" => ("tool-loop", "tool-loop"),
+        "no-new-evidence"
+        | "no-progress-repetition"
+        | "request-input-evidence-required" => ("tool-loop", "tool-loop"),
         _ => ("tool-loop", "verification"),
     }
 }
@@ -3878,12 +3911,79 @@ fn redact_ai_file_tool_value(value: Value) -> (Value, bool, u64) {
     }
 }
 
+#[cfg(feature = "native-ai-integration-fixture")]
+static NATIVE_AI_FIXTURE_BRIDGE_TRACE: OnceLock<std::sync::Mutex<Vec<Value>>> = OnceLock::new();
+#[cfg(feature = "native-ai-integration-fixture")]
+static NATIVE_AI_FIXTURE_EVENT_TRACE: OnceLock<std::sync::Mutex<Vec<Value>>> = OnceLock::new();
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn native_ai_fixture_bridge_trace() -> &'static std::sync::Mutex<Vec<Value>> {
+    NATIVE_AI_FIXTURE_BRIDGE_TRACE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn native_ai_fixture_event_trace() -> &'static std::sync::Mutex<Vec<Value>> {
+    NATIVE_AI_FIXTURE_EVENT_TRACE.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn reset_native_ai_fixture_traces() {
+    native_ai_fixture_bridge_trace()
+        .lock()
+        .expect("reset native AI fixture bridge trace")
+        .clear();
+    native_ai_fixture_event_trace()
+        .lock()
+        .expect("reset native AI fixture event trace")
+        .clear();
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn record_native_ai_fixture_bridge_call(operation_id: &str, method: &str) {
+    native_ai_fixture_bridge_trace()
+        .lock()
+        .expect("record native AI fixture bridge call")
+        .push(json!({ "operationId": operation_id, "method": method }));
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn record_native_ai_fixture_event(event: &Value) {
+    native_ai_fixture_event_trace()
+        .lock()
+        .expect("record native AI fixture event")
+        .push(event.clone());
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn native_ai_fixture_bridge_methods(operation_id: &str) -> Vec<Value> {
+    native_ai_fixture_bridge_trace()
+        .lock()
+        .expect("read native AI fixture bridge trace")
+        .iter()
+        .filter(|entry| entry.get("operationId").and_then(Value::as_str) == Some(operation_id))
+        .filter_map(|entry| entry.get("method").cloned())
+        .collect()
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn native_ai_fixture_events(operation_id: &str) -> Vec<Value> {
+    native_ai_fixture_event_trace()
+        .lock()
+        .expect("read native AI fixture event trace")
+        .iter()
+        .filter(|event| event.get("operationId").and_then(Value::as_str) == Some(operation_id))
+        .cloned()
+        .collect()
+}
+
 async fn request_ai_build_files(
     app: &AppHandle,
     method: &str,
     params: Value,
     operation_id: &str,
 ) -> Result<Value, String> {
+    #[cfg(feature = "native-ai-integration-fixture")]
+    record_native_ai_fixture_bridge_call(operation_id, method);
     let state = bridge_state(app);
     let mut bridge = state.process.lock().await;
     let timeout_ms = ai_build_files_timeout_ms(method);
@@ -3914,6 +4014,28 @@ fn should_reopen_ai_file_session(error: &str) -> bool {
         || error.contains("Bridge request timed out")
 }
 
+fn stale_ai_index_retry_params(
+    method: &str,
+    params: &Value,
+    error: &str,
+    read_only: bool,
+) -> Option<Value> {
+    if !read_only
+        || !matches!(
+            method,
+            "buildFiles.discover" | "buildFiles.search" | "buildFiles.searchText"
+        )
+        || ai_core_file_tool_error_code(error) != "stale-revision"
+    {
+        return None;
+    }
+
+    let mut retry = params.clone();
+    retry["revision"] = json!("");
+    retry["cursor"] = json!("");
+    Some(retry)
+}
+
 async fn request_ai_build_files_with_recovery(
     app: &AppHandle,
     request: &Value,
@@ -3921,38 +4043,47 @@ async fn request_ai_build_files_with_recovery(
     params: Value,
     operation_id: &str,
     read_only: bool,
-) -> Result<(Value, bool), String> {
+) -> Result<(Value, Option<&'static str>), String> {
     match request_ai_build_files(app, method, params.clone(), operation_id).await {
-        Ok(data) => Ok((data, false)),
-        Err(error) if read_only && should_reopen_ai_file_session(&error) => {
-            let workspace = request.get("fileWorkspace").unwrap_or(&Value::Null);
-            let chat_id = params
-                .get("chatId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let project_directory = workspace
-                .get("projectDirectory")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if chat_id.is_empty() || project_directory.is_empty() {
-                return Err(error);
+        Ok(data) => Ok((data, None)),
+        Err(error) => {
+            if let Some(retry_params) =
+                stale_ai_index_retry_params(method, &params, &error, read_only)
+            {
+                return request_ai_build_files(app, method, retry_params, operation_id)
+                    .await
+                    .map(|data| (data, Some("restart-stale-index-search")));
             }
-            request_ai_build_files(
-                app,
-                "buildFiles.beginChat",
-                json!({
-                    "chatId": chat_id,
-                    "projectDirectory": project_directory,
-                    "profile": workspace.get("profile").and_then(Value::as_str).unwrap_or_default()
-                }),
-                operation_id,
-            )
-            .await?;
-            request_ai_build_files(app, method, params, operation_id)
-                .await
-                .map(|data| (data, true))
+            if read_only && should_reopen_ai_file_session(&error) {
+                let workspace = request.get("fileWorkspace").unwrap_or(&Value::Null);
+                let chat_id = params
+                    .get("chatId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let project_directory = workspace
+                    .get("projectDirectory")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if chat_id.is_empty() || project_directory.is_empty() {
+                    return Err(error);
+                }
+                request_ai_build_files(
+                    app,
+                    "buildFiles.beginChat",
+                    json!({
+                        "chatId": chat_id,
+                        "projectDirectory": project_directory,
+                        "profile": workspace.get("profile").and_then(Value::as_str).unwrap_or_default()
+                    }),
+                    operation_id,
+                )
+                .await?;
+                return request_ai_build_files(app, method, params, operation_id)
+                    .await
+                    .map(|data| (data, Some("reopen-native-session-and-retry")));
+            }
+            Err(error)
         }
-        Err(error) => Err(error),
     }
 }
 
@@ -4003,6 +4134,17 @@ fn normalize_ai_file_tool_args(name: &str, args: &Value) -> Value {
     if scope_is_empty {
         normalized.insert("scope".to_string(), json!("build"));
     }
+    let cursor_is_empty = normalized
+        .get("cursor")
+        .and_then(Value::as_str)
+        .is_none_or(|cursor| cursor.trim().is_empty());
+    let has_revision = normalized
+        .get("revision")
+        .and_then(Value::as_str)
+        .is_some_and(|revision| !revision.trim().is_empty());
+    if cursor_is_empty && has_revision {
+        normalized.insert("revision".to_string(), json!(""));
+    }
     Value::Object(normalized)
 }
 
@@ -4025,6 +4167,17 @@ fn ai_staged_mutation_target(mutation: &Value) -> String {
             ai_tool_string(mutation, "parentRef"),
             ai_tool_string(mutation, "fileName").to_lowercase()
         )
+    } else if mutation
+        .get("kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.starts_with("ini-"))
+    {
+        format!(
+            "ini:{}:{}:{}",
+            ai_tool_string(mutation, "fileRef"),
+            ai_tool_string(mutation, "section").trim().to_lowercase(),
+            ai_tool_string(mutation, "key").trim().to_lowercase()
+        )
     } else {
         format!("patch:{}", ai_tool_string(mutation, "fileRef"))
     }
@@ -4038,6 +4191,45 @@ fn ai_local_tool_error(call: &Value, code: &str, message: &str) -> Value {
     })
 }
 
+#[derive(Default)]
+struct AiFileMutationBlockers {
+    effective_winner_ref_mismatches: HashSet<String>,
+    ineligible_refs: HashSet<String>,
+    multiple_virtual_target_refs: HashSet<String>,
+}
+
+fn ai_file_mutation_authorization_blocker(
+    file_ref: &str,
+    authorized_refs: &HashSet<String>,
+    blockers: &AiFileMutationBlockers,
+) -> Option<(&'static str, &'static str)> {
+    if authorized_refs.contains(file_ref) {
+        return None;
+    }
+    if blockers.multiple_virtual_target_refs.contains(file_ref) {
+        return Some((
+            "multiple-virtual-targets",
+            "The search resolved more than one virtual file. Choose one exact virtual target and search it again before staging.",
+        ));
+    }
+    if blockers.effective_winner_ref_mismatches.contains(file_ref) {
+        return Some((
+            "effective-winner-ref-mismatch",
+            "This opaque reference is not the effective winner returned by the core. Repeat the exact search and use its current winner reference.",
+        ));
+    }
+    if blockers.ineligible_refs.contains(file_ref) {
+        return Some((
+            "mutation-ineligible",
+            "The effective build target lacks managedOverrideEligible/directMutationEligible for this structured operation. No write was attempted.",
+        ));
+    }
+    Some((
+        "unproven-file-ref",
+        "This opaque reference was not proven by one current effective-winner search. Search the exact virtual target before staging.",
+    ))
+}
+
 async fn execute_ai_file_tool_call(
     app: &AppHandle,
     request: &Value,
@@ -4047,7 +4239,8 @@ async fn execute_ai_file_tool_call(
     operation_id: &str,
     write_granted: bool,
     staged_mutations: &[Value],
-    writable_file_refs: &HashSet<String>,
+    managed_override_refs: &HashSet<String>,
+    authorization_blockers: &AiFileMutationBlockers,
 ) -> (Value, bool, u64, bool, Option<Value>) {
     let call_id = ai_tool_string(call, "callId");
     let name = ai_tool_string(call, "name");
@@ -4104,24 +4297,53 @@ async fn execute_ai_file_tool_call(
             None,
         );
     }
-    if is_staging && name != "local.text.stage_create" && !writable_file_refs.contains(file_ref) {
-        return (
-            json!({
-                "callId": call_id,
-                "name": name,
-                "result": {
-                    "ok": false,
-                    "error": {
-                        "code": "validation-failed",
-                        "message": "This fileRef is not a proven unique effective VFS winner. Refine discovery with local.files.search using the exact relative path, then stage the single returned fileRef."
+    let staging_target_ref = if name == "local.text.stage_create" {
+        ai_tool_string(&args, "parentRef")
+    } else {
+        file_ref
+    };
+    if is_staging {
+        if let Some((code, message)) = ai_file_mutation_authorization_blocker(
+            staging_target_ref,
+            managed_override_refs,
+            authorization_blockers,
+        ) {
+            let _ = write_log(
+                app,
+                "ai-host",
+                "warning",
+                "AiFileMutationAuthorization",
+                &format!("tool={name} decision=blocked reason={code}"),
+                Some(operation_id),
+            )
+            .await;
+            return (
+                json!({
+                    "callId": call_id,
+                    "name": name,
+                    "result": {
+                        "ok": false,
+                        "error": {
+                            "code": code,
+                            "message": message
+                        }
                     }
-                }
-            }),
-            false,
-            0,
-            false,
-            None,
-        );
+                }),
+                false,
+                0,
+                false,
+                None,
+            );
+        }
+        let _ = write_log(
+            app,
+            "ai-host",
+            "info",
+            "AiFileMutationAuthorization",
+            &format!("tool={name} decision=authorized reason=effective-winner-ref"),
+            Some(operation_id),
+        )
+        .await;
     }
 
     let staged_mutation = if name == "local.json.stage_set_pointer" {
@@ -4314,7 +4536,7 @@ async fn execute_ai_file_tool_call(
     )
     .await
     {
-        Ok((data, recovered)) => {
+        Ok((data, recovery_action)) => {
             let (data, redacted, local_bytes) = redact_ai_file_tool_value(data);
             (
                 json!({
@@ -4324,7 +4546,7 @@ async fn execute_ai_file_tool_call(
                         "ok": true,
                         "data": data,
                         "redacted": redacted,
-                        "recoveryAction": if recovered { Some("reopen-native-session-and-retry") } else { None::<&str> }
+                        "recoveryAction": recovery_action
                     }
                 }),
                 is_commit,
@@ -4358,10 +4580,125 @@ async fn execute_ai_file_tool_call(
     }
 }
 
-fn record_ai_writable_file_refs(
+fn ai_metadata_allows_managed_override(metadata: &Value) -> bool {
+    metadata.get("scope").and_then(Value::as_str) == Some("build")
+        && (metadata
+            .get("managedOverrideEligible")
+            .and_then(Value::as_bool)
+            == Some(true)
+            || metadata
+                .get("directMutationEligible")
+                .and_then(Value::as_bool)
+                == Some(true))
+}
+
+fn ai_metadata_allows_parent_create(metadata: &Value) -> bool {
+    metadata.get("managedOverrideEligible").and_then(Value::as_bool) == Some(true)
+}
+
+#[cfg(test)]
+fn ai_exact_search_proves_read_target(data: &Value, file_ref: &str) -> bool {
+    let entries = data
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    entries.len() == 1
+        && entries[0].get("fileRef").and_then(Value::as_str) == Some(file_ref)
+        && ai_metadata_allows_managed_override(&entries[0])
+}
+
+async fn prove_ai_managed_override_after_read(
+    app: &AppHandle,
+    request: &Value,
+    result: &Value,
+    chat_id: &str,
+    operation_id: &str,
+    eligible_candidate_refs: &HashSet<String>,
+    managed_override_refs: &mut HashSet<String>,
+    authorization_blockers: &mut AiFileMutationBlockers,
+) -> bool {
+    let Some(file_ref) = result
+        .pointer("/result/data/fileRef")
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    if managed_override_refs.contains(file_ref) {
+        return false;
+    }
+    if !eligible_candidate_refs.contains(file_ref) {
+        return false;
+    }
+    let Some(relative_path) = result
+        .pointer("/result/data/relativePath")
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+    else {
+        return false;
+    };
+    let Ok((data, _recovered)) = request_ai_build_files_with_recovery(
+        app,
+        request,
+        "buildFiles.search",
+        json!({
+            "chatId": chat_id,
+            "scope": "build",
+            "query": relative_path,
+            "revision": "",
+            "cursor": "",
+            "limit": 20
+        }),
+        operation_id,
+        true,
+    )
+    .await
+    else {
+        return false;
+    };
+    let entries = data
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if entries.len() > 1 {
+        authorization_blockers
+            .multiple_virtual_target_refs
+            .insert(file_ref.to_string());
+        return false;
+    }
+    let Some(metadata) = entries.first() else {
+        return false;
+    };
+    if metadata.get("fileRef").and_then(Value::as_str) != Some(file_ref) {
+        authorization_blockers
+            .effective_winner_ref_mismatches
+            .insert(file_ref.to_string());
+        return false;
+    }
+    if !ai_metadata_allows_managed_override(metadata) {
+        authorization_blockers
+            .ineligible_refs
+            .insert(file_ref.to_string());
+        return false;
+    }
+    managed_override_refs.insert(file_ref.to_string());
+    authorization_blockers
+        .effective_winner_ref_mismatches
+        .remove(file_ref);
+    authorization_blockers.ineligible_refs.remove(file_ref);
+    authorization_blockers
+        .multiple_virtual_target_refs
+        .remove(file_ref);
+    true
+}
+
+fn record_ai_managed_override_refs(
     tool_name: &str,
     result: &Value,
-    writable_file_refs: &mut HashSet<String>,
+    eligible_candidate_refs: &mut HashSet<String>,
+    managed_override_refs: &mut HashSet<String>,
+    authorization_blockers: &mut AiFileMutationBlockers,
 ) {
     if result.pointer("/result/ok").and_then(Value::as_bool) != Some(true) {
         return;
@@ -4372,32 +4709,124 @@ fn record_ai_writable_file_refs(
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or_default();
-        if entries.len() == 1 {
-            if let Some(file_ref) = entries[0].get("fileRef").and_then(Value::as_str) {
-                writable_file_refs.insert(file_ref.to_string());
+        for entry in entries {
+            if let Some(reference) = entry
+                .get("fileRef")
+                .and_then(Value::as_str)
+                .filter(|reference| !reference.is_empty())
+            {
+                if ai_metadata_allows_managed_override(entry) {
+                    authorization_blockers.ineligible_refs.remove(reference);
+                    eligible_candidate_refs.insert(reference.to_string());
+                } else {
+                    managed_override_refs.remove(reference);
+                    authorization_blockers
+                        .ineligible_refs
+                        .insert(reference.to_string());
+                }
+                if entries.len() > 1 {
+                    authorization_blockers
+                        .multiple_virtual_target_refs
+                        .insert(reference.to_string());
+                } else {
+                    authorization_blockers
+                        .multiple_virtual_target_refs
+                        .remove(reference);
+                }
+            }
+        }
+        if entries.len() == 1 && ai_metadata_allows_managed_override(&entries[0]) {
+            let keys: &[&str] = if ai_metadata_allows_parent_create(&entries[0]) {
+                &["fileRef", "parentRef"]
+            } else {
+                &["fileRef"]
+            };
+            for key in keys {
+                if let Some(reference) = entries[0].get(key).and_then(Value::as_str) {
+                    if !reference.is_empty() {
+                        authorization_blockers
+                            .effective_winner_ref_mismatches
+                            .remove(reference);
+                        authorization_blockers.ineligible_refs.remove(reference);
+                        authorization_blockers
+                            .multiple_virtual_target_refs
+                            .remove(reference);
+                        managed_override_refs.insert(reference.to_string());
+                    }
+                }
             }
         }
         return;
     }
-    if tool_name == "local.files.discover"
-        && result
+    if tool_name == "local.files.discover" {
+        let unique = result
             .pointer("/result/data/resolution")
             .and_then(Value::as_str)
-            == Some("unique")
-    {
+            == Some("unique");
         for candidate in result
             .pointer("/result/data/candidates")
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or_default()
         {
+            let Some(metadata) = candidate.get("file") else {
+                continue;
+            };
+            let reference = metadata
+                .get("fileRef")
+                .and_then(Value::as_str)
+                .filter(|reference| !reference.is_empty());
             if candidate.get("effectiveWinner").and_then(Value::as_bool) != Some(true) {
+                if let Some(reference) = reference {
+                    authorization_blockers
+                        .effective_winner_ref_mismatches
+                        .insert(reference.to_string());
+                }
                 continue;
             }
-            if let Some(file_ref) = candidate.pointer("/file/fileRef").and_then(Value::as_str) {
-                writable_file_refs.insert(file_ref.to_string());
+            let Some(reference) = reference else {
+                continue;
+            };
+            if !ai_metadata_allows_managed_override(metadata) {
+                managed_override_refs.remove(reference);
+                authorization_blockers
+                    .ineligible_refs
+                    .insert(reference.to_string());
+                continue;
+            }
+            authorization_blockers.ineligible_refs.remove(reference);
+            eligible_candidate_refs.insert(reference.to_string());
+            if !unique {
+                authorization_blockers
+                    .multiple_virtual_target_refs
+                    .insert(reference.to_string());
+                continue;
+            }
+            authorization_blockers
+                .multiple_virtual_target_refs
+                .remove(reference);
+            let keys: &[&str] = if ai_metadata_allows_parent_create(metadata) {
+                &["fileRef", "parentRef"]
+            } else {
+                &["fileRef"]
+            };
+            for key in keys {
+                if let Some(reference) = metadata.get(key).and_then(Value::as_str) {
+                    if !reference.is_empty() {
+                        authorization_blockers
+                            .effective_winner_ref_mismatches
+                            .remove(reference);
+                        authorization_blockers.ineligible_refs.remove(reference);
+                        authorization_blockers
+                            .multiple_virtual_target_refs
+                            .remove(reference);
+                        eligible_candidate_refs.insert(reference.to_string());
+                        managed_override_refs.insert(reference.to_string());
+                    }
+                }
             }
         }
+        return;
     }
 }
 
@@ -5715,7 +6144,9 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
     .to_string();
     let mut staged_mutations = Vec::<Value>::new();
     let mut staged_targets = HashSet::<String>::new();
-    let mut writable_file_refs = HashSet::<String>::new();
+    let mut managed_override_candidate_refs = HashSet::<String>::new();
+    let mut managed_override_refs = HashSet::<String>::new();
+    let mut mutation_authorization_blockers = AiFileMutationBlockers::default();
     let mut read_only_cache = HashMap::<String, Value>::new();
     let mut entity_refs = AiEntityRefRegistry::default();
     let mut commit_completed = false;
@@ -5943,7 +6374,8 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                                                 &operation_id,
                                                 write_granted,
                                                 &staged_mutations,
-                                                &writable_file_refs,
+                                                &managed_override_refs,
+                                                &mutation_authorization_blockers,
                                             )
                                             .await
                                         }
@@ -5966,7 +6398,8 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                                             &operation_id,
                                             write_granted,
                                             &staged_mutations,
-                                            &writable_file_refs,
+                                            &managed_override_refs,
+                                            &mutation_authorization_blockers,
                                         )
                                         .await
                                     }
@@ -6001,7 +6434,8 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                                         &operation_id,
                                         write_granted,
                                         &staged_mutations,
-                                        &writable_file_refs,
+                                        &managed_override_refs,
+                                        &mutation_authorization_blockers,
                                     )
                                     .await
                                 };
@@ -6014,10 +6448,27 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                                     read_only_cache.insert(cache_key, payload);
                                 }
                             }
-                            record_ai_writable_file_refs(
+                            if tool_name == "local.text.read"
+                                && prove_ai_managed_override_after_read(
+                                    &app,
+                                    &request,
+                                    &result,
+                                    &chat_id,
+                                    &operation_id,
+                                    &managed_override_candidate_refs,
+                                    &mut managed_override_refs,
+                                    &mut mutation_authorization_blockers,
+                                )
+                                .await
+                            {
+                                search_count = search_count.saturating_add(1);
+                            }
+                            record_ai_managed_override_refs(
                                 tool_name,
                                 &result,
-                                &mut writable_file_refs,
+                                &mut managed_override_candidate_refs,
+                                &mut managed_override_refs,
+                                &mut mutation_authorization_blockers,
                             );
                             if let Some(mutation) = staged_mutation {
                                 let target = ai_staged_mutation_target(&mutation);
@@ -6025,13 +6476,13 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                                     result = ai_local_tool_error(
                                         &normalized_call,
                                         "too-large",
-                                        "One action can stage at most 16 different files.",
+                                        "One action can stage at most 16 mutations.",
                                     );
                                 } else if !staged_targets.insert(target) {
                                     result = ai_local_tool_error(
                                         &normalized_call,
                                         "duplicate-mutation",
-                                        "One action can stage only one mutation per file.",
+                                        "One action cannot stage the same file target twice.",
                                     );
                                 } else {
                                     staged_mutations.push(mutation);
@@ -9015,6 +9466,7 @@ pub fn run_native_ai_integration_fixture(
     install_root_directory: &Path,
     download_archive: &Path,
 ) -> Result<Value, String> {
+    reset_native_ai_fixture_traces();
     let app = tauri::Builder::default()
         .manage(BridgeState::default())
         .manage(AiHostState::default())
@@ -9104,6 +9556,24 @@ pub fn run_native_ai_integration_fixture(
                     BRIDGE_TIMEOUT_MS,
                 )
                 .await?;
+            for mod_name in [
+                "No Grass In Objects - Grass Control",
+                "Generic Visual Tuning",
+                "Fluxora AI Overrides",
+            ] {
+                bridge
+                    .request(
+                        &handle,
+                        "mods.createEmpty",
+                        json!({
+                            "projectDirectory": project_directory,
+                            "modName": mod_name
+                        }),
+                        operation.clone(),
+                        BRIDGE_TIMEOUT_MS,
+                    )
+                    .await?;
+            }
         }
         let capability_request = json!({
             "fileWorkspace": {
@@ -9475,6 +9945,16 @@ pub fn run_native_ai_integration_fixture(
             b"; generic fixture\r\n[Audio]\r\nBattleMusicVolume=1.0\r\n",
         )
         .map_err(|error| error.to_string())?;
+        let audio_distractor_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join("Docs")
+            .join("AudioMixer.ini");
+        std::fs::write(
+            &audio_distractor_path,
+            b"; unrelated documentation fixture\r\n[Audio]\r\nBattleMusicVolume=0.8\r\n",
+        )
+        .map_err(|error| error.to_string())?;
         let dual_audio_virtual_path = PathBuf::from("SKSE")
             .join("Plugins")
             .join("DualAudio.ini");
@@ -9499,6 +9979,153 @@ pub fn run_native_ai_integration_fixture(
             [0_u8, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8],
         )
             .map_err(|error| error.to_string())?;
+        let ngio_virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("GrassControl.ini");
+        let ngio_source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("No Grass In Objects - Grass Control")
+            .join(&ngio_virtual_path);
+        let ngio_managed_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Fluxora AI Overrides")
+            .join(&ngio_virtual_path);
+        let ngio_overwrite_path = PathBuf::from(&project_directory)
+            .join("overwrite")
+            .join(&ngio_virtual_path);
+        std::fs::create_dir_all(
+            ngio_source_path
+                .parent()
+                .ok_or_else(|| "Native NGIO fixture parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(
+            ngio_managed_path
+                .parent()
+                .ok_or_else(|| "Native NGIO managed parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(
+            ngio_overwrite_path
+                .parent()
+                .ok_or_else(|| "Native NGIO Overwrite parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            &ngio_source_path,
+            b"; source fixture\r\n[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\nSource-only=keep\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            &ngio_managed_path,
+            b"; managed fixture\r\n[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\nManaged-only=keep\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            &ngio_overwrite_path,
+            b"; overwrite fixture\r\n[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\nOverwrite-only=keep\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let neutral_virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("RendererTuning.ini");
+        let neutral_source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Generic Visual Tuning")
+            .join(&neutral_virtual_path);
+        std::fs::create_dir_all(
+            neutral_source_path
+                .parent()
+                .ok_or_else(|| "Native neutral fixture parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            &neutral_source_path,
+            b"; neutral evidence-first fixture\r\n[Display]\r\nSharpness=0.50\r\nBloom=true\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        if std::env::var("FLUXORA_AI_LIVE_PROVIDER_SMOKE").as_deref() == Ok("1") {
+            let live_ngio_response = execute_ai_chat_request(
+                handle.clone(),
+                json!({
+                    "operationId": "op_live_ai_ngio_evidence_first",
+                    "runId": "run-live-ai-ngio-evidence-first",
+                    "sessionId": "chat-live-ai-ngio-evidence-first",
+                    "providerId": "gemini",
+                    "modelId": "gemini-3.1-flash-lite",
+                    "messages": [{
+                        "role": "user",
+                        "text": "Пожалуйста, безопасно настрой параметры травяного кэша в выбранной сборке. Сначала сам найди и прочитай конфиг. Если по найденным текущим значениям остаются два правдоподобных безопасных режима, задай один вопрос именно о настройках; путь у меня не спрашивай."
+                    }],
+                    "fileWorkspace": {
+                        "schema": "fluxora.ai.file-workspace-envelope.v1",
+                        "chatId": "chat-live-ai-ngio-evidence-first",
+                        "projectId": "native-ai-integration",
+                        "projectDirectory": project_directory,
+                        "game": "Skyrim Special Edition",
+                        "profile": "Default",
+                        "counts": { "mods": 3, "plugins": 0, "downloads": 0 },
+                        "dirtyFileRefs": []
+                    }
+                }),
+            )
+            .await?;
+            let live_ngio_bridge_methods =
+                native_ai_fixture_bridge_methods("op_live_ai_ngio_evidence_first");
+            let live_ngio_events = native_ai_fixture_events("op_live_ai_ngio_evidence_first");
+            let live_ngio_override_path = PathBuf::from(&project_directory)
+                .join("mods")
+                .join("Fluxora AI Overrides")
+                .join(&ngio_virtual_path);
+            let live_ngio_rollback = if live_ngio_response.get("status").and_then(Value::as_str)
+                == Some("done")
+                && live_ngio_override_path.is_file()
+            {
+                let state = bridge_state(&handle);
+                let mut bridge = state.process.lock().await;
+                Some(
+                    bridge
+                        .request(
+                            &handle,
+                            "buildFiles.rollbackRun",
+                            json!({
+                                "chatId": "chat-live-ai-ngio-evidence-first",
+                                "runId": "run-live-ai-ngio-evidence-first"
+                            }),
+                            OperationRequest {
+                                operation_id: Some(
+                                    "op_live_ai_ngio_evidence_first_rollback".to_string(),
+                                ),
+                            },
+                            BRIDGE_TIMEOUT_MS,
+                        )
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let live_ngio_override_exists_after_rollback = live_ngio_override_path.exists();
+            {
+                let state = ai_host_state(&handle);
+                state.process.lock().await.reset().await;
+            }
+            {
+                let state = bridge_state(&handle);
+                state.process.lock().await.reset().await;
+            }
+            return Ok(json!({
+                "ngioEvidenceFirst": {
+                    "response": live_ngio_response,
+                    "sourcePath": ngio_source_path.to_string_lossy(),
+                    "overridePath": live_ngio_override_path.to_string_lossy(),
+                    "rollback": live_ngio_rollback,
+                    "overrideExistsAfterRollback": live_ngio_override_exists_after_rollback,
+                    "bridgeMethods": live_ngio_bridge_methods,
+                    "events": live_ngio_events
+                }
+            }));
+        }
 
         let response = execute_ai_chat_request(
             handle.clone(),
@@ -9634,35 +10261,6 @@ pub fn run_native_ai_integration_fixture(
                 .await?
         };
         let audio_override_exists_after_rollback = audio_override_path.exists();
-
-        if std::env::var("FLUXORA_AI_LIVE_PROVIDER_SMOKE").as_deref() == Ok("1") {
-            {
-                let state = ai_host_state(&handle);
-                state.process.lock().await.reset().await;
-            }
-            {
-                let state = bridge_state(&handle);
-                state.process.lock().await.reset().await;
-            }
-            return Ok(json!({
-                "response": response,
-                "sourcePath": source_path.to_string_lossy(),
-                "overridePath": override_path.to_string_lossy(),
-                "sourceContent": source_content,
-                "managedContent": managed_content,
-                "rollback": rollback,
-                "overrideExistsAfterRollback": override_exists_after_rollback,
-                "implicitAudio": {
-                    "response": implicit_audio_response,
-                    "sourcePath": audio_source_path.to_string_lossy(),
-                    "overridePath": audio_override_path.to_string_lossy(),
-                    "sourceContent": audio_source_content,
-                    "managedContent": audio_managed_content,
-                    "rollback": implicit_audio_rollback,
-                    "overrideExistsAfterRollback": audio_override_exists_after_rollback
-                }
-            }));
-        }
 
         let ambiguity_response = execute_ai_chat_request(
             handle.clone(),
@@ -9805,6 +10403,126 @@ pub fn run_native_ai_integration_fixture(
             .join("Fluxora AI Overrides")
             .join(&unsupported_virtual_path);
 
+        let ngio_evidence_first_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_ngio_evidence_first",
+                "runId": "run-native-ai-ngio-evidence-first",
+                "sessionId": "chat-native-ai-ngio-evidence-first",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "Проверь настройки травяного кэша в выбранной сборке и безопасно настрой их; если намерение неоднозначно, сначала выясни, какой режим нужен."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-ngio-evidence-first",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 3, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let ngio_bridge_methods =
+            native_ai_fixture_bridge_methods("op_native_ai_ngio_evidence_first");
+        let ngio_events = native_ai_fixture_events("op_native_ai_ngio_evidence_first");
+
+        let neutral_evidence_first_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_neutral_evidence_first",
+                "runId": "run-native-ai-neutral-evidence-first",
+                "sessionId": "chat-native-ai-neutral-evidence-first",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "Inspect the selected build's renderer tuning and ask only about the settings if more than one safe adjustment remains."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-neutral-evidence-first",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 3, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let neutral_bridge_methods =
+            native_ai_fixture_bridge_methods("op_native_ai_neutral_evidence_first");
+        let neutral_events = native_ai_fixture_events("op_native_ai_neutral_evidence_first");
+
+        let ngio_batch_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_ngio_batch",
+                "runId": "run-native-ai-ngio-batch",
+                "sessionId": "chat-native-ai-ngio-batch",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "Включи генерацию кэша травы: Use-grass-cache=true и Only-load-from-cache=false."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-ngio-batch",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 3, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let ngio_batch_bridge_methods =
+            native_ai_fixture_bridge_methods("op_native_ai_ngio_batch");
+        let ngio_batch_events = native_ai_fixture_events("op_native_ai_ngio_batch");
+        let ngio_batch_source_content = std::fs::read_to_string(&ngio_source_path)
+            .map_err(|error| error.to_string())?;
+        let ngio_batch_managed_content = std::fs::read_to_string(&ngio_managed_path)
+            .map_err(|error| error.to_string())?;
+        let ngio_batch_overwrite_content = std::fs::read_to_string(&ngio_overwrite_path)
+            .map_err(|error| error.to_string())?;
+        let ngio_batch_rollback =
+            if ngio_batch_response.get("status").and_then(Value::as_str) == Some("done") {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            Some(bridge
+                .request(
+                    &handle,
+                    "buildFiles.rollbackRun",
+                    json!({
+                        "chatId": "chat-native-ai-ngio-batch",
+                        "runId": "run-native-ai-ngio-batch"
+                    }),
+                    OperationRequest {
+                        operation_id: Some("op_native_ai_ngio_batch_rollback".to_string()),
+                    },
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?)
+        } else {
+            None
+        };
+        let ngio_batch_source_after_rollback = std::fs::read_to_string(&ngio_source_path)
+            .map_err(|error| error.to_string())?;
+        let ngio_batch_managed_after_rollback = std::fs::read_to_string(&ngio_managed_path)
+            .map_err(|error| error.to_string())?;
+        let ngio_batch_overwrite_after_rollback = std::fs::read_to_string(&ngio_overwrite_path)
+            .map_err(|error| error.to_string())?;
+
         {
             let state = ai_host_state(&handle);
             state.process.lock().await.reset().await;
@@ -9849,6 +10567,30 @@ pub fn run_native_ai_integration_fixture(
                 "sourcePath": unsupported_source_path.to_string_lossy(),
                 "overridePath": unsupported_override_path.to_string_lossy(),
                 "overrideExists": unsupported_override_path.exists()
+            },
+            "ngioEvidenceFirst": {
+                "response": ngio_evidence_first_response,
+                "sourcePath": ngio_source_path.to_string_lossy(),
+                "bridgeMethods": ngio_bridge_methods,
+                "events": ngio_events
+            },
+            "neutralEvidenceFirst": {
+                "response": neutral_evidence_first_response,
+                "sourcePath": neutral_source_path.to_string_lossy(),
+                "bridgeMethods": neutral_bridge_methods,
+                "events": neutral_events
+            },
+            "ngioBatch": {
+                "response": ngio_batch_response,
+                "sourceContent": ngio_batch_source_content,
+                "managedContent": ngio_batch_managed_content,
+                "overwriteContent": ngio_batch_overwrite_content,
+                "rollback": ngio_batch_rollback,
+                "sourceAfterRollback": ngio_batch_source_after_rollback,
+                "managedAfterRollback": ngio_batch_managed_after_rollback,
+                "overwriteAfterRollback": ngio_batch_overwrite_after_rollback,
+                "bridgeMethods": ngio_batch_bridge_methods,
+                "events": ngio_batch_events
             },
             "modOrder": order,
             "capabilityScenarios": capability_scenarios
@@ -11201,6 +11943,11 @@ mod tests {
             ai_file_tool_failure_message("validation-failed"),
             "Fluxora blocked the file operation safely (validation-failed)."
         );
+        assert_eq!(
+            ai_file_tool_failure_message("stale-revision"),
+            "Fluxora could not stabilize the build file index after one safe restart. Retry after current build file changes finish."
+        );
+        assert!(!ai_file_tool_failure_message("stale-revision").contains("native operation failed"));
     }
 
     #[test]
@@ -11231,12 +11978,34 @@ mod tests {
             })),
             "create:folder-1:settings.json"
         );
+        let first_ini_key = ai_staged_mutation_target(&json!({
+            "kind": "ini-set",
+            "fileRef": "opaque-ini-1",
+            "section": "Grass",
+            "key": "Use-grass-cache"
+        }));
+        let second_ini_key = ai_staged_mutation_target(&json!({
+            "kind": "ini-set",
+            "fileRef": "opaque-ini-1",
+            "section": "Grass",
+            "key": "Only-load-from-cache"
+        }));
+        let same_ini_key_with_different_case = ai_staged_mutation_target(&json!({
+            "kind": "ini-remove",
+            "fileRef": "opaque-ini-1",
+            "section": " grass ",
+            "key": "USE-GRASS-CACHE"
+        }));
+        assert_ne!(first_ini_key, second_ini_key);
+        assert_eq!(first_ini_key, same_ini_key_with_different_case);
     }
 
     #[test]
-    fn only_unique_discovery_or_single_exact_search_proves_a_writable_file_ref() {
+    fn managed_override_staging_records_only_unique_or_explicitly_proven_refs() {
+        let mut candidates = HashSet::new();
         let mut refs = HashSet::new();
-        record_ai_writable_file_refs(
+        let mut blockers = AiFileMutationBlockers::default();
+        record_ai_managed_override_refs(
             "local.files.discover",
             &json!({
                 "result": {
@@ -11245,43 +12014,206 @@ mod tests {
                         "resolution": "ambiguous",
                         "candidates": [{
                             "effectiveWinner": true,
-                            "file": { "fileRef": "ambiguous-ref" }
+                            "file": {
+                                "fileRef": "ambiguous-ref",
+                                "scope": "build",
+                                "managedOverrideEligible": true
+                            }
                         }]
                     }
                 }
             }),
+            &mut candidates,
             &mut refs,
+            &mut blockers,
         );
+        assert!(candidates.contains("ambiguous-ref"));
         assert!(!refs.contains("ambiguous-ref"));
 
-        record_ai_writable_file_refs(
+        record_ai_managed_override_refs(
             "local.files.discover",
             &json!({
                 "result": {
                     "ok": true,
                     "data": {
                         "resolution": "unique",
-                        "candidates": [{
-                            "effectiveWinner": true,
-                            "file": { "fileRef": "unique-ref" }
-                        }]
+                        "candidates": [
+                            {
+                                "effectiveWinner": true,
+                                "file": {
+                                    "fileRef": "overwrite-ref",
+                                    "scope": "build",
+                                    "managedOverrideEligible": false,
+                                    "directMutationEligible": true
+                                }
+                            },
+                            {
+                                "effectiveWinner": false,
+                                "file": {
+                                    "fileRef": "non-winner-ref",
+                                    "scope": "build",
+                                    "managedOverrideEligible": true
+                                }
+                            }
+                        ]
                     }
                 }
             }),
+            &mut candidates,
             &mut refs,
+            &mut blockers,
         );
-        record_ai_writable_file_refs(
+        record_ai_managed_override_refs(
             "local.files.search",
             &json!({
                 "result": {
                     "ok": true,
-                    "data": { "entries": [{ "fileRef": "exact-search-ref" }] }
+                    "data": {
+                        "entries": [{
+                            "fileRef": "game-ref",
+                            "parentRef": "game-parent-ref",
+                            "scope": "game",
+                            "managedOverrideEligible": true
+                        }]
+                    }
                 }
             }),
+            &mut candidates,
             &mut refs,
+            &mut blockers,
         );
-        assert!(refs.contains("unique-ref"));
+        record_ai_managed_override_refs(
+            "local.files.search",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "entries": [{
+                            "fileRef": "exact-search-ref",
+                            "parentRef": "exact-parent-ref",
+                            "scope": "build",
+                            "managedOverrideEligible": true
+                        }]
+                    }
+                }
+            }),
+            &mut candidates,
+            &mut refs,
+            &mut blockers,
+        );
+        record_ai_managed_override_refs(
+            "local.files.search",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "entries": [
+                            {
+                                "fileRef": "chosen-candidate-ref",
+                                "scope": "build",
+                                "managedOverrideEligible": true
+                            },
+                            {
+                                "fileRef": "other-candidate-ref",
+                                "scope": "build",
+                                "managedOverrideEligible": true
+                            }
+                        ]
+                    }
+                }
+            }),
+            &mut candidates,
+            &mut refs,
+            &mut blockers,
+        );
+        assert!(candidates.contains("chosen-candidate-ref"));
+        assert!(candidates.contains("other-candidate-ref"));
+        assert!(!refs.contains("chosen-candidate-ref"));
+        assert!(refs.contains("overwrite-ref"));
+        assert!(!refs.contains("non-winner-ref"));
+        assert!(!refs.contains("game-ref"));
+        assert!(!refs.contains("game-parent-ref"));
         assert!(refs.contains("exact-search-ref"));
+        assert!(refs.contains("exact-parent-ref"));
+        assert!(!refs.contains("other-candidate-ref"));
+        assert_eq!(
+            ai_file_mutation_authorization_blocker("ambiguous-ref", &refs, &blockers)
+                .map(|(code, _)| code),
+            Some("multiple-virtual-targets")
+        );
+        assert_eq!(
+            ai_file_mutation_authorization_blocker("non-winner-ref", &refs, &blockers)
+                .map(|(code, _)| code),
+            Some("effective-winner-ref-mismatch")
+        );
+        assert_eq!(
+            ai_file_mutation_authorization_blocker("game-ref", &refs, &blockers)
+                .map(|(code, _)| code),
+            Some("mutation-ineligible")
+        );
+        assert_eq!(
+            ai_file_mutation_authorization_blocker("chosen-candidate-ref", &refs, &blockers)
+                .map(|(code, _)| code),
+            Some("multiple-virtual-targets")
+        );
+        assert_eq!(
+            ai_file_mutation_authorization_blocker("unknown-ref", &refs, &blockers)
+                .map(|(code, _)| code),
+            Some("unproven-file-ref")
+        );
+        assert!(
+            ai_file_mutation_authorization_blocker("exact-search-ref", &refs, &blockers)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn exact_search_after_read_requires_the_same_single_eligible_target() {
+        assert!(ai_exact_search_proves_read_target(
+            &json!({
+                "entries": [{
+                    "fileRef": "chosen-ref",
+                    "scope": "build",
+                    "managedOverrideEligible": true
+                }]
+            }),
+            "chosen-ref"
+        ));
+        assert!(ai_exact_search_proves_read_target(
+            &json!({
+                "entries": [{
+                    "fileRef": "overwrite-ref",
+                    "scope": "build",
+                    "managedOverrideEligible": false,
+                    "directMutationEligible": true
+                }]
+            }),
+            "overwrite-ref"
+        ));
+        for data in [
+            json!({
+                "entries": [
+                    { "fileRef": "chosen-ref", "scope": "build", "managedOverrideEligible": true },
+                    { "fileRef": "other-ref", "scope": "build", "managedOverrideEligible": true }
+                ]
+            }),
+            json!({
+                "entries": [{ "fileRef": "other-ref", "scope": "build", "managedOverrideEligible": true }]
+            }),
+            json!({
+                "entries": [{ "fileRef": "chosen-ref", "scope": "downloads", "managedOverrideEligible": true }]
+            }),
+            json!({
+                "entries": [{
+                    "fileRef": "chosen-ref",
+                    "scope": "build",
+                    "managedOverrideEligible": false,
+                    "directMutationEligible": false
+                }]
+            }),
+        ] {
+            assert!(!ai_exact_search_proves_read_target(&data, "chosen-ref"));
+        }
     }
 
     #[test]
@@ -11294,8 +12226,40 @@ mod tests {
             "local.text.search",
             &json!({ "query": "ToggleKey", "scope": "  " }),
         );
+        let initial_with_untrusted_revision = normalize_ai_file_tool_args(
+            "local.files.search",
+            &json!({
+                "query": "GrassControl.ini",
+                "scope": "build",
+                "revision": "build-context-revision",
+                "cursor": ""
+            }),
+        );
+        let continuation = normalize_ai_file_tool_args(
+            "local.files.search",
+            &json!({
+                "query": "GrassControl.ini",
+                "scope": "build",
+                "revision": "workspace-index-v2:abc",
+                "cursor": "workspace-index-v2:abc|20"
+            }),
+        );
         assert_eq!(missing.get("scope").and_then(Value::as_str), Some("build"));
         assert_eq!(empty.get("scope").and_then(Value::as_str), Some("build"));
+        assert_eq!(
+            initial_with_untrusted_revision
+                .get("revision")
+                .and_then(Value::as_str),
+            Some("")
+        );
+        assert_eq!(
+            continuation.get("revision").and_then(Value::as_str),
+            Some("workspace-index-v2:abc")
+        );
+        assert_eq!(
+            continuation.get("cursor").and_then(Value::as_str),
+            Some("workspace-index-v2:abc|20")
+        );
         for scope in ["game", "downloads"] {
             let normalized = normalize_ai_file_tool_args(
                 "local.files.search",
@@ -11333,6 +12297,33 @@ mod tests {
             "AI file workspace chat is not active."
         ));
         assert!(!should_reopen_ai_file_session("stale-version"));
+
+        let stale_error = r#"{"schema":"fluxora.bridge.invoke-error.v1","method":"buildFiles.search","error":{"message":"Filename index changed; restart search before using earlier results.","details":{"reason":"build-files:stale-revision"}}}"#;
+        assert_eq!(ai_core_file_tool_error_code(stale_error), "stale-revision");
+        let retry = stale_ai_index_retry_params(
+            "buildFiles.search",
+            &json!({
+                "chatId": "chat-stale-index",
+                "scope": "build",
+                "query": "GrassControl.ini",
+                "revision": "workspace-index-v2:old",
+                "cursor": "workspace-index-v2:old|20",
+                "limit": 20
+            }),
+            stale_error,
+            true,
+        )
+        .expect("read-only stale filename search should restart once");
+        assert_eq!(retry.get("revision").and_then(Value::as_str), Some(""));
+        assert_eq!(retry.get("cursor").and_then(Value::as_str), Some(""));
+        assert_eq!(retry.get("query").and_then(Value::as_str), Some("GrassControl.ini"));
+        assert!(stale_ai_index_retry_params(
+            "buildFiles.apply",
+            &json!({ "revision": "old", "cursor": "old|20" }),
+            stale_error,
+            false,
+        )
+        .is_none());
     }
 
     #[test]
@@ -11406,6 +12397,13 @@ mod tests {
             ai_tool_terminal_error_classification("permission-denied"),
             ("safety", "native-guard")
         );
+        assert_eq!(
+            ai_tool_terminal_error_classification("request-input-evidence-required"),
+            ("tool-loop", "tool-loop")
+        );
+        let blocker = ai_file_tool_failure_message("request-input-evidence-required");
+        assert!(blocker.contains("native read-only evidence"));
+        assert!(!blocker.to_ascii_lowercase().contains("manually"));
     }
 
     #[test]

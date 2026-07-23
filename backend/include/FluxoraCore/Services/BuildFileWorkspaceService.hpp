@@ -118,6 +118,8 @@ namespace fluxora
         std::wstring modifiedAt;
         bool readOnly{false};
         bool hidden{false};
+        bool managedOverrideEligible{false};
+        bool directMutationEligible{false};
         std::vector<std::wstring> conflictingOwners;
         std::wstring indexRevision;
         std::wstring version;
@@ -131,6 +133,7 @@ namespace fluxora
         std::wstring cursor;
         std::function<bool()> cancellationRequested;
         std::wstring revision;
+        std::wstring operationId;
     };
 
     struct BuildFileSearchPage

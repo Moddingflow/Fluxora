@@ -98,6 +98,41 @@ fn last_string(value: &Value, key: &str) -> String {
     values.pop().unwrap_or_default()
 }
 
+fn file_ref_for_relative_path(value: &Value, relative_path: &str) -> String {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| {
+                let reference = file_ref_for_relative_path(item, relative_path);
+                (!reference.is_empty()).then_some(reference)
+            })
+            .unwrap_or_default(),
+        Value::Object(fields) => {
+            let requested_path = relative_path.replace('\\', "/");
+            let path_matches = fields
+                .get("relativePath")
+                .and_then(Value::as_str)
+                .map(|path| path.replace('\\', "/"))
+                .is_some_and(|path| path.ends_with(&requested_path));
+            if path_matches {
+                return fields
+                    .get("fileRef")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            fields
+                .values()
+                .find_map(|child| {
+                    let reference = file_ref_for_relative_path(child, relative_path);
+                    (!reference.is_empty()).then_some(reference)
+                })
+                .unwrap_or_default()
+        }
+        _ => String::new(),
+    }
+}
+
 fn function_turn(id: &str, name: &str, args: Value) -> Value {
     json!({
         "candidates": [{
@@ -323,17 +358,23 @@ impl MockGeminiGateway {
                             14 => function_turn(
                                 "search-audio-ini",
                                 "local_files_search",
-                                json!({ "query": "SKSE/Plugins/AudioMixer.ini" }),
+                                json!({ "query": "AudioMixer.ini" }),
                             ),
-                            15 => function_turn(
-                                "read-audio-ini",
-                                "local_text_read",
-                                json!({
-                                    "fileRef": last_string(&body, "fileRef"),
-                                    "startLine": 1,
-                                    "maxLines": 16
-                                }),
-                            ),
+                            15 => {
+                                let file_ref = file_ref_for_relative_path(
+                                    &body,
+                                    "SKSE/Plugins/AudioMixer.ini",
+                                );
+                                function_turn(
+                                    "read-audio-ini",
+                                    "local_text_read",
+                                    json!({
+                                        "fileRef": file_ref,
+                                        "startLine": 1,
+                                        "maxLines": 16
+                                    }),
+                                )
+                            }
                             16 => function_turn(
                                 "query-audio-volume",
                                 "local_ini_query",
@@ -343,20 +384,52 @@ impl MockGeminiGateway {
                                     "key": "BattleMusicVolume"
                                 }),
                             ),
-                            17 => function_turn(
-                                "stage-audio-volume",
-                                "local_ini_stage_set_key",
+                            17 => {
+                                let file_ref = last_string(&body, "fileRef");
+                                let revision = last_string(&body, "indexRevision");
+                                let base_sha256 = last_string(&body, "sha256");
                                 json!({
-                                    "fileRef": last_string(&body, "fileRef"),
-                                    "revision": last_string(&body, "indexRevision"),
-                                    "baseSha256": last_string(&body, "sha256"),
-                                    "section": "Audio",
-                                    "key": "BattleMusicVolume",
-                                    "expectedValue": "1.0",
-                                    "value": "0.35",
-                                    "operation": "set"
-                                }),
-                            ),
+                                    "candidates": [{
+                                        "content": {
+                                            "role": "model",
+                                            "parts": [
+                                                {
+                                                    "functionCall": {
+                                                        "id": "inspect-unsupported-ini-recipe",
+                                                        "name": "local_config_inspect_recipe",
+                                                        "args": {
+                                                            "fileRef": file_ref.clone(),
+                                                            "targetPointer": "/Audio/BattleMusicVolume",
+                                                            "requestedValue": "0.35"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "functionCall": {
+                                                        "id": "stage-audio-volume",
+                                                        "name": "local_ini_stage_set_key",
+                                                        "args": {
+                                                            "fileRef": file_ref,
+                                                            "revision": revision,
+                                                            "baseSha256": base_sha256,
+                                                            "section": "Audio",
+                                                            "key": "BattleMusicVolume",
+                                                            "expectedValue": "1.0",
+                                                            "value": "0.35",
+                                                            "operation": "set"
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }],
+                                    "usageMetadata": {
+                                        "promptTokenCount": 100,
+                                        "candidatesTokenCount": 20,
+                                        "totalTokenCount": 120
+                                    }
+                                })
+                            }
                             18 => function_turn("commit-audio", "local_files_commit", json!({})),
                             19 => text_turn(
                                 "Done: the battle-music volume was reduced in a verified managed override.",
@@ -492,6 +565,197 @@ impl MockGeminiGateway {
                                     "startLine": 1,
                                     "maxLines": 16
                                 }),
+                            ),
+                            38 => function_turn(
+                                "declare-ngio-evidence-first-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "explicit",
+                                    "requestedOutcome": "Inspect the selected build's grass-cache settings and make only a verified safe change or ask one settings-specific question."
+                                }),
+                            ),
+                            39 => function_turn(
+                                "premature-ngio-path-question",
+                                "local_execution_request_input",
+                                json!({
+                                    "question": "Where is GrassControl.ini? Please provide its path."
+                                }),
+                            ),
+                            40 => function_turn(
+                                "search-ngio-config",
+                                "local_files_search",
+                                json!({
+                                    "query": "GrassControl.ini",
+                                    "revision": "untrusted-build-context-revision",
+                                    "cursor": ""
+                                }),
+                            ),
+                            41 => function_turn(
+                                "read-ngio-config",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 32
+                                }),
+                            ),
+                            42 => function_turn(
+                                "query-ngio-use-cache",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Grass",
+                                    "key": "Use-grass-cache"
+                                }),
+                            ),
+                            43 => function_turn(
+                                "query-ngio-only-cache",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Grass",
+                                    "key": "Only-load-from-cache"
+                                }),
+                            ),
+                            44 => function_turn(
+                                "ask-ngio-settings-choice",
+                                "local_execution_request_input",
+                                json!({
+                                    "question": "GrassControl.ini currently has Use-grass-cache=false and Only-load-from-cache=true. Should Fluxora enable cache generation or keep cache-only loading?"
+                                }),
+                            ),
+                            45 => function_turn(
+                                "declare-neutral-evidence-first-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "explicit",
+                                    "requestedOutcome": "Inspect the selected build's generic renderer settings and ask one settings-specific question before any change."
+                                }),
+                            ),
+                            46 => function_turn(
+                                "premature-neutral-path-question",
+                                "local_execution_request_input",
+                                json!({
+                                    "question": "Please provide the path to RendererTuning.ini."
+                                }),
+                            ),
+                            47 => function_turn(
+                                "search-neutral-config",
+                                "local_files_search",
+                                json!({ "query": "RendererTuning.ini" }),
+                            ),
+                            48 => function_turn(
+                                "read-neutral-config",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 32
+                                }),
+                            ),
+                            49 => function_turn(
+                                "query-neutral-sharpness",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Display",
+                                    "key": "Sharpness"
+                                }),
+                            ),
+                            50 => function_turn(
+                                "query-neutral-bloom",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Display",
+                                    "key": "Bloom"
+                                }),
+                            ),
+                            51 => function_turn(
+                                "ask-neutral-settings-choice",
+                                "local_execution_request_input",
+                                json!({
+                                    "question": "RendererTuning.ini currently has Sharpness=0.50 and Bloom=true. Should Fluxora adjust sharpness or disable bloom?"
+                                }),
+                            ),
+                            52 => function_turn(
+                                "declare-ngio-batch-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "explicit",
+                                    "requestedOutcome": "Enable grass cache generation by changing the two required GrassControl.ini settings in one verified reversible batch."
+                                }),
+                            ),
+                            53 => function_turn(
+                                "search-ngio-batch-config",
+                                "local_files_search",
+                                json!({ "query": "GrassControl.ini" }),
+                            ),
+                            54 => function_turn(
+                                "read-ngio-batch-config",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 32
+                                }),
+                            ),
+                            55 => function_turn(
+                                "query-ngio-batch-use-cache",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Grass",
+                                    "key": "Use-grass-cache"
+                                }),
+                            ),
+                            56 => function_turn(
+                                "query-ngio-batch-only-cache",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Grass",
+                                    "key": "Only-load-from-cache"
+                                }),
+                            ),
+                            57 => function_turn(
+                                "stage-ngio-use-cache",
+                                "local_ini_stage_set_key",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "revision": last_string(&body, "indexRevision"),
+                                    "baseSha256": last_string(&body, "sha256"),
+                                    "section": "Grass",
+                                    "key": "Use-grass-cache",
+                                    "expectedValue": "false",
+                                    "value": "true",
+                                    "operation": "set"
+                                }),
+                            ),
+                            58 => function_turn(
+                                "stage-ngio-only-cache",
+                                "local_ini_stage_set_key",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "revision": last_string(&body, "indexRevision"),
+                                    "baseSha256": last_string(&body, "sha256"),
+                                    "section": "Grass",
+                                    "key": "Only-load-from-cache",
+                                    "expectedValue": "true",
+                                    "value": "false",
+                                    "operation": "set"
+                                }),
+                            ),
+                            59 => function_turn(
+                                "commit-ngio-batch",
+                                "local_files_commit",
+                                json!({}),
+                            ),
+                            60 => text_turn(
+                                "Готово: генерация травяного кэша включена двумя проверенными изменениями.",
                             ),
                             _ => text_turn("This unsupported file cannot be changed safely."),
                         }
@@ -773,6 +1037,13 @@ fn main() {
     );
     assert!(
         result
+            .pointer("/implicitAudio/response/fileToolDiagnostics/validationRetries")
+            .and_then(Value::as_u64)
+            .is_some_and(|retries| retries <= 2),
+        "an inapplicable recipe probe must stay within the bounded correction budget"
+    );
+    assert!(
+        result
             .pointer("/implicitAudio/sourceContent")
             .and_then(Value::as_str)
             .is_some_and(|source| source.contains("BattleMusicVolume=1.0")),
@@ -891,6 +1162,196 @@ fn main() {
             .and_then(Value::as_str)
             .is_some_and(|text| !text.to_ascii_lowercase().contains("manually")),
         "unsupported files must return the exact blocker without manual-edit advice"
+    );
+    for scenario in ["ngioEvidenceFirst", "neutralEvidenceFirst"] {
+        let response = result
+            .pointer(&format!("/{scenario}/response"))
+            .unwrap_or(&Value::Null);
+        assert_eq!(
+            response.get("status").and_then(Value::as_str),
+            Some("needs-input"),
+            "{scenario} response: {response}"
+        );
+        assert!(
+            response
+                .pointer("/fileToolDiagnostics/newEvidenceCount")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count > 0),
+            "{scenario} must collect native evidence before asking"
+        );
+        assert_eq!(
+            response
+                .pointer("/fileToolDiagnostics/validationRetries")
+                .and_then(Value::as_u64),
+            Some(1),
+            "the first path question must be rejected exactly once"
+        );
+        let methods = result
+            .pointer(&format!("/{scenario}/bridgeMethods"))
+            .and_then(Value::as_array)
+            .expect("scenario bridge trace");
+        assert!(methods.iter().any(|method| method == "buildFiles.search"));
+        assert!(methods.iter().any(|method| method == "buildFiles.readText"));
+        let events = result
+            .pointer(&format!("/{scenario}/events"))
+            .and_then(Value::as_array)
+            .expect("scenario event trace");
+        assert!(events.iter().any(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool-started")
+                && event.get("stage").and_then(Value::as_str) == Some("file-search")
+                && event.pointer("/payload/data/tool").and_then(Value::as_str)
+                    == Some("local.files.search")
+                && event
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains(" is searching"))
+        }));
+        assert!(events.iter().any(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool-completed")
+                && event.pointer("/payload/data/tool").and_then(Value::as_str)
+                    == Some("local.text.read")
+                && event
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("completed local.text.read"))
+        }));
+        assert!(events.iter().filter(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool-started")
+        }).all(|event| {
+            event.pointer("/payload/data/tool")
+                .and_then(Value::as_str)
+                .is_some_and(|tool| !tool.is_empty())
+        }));
+    }
+    let ngio_question = result
+        .pointer("/ngioEvidenceFirst/response/execution/pendingQuestion")
+        .and_then(Value::as_str)
+        .expect("NGIO settings question");
+    assert!(ngio_question.contains("Use-grass-cache"));
+    assert!(ngio_question.contains("Only-load-from-cache"));
+    assert!(!ngio_question.to_ascii_lowercase().contains("path"));
+    assert!(!ngio_question.to_lowercase().contains("путь"));
+    let neutral_question = result
+        .pointer("/neutralEvidenceFirst/response/execution/pendingQuestion")
+        .and_then(Value::as_str)
+        .expect("neutral settings question");
+    assert!(neutral_question.contains("Sharpness"));
+    assert!(neutral_question.contains("Bloom"));
+    assert!(!neutral_question.to_ascii_lowercase().contains("path"));
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/status")
+            .and_then(Value::as_str),
+        Some("done"),
+        "multi-key NGIO scenario: {}",
+        result.pointer("/ngioBatch").unwrap_or(&Value::Null)
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/fileToolDiagnostics/stagedChanges")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/fileToolDiagnostics/verifiedMutations")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/fileChangeSet/files/0/verification")
+            .and_then(Value::as_str),
+        Some("ini-keys-matched-after-reread")
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/fileChangeSet/files/0/ownerMod")
+            .and_then(Value::as_str),
+        Some("Overwrite")
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/response/fileChangeSet/files/0/hunks")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    assert!(
+        result
+            .pointer("/ngioBatch/sourceContent")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("Use-grass-cache=false")
+                && content.contains("Only-load-from-cache=true")
+                && content.contains("Source-only=keep")),
+        "the source NGIO config must remain unchanged"
+    );
+    assert!(
+        result
+            .pointer("/ngioBatch/managedContent")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("Use-grass-cache=false")
+                && content.contains("Only-load-from-cache=true")
+                && content.contains("Managed-only=keep")),
+        "the managed NGIO config must remain unchanged when Overwrite wins"
+    );
+    assert!(
+        result
+            .pointer("/ngioBatch/overwriteContent")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("Use-grass-cache=true")
+                && content.contains("Only-load-from-cache=false")
+                && content.contains("Overwrite-only=keep")),
+        "the effective Overwrite config must contain both staged settings"
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/rollback/state")
+            .and_then(Value::as_str),
+        Some("rolled-back")
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/sourceAfterRollback")
+            .and_then(Value::as_str),
+        result.pointer("/ngioBatch/sourceContent").and_then(Value::as_str)
+    );
+    assert_eq!(
+        result
+            .pointer("/ngioBatch/managedAfterRollback")
+            .and_then(Value::as_str),
+        result.pointer("/ngioBatch/managedContent").and_then(Value::as_str)
+    );
+    assert!(
+        result
+            .pointer("/ngioBatch/overwriteAfterRollback")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains("Use-grass-cache=false")
+                && content.contains("Only-load-from-cache=true")
+                && content.contains("Overwrite-only=keep")),
+        "rollback must restore the original Overwrite bytes"
+    );
+    let ngio_batch_methods = result
+        .pointer("/ngioBatch/bridgeMethods")
+        .and_then(Value::as_array)
+        .expect("NGIO batch bridge trace");
+    assert_eq!(
+        ngio_batch_methods
+            .iter()
+            .filter(|method| method.as_str() == Some("buildFiles.apply"))
+            .count(),
+        1,
+        "the two INI mutations must commit in one native apply"
+    );
+    assert!(
+        result
+            .pointer("/ngioBatch/response/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| {
+                let normalized = text.to_ascii_lowercase();
+                !normalized.contains("manually") && !normalized.contains("security limitation")
+            }),
+        "a supported operation must not fall back to manual-edit or environment-limit advice"
     );
     let distractor_path = PathBuf::from(
         result

@@ -570,7 +570,8 @@ namespace fluxora::tests
         for (int index = 0; index < 530; ++index)
         {
             writeTextFile(
-                project / L"mods" / (L"Scan-" + std::to_wstring(index)) / L"ignored.txt",
+                project / L"mods" / (L"Scan-" + std::to_wstring(index))
+                    / (L"ignored-" + std::to_wstring(index) + L".txt"),
                 "ignored\n");
         }
         InstanceMetadataStore::ensureInstance(project, L"skyrimse");
@@ -938,7 +939,7 @@ namespace fluxora::tests
         EXPECT_TRUE(missing.complete);
     }
 
-    TEST(BuildFileWorkspaceServiceTests, DiscoveryTreatsOverwriteAsEffectiveVfsWinnerWithoutMutatingIt)
+    TEST(BuildFileWorkspaceServiceTests, DiscoveryAllowsReversibleStructuredMutationOfOverwriteWinner)
     {
         TempDirectory temp;
         const std::filesystem::path project = temp.path() / L"Foundation Edition";
@@ -986,34 +987,52 @@ namespace fluxora::tests
         EXPECT_TRUE(winner.effectiveWinner);
         EXPECT_EQ(winner.effectiveOwner, L"Overwrite");
         EXPECT_EQ(winner.file.ownerMod, L"Overwrite");
+        EXPECT_FALSE(winner.file.managedOverrideEligible);
+        EXPECT_TRUE(winner.file.directMutationEligible);
         EXPECT_EQ(winner.virtualPath, virtualPath.generic_wstring());
         EXPECT_NE(
             std::find(winner.file.conflictingOwners.begin(), winner.file.conflictingOwners.end(), L"Community Shaders"),
             winner.file.conflictingOwners.end());
 
+        const auto exact = service.search(
+            L"chat-overwrite-winner",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"Community Shaders/SKSE/Plugins/CommunityShaders/SettingsUser.json",
+                20,
+                L""});
+        ASSERT_EQ(exact.entries.size(), 1u);
+        EXPECT_EQ(exact.entries.front().ownerMod, L"Overwrite");
+        EXPECT_TRUE(exact.entries.front().directMutationEligible);
         const auto toggle = service.queryJson(
             L"chat-overwrite-winner",
-            winner.file.fileRef,
+            exact.entries.front().fileRef,
             L"/Menu/ToggleKey");
         EXPECT_EQ(toggle.value, L"36");
-        const auto error = capturedWorkspaceError([&]
-        {
-            auto mutation = BuildFileMutation::jsonPointer(
-                winner.file.fileRef,
-                toggle.sha256,
-                L"/Menu/ToggleKey",
-                L"36",
-                L"34");
-            mutation.revision = winner.file.indexRevision;
-            static_cast<void>(service.apply(
-                L"chat-overwrite-winner",
-                L"run-overwrite-winner",
-                L"operation-overwrite-winner",
-                {mutation}));
-        });
-        EXPECT_EQ(error.code(), "protected");
-        EXPECT_EQ(readTextFile(overwriteFile), "{\"Menu\":{\"ToggleKey\":36},\"ShaderBlockNextKey\":33}\n");
+        auto mutation = BuildFileMutation::jsonPointer(
+            exact.entries.front().fileRef,
+            toggle.sha256,
+            L"/Menu/ToggleKey",
+            L"36",
+            L"34");
+        mutation.revision = exact.entries.front().indexRevision;
+        const auto changeSet = service.apply(
+            L"chat-overwrite-winner",
+            L"run-overwrite-winner",
+            L"operation-overwrite-winner",
+            {mutation});
+        ASSERT_EQ(changeSet.files.size(), 1u);
+        EXPECT_EQ(changeSet.files.front().ownerMod, L"Overwrite");
+        EXPECT_NE(readTextFile(overwriteFile).find("\"ToggleKey\":34"), std::string::npos);
+        EXPECT_EQ(readTextFile(modFile), "{\"Menu\":{\"ToggleKey\":35},\"ShaderBlockNextKey\":33}\n");
         EXPECT_FALSE(std::filesystem::exists(project / L"mods" / L"Fluxora AI Overrides" / virtualPath));
+
+        const auto rollback = service.rollbackRun(
+            L"chat-overwrite-winner",
+            L"run-overwrite-winner",
+            L"operation-overwrite-winner-rollback");
+        EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+        EXPECT_EQ(readTextFile(overwriteFile), "{\"Menu\":{\"ToggleKey\":36},\"ShaderBlockNextKey\":33}\n");
     }
 
     TEST(BuildFileWorkspaceServiceTests, JsonPointerMutationUsesManagedProfileOverrideAndRollsBack)
@@ -1077,6 +1096,7 @@ namespace fluxora::tests
                 20,
                 L""});
         ASSERT_EQ(exactSettings.entries.size(), 1u);
+        EXPECT_TRUE(exactSettings.entries.front().managedOverrideEligible);
         const auto toggle = service.queryJson(
             L"chat-managed-override",
             exactSettings.entries.front().fileRef,
@@ -1454,6 +1474,410 @@ namespace fluxora::tests
             project / L"mods" / L"Fluxora AI Overrides" / L"settings-add.ini"));
         EXPECT_FALSE(std::filesystem::exists(
             project / L"mods" / L"Fluxora AI Overrides" / L"settings-remove.ini"));
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, AppliesDistinctIniKeysInOneAtomicFileChange)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path source =
+            project / L"mods" / L"No Grass In Objects" / L"SKSE" / L"Plugins" / L"GrassControl.ini";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            source,
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\n");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-ini-batch", project);
+
+        const auto page = service.search(
+            L"chat-ini-batch",
+            BuildFileSearchRequest{BuildFileScope::Build, L"GrassControl.ini", 20, L""});
+        ASSERT_EQ(page.entries.size(), 1u);
+        const auto useCache = service.queryIni(
+            L"chat-ini-batch", page.entries.front().fileRef, L"Grass", L"Use-grass-cache");
+        const auto onlyCache = service.queryIni(
+            L"chat-ini-batch", page.entries.front().fileRef, L"Grass", L"Only-load-from-cache");
+
+        auto enableGeneration = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            useCache.sha256,
+            L"Grass",
+            L"Use-grass-cache",
+            L"true");
+        enableGeneration.expectedValue = L"false";
+        enableGeneration.revision = page.entries.front().indexRevision;
+        auto disableCacheOnly = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            onlyCache.sha256,
+            L"Grass",
+            L"Only-load-from-cache",
+            L"false");
+        disableCacheOnly.expectedValue = L"true";
+        disableCacheOnly.revision = page.entries.front().indexRevision;
+
+        const auto duplicateError = capturedWorkspaceError([&]
+        {
+            static_cast<void>(service.apply(
+                L"chat-ini-batch",
+                L"run-duplicate-ini-key",
+                L"operation-duplicate-ini-key",
+                {enableGeneration, enableGeneration}));
+        });
+        EXPECT_EQ(duplicateError.code(), "validation-failed");
+
+        const auto changeSet = service.apply(
+            L"chat-ini-batch",
+            L"run-distinct-ini-keys",
+            L"operation-distinct-ini-keys",
+            {enableGeneration, disableCacheOnly});
+        ASSERT_EQ(changeSet.files.size(), 1u);
+        EXPECT_EQ(changeSet.files.front().verification, L"ini-keys-matched-after-reread");
+        EXPECT_EQ(changeSet.files.front().hunks.size(), 2u);
+        EXPECT_EQ(
+            readTextFile(source),
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\n");
+        const std::filesystem::path managed =
+            project / L"mods" / L"Fluxora AI Overrides" / L"SKSE" / L"Plugins" / L"GrassControl.ini";
+        const std::string managedText = readTextFile(managed);
+        EXPECT_NE(managedText.find("Use-grass-cache=true"), std::string::npos);
+        EXPECT_NE(managedText.find("Only-load-from-cache=false"), std::string::npos);
+
+        const auto rollback = service.rollbackRun(
+            L"chat-ini-batch",
+            L"run-distinct-ini-keys",
+            L"operation-distinct-ini-keys-rollback");
+        EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+        EXPECT_FALSE(std::filesystem::exists(managed));
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, SearchReturnsExistingEffectiveManagedOverrideForSourceSpecificPath)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path sourceMod = project / L"mods" / L"No Grass In Objects";
+        const std::filesystem::path virtualPath =
+            std::filesystem::path(L"SKSE") / L"Plugins" / L"GrassControl.ini";
+        const std::filesystem::path source = sourceMod / virtualPath;
+        const std::filesystem::path managedMod = project / L"mods" / L"Fluxora AI Overrides";
+        const std::filesystem::path managed = managedMod / virtualPath;
+        const std::string originalSource =
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\n";
+        const std::string originalManaged =
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=true\r\nManaged-only=keep\r\n";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source, originalSource);
+        writeTextFile(managed, originalManaged);
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            sourceMod,
+            L"No Grass In Objects",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            managedMod,
+            L"Fluxora AI Overrides",
+            L"",
+            ModSourceRecord{L"local"}));
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"No Grass In Objects", L""},
+                ProfileOrderImportItemRecord{L"mod", L"Fluxora AI Overrides", L""}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-existing-ini-override", project, L"Default");
+
+        const auto page = service.search(
+            L"chat-existing-ini-override",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"No Grass In Objects/SKSE/Plugins/GrassControl.ini",
+                20,
+                L""});
+        ASSERT_EQ(page.entries.size(), 1u);
+        EXPECT_EQ(page.entries.front().ownerMod, L"Fluxora AI Overrides");
+        EXPECT_EQ(
+            page.entries.front().relativePath,
+            L"Fluxora AI Overrides/" + virtualPath.generic_wstring());
+
+        const auto useCache = service.queryIni(
+            L"chat-existing-ini-override",
+            page.entries.front().fileRef,
+            L"Grass",
+            L"Use-grass-cache");
+        const auto onlyCache = service.queryIni(
+            L"chat-existing-ini-override",
+            page.entries.front().fileRef,
+            L"Grass",
+            L"Only-load-from-cache");
+        auto enableGeneration = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            useCache.sha256,
+            L"Grass",
+            L"Use-grass-cache",
+            L"true");
+        enableGeneration.expectedValue = L"false";
+        enableGeneration.revision = page.entries.front().indexRevision;
+        auto disableCacheOnly = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            onlyCache.sha256,
+            L"Grass",
+            L"Only-load-from-cache",
+            L"false");
+        disableCacheOnly.expectedValue = L"true";
+        disableCacheOnly.revision = page.entries.front().indexRevision;
+
+        const auto changeSet = service.apply(
+            L"chat-existing-ini-override",
+            L"run-existing-ini-override",
+            L"operation-existing-ini-override",
+            {enableGeneration, disableCacheOnly});
+        ASSERT_EQ(changeSet.files.size(), 1u);
+        EXPECT_EQ(changeSet.files.front().ownerMod, L"Fluxora AI Overrides");
+        EXPECT_EQ(readTextFile(source), originalSource);
+        EXPECT_NE(readTextFile(managed).find("Use-grass-cache=true"), std::string::npos);
+        EXPECT_NE(readTextFile(managed).find("Only-load-from-cache=false"), std::string::npos);
+        EXPECT_NE(readTextFile(managed).find("Managed-only=keep"), std::string::npos);
+
+        const auto rollback = service.rollbackRun(
+            L"chat-existing-ini-override",
+            L"run-existing-ini-override",
+            L"operation-existing-ini-override-rollback");
+        EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+        EXPECT_EQ(readTextFile(managed), originalManaged);
+        EXPECT_EQ(readTextFile(source), originalSource);
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, SearchAndBatchMutateEffectiveOverwriteIniWithoutTouchingMods)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path sourceMod = project / L"mods" / L"No Grass In Objects - Grass Control";
+        const std::filesystem::path managedMod = project / L"mods" / L"Fluxora AI Overrides";
+        const std::filesystem::path virtualPath =
+            std::filesystem::path(L"SKSE") / L"Plugins" / L"GrassControl.ini";
+        const std::filesystem::path source = sourceMod / virtualPath;
+        const std::filesystem::path managed = managedMod / virtualPath;
+        const std::filesystem::path overwrite = project / L"overwrite" / virtualPath;
+        const std::string sourceText =
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=false\r\nSource-only=keep\r\n";
+        const std::string managedText =
+            "[Grass]\r\nUse-grass-cache=true\r\nOnly-load-from-cache=false\r\nManaged-only=keep\r\n";
+        const std::string overwriteText =
+            "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=false\r\nOverwrite-only=keep\r\n";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source, sourceText);
+        writeTextFile(managed, managedText);
+        writeTextFile(overwrite, overwriteText);
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            sourceMod,
+            L"No Grass In Objects - Grass Control",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            managedMod,
+            L"Fluxora AI Overrides",
+            L"",
+            ModSourceRecord{L"local"}));
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"No Grass In Objects - Grass Control", L""},
+                ProfileOrderImportItemRecord{L"mod", L"Fluxora AI Overrides", L""}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-overwrite-ini", project, L"Default");
+
+        const auto broadPage = service.search(
+            L"chat-overwrite-ini",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"GrassControl.ini",
+                20,
+                L""});
+        ASSERT_EQ(broadPage.entries.size(), 1u);
+        EXPECT_EQ(broadPage.totalMatches, 1u);
+        EXPECT_EQ(broadPage.entries.front().ownerMod, L"Overwrite");
+        EXPECT_TRUE(broadPage.entries.front().directMutationEligible);
+        EXPECT_NE(
+            std::find(
+                broadPage.entries.front().conflictingOwners.begin(),
+                broadPage.entries.front().conflictingOwners.end(),
+                L"No Grass In Objects - Grass Control"),
+            broadPage.entries.front().conflictingOwners.end());
+        EXPECT_NE(
+            std::find(
+                broadPage.entries.front().conflictingOwners.begin(),
+                broadPage.entries.front().conflictingOwners.end(),
+                L"Fluxora AI Overrides"),
+            broadPage.entries.front().conflictingOwners.end());
+
+        const auto page = service.search(
+            L"chat-overwrite-ini",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"No Grass In Objects - Grass Control/SKSE/Plugins/GrassControl.ini",
+                20,
+                L""});
+        ASSERT_EQ(page.entries.size(), 1u);
+        EXPECT_EQ(page.entries.front().fileRef, broadPage.entries.front().fileRef);
+        EXPECT_EQ(page.entries.front().ownerMod, L"Overwrite");
+        EXPECT_TRUE(page.entries.front().directMutationEligible);
+        const auto useCache = service.queryIni(
+            L"chat-overwrite-ini", page.entries.front().fileRef, L"Grass", L"Use-grass-cache");
+        const auto onlyCache = service.queryIni(
+            L"chat-overwrite-ini", page.entries.front().fileRef, L"Grass", L"Only-load-from-cache");
+        auto useMutation = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            useCache.sha256,
+            L"Grass",
+            L"Use-grass-cache",
+            L"true");
+        useMutation.expectedValue = L"false";
+        useMutation.revision = page.entries.front().indexRevision;
+        auto onlyMutation = BuildFileMutation::iniKey(
+            BuildFileMutationOperation::IniSetKey,
+            page.entries.front().fileRef,
+            onlyCache.sha256,
+            L"Grass",
+            L"Only-load-from-cache",
+            L"true");
+        onlyMutation.expectedValue = L"false";
+        onlyMutation.revision = page.entries.front().indexRevision;
+
+        const auto changeSet = service.apply(
+            L"chat-overwrite-ini",
+            L"run-overwrite-ini",
+            L"operation-overwrite-ini",
+            {useMutation, onlyMutation});
+        ASSERT_EQ(changeSet.files.size(), 1u);
+        EXPECT_EQ(changeSet.files.front().ownerMod, L"Overwrite");
+        EXPECT_EQ(readTextFile(source), sourceText);
+        EXPECT_EQ(readTextFile(managed), managedText);
+        EXPECT_NE(readTextFile(overwrite).find("Use-grass-cache=true"), std::string::npos);
+        EXPECT_NE(readTextFile(overwrite).find("Only-load-from-cache=true"), std::string::npos);
+        EXPECT_NE(readTextFile(overwrite).find("Overwrite-only=keep"), std::string::npos);
+
+        service.shutdown();
+        BuildFileWorkspaceService restoredService(logger, pathSettings);
+        restoredService.initialize();
+        restoredService.beginChat(L"chat-overwrite-ini", project, L"Default");
+        const auto rollback = restoredService.rollbackRun(
+            L"chat-overwrite-ini",
+            L"run-overwrite-ini",
+            L"operation-overwrite-ini-rollback");
+        EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+        EXPECT_EQ(readTextFile(overwrite), overwriteText);
+        EXPECT_EQ(readTextFile(source), sourceText);
+        EXPECT_EQ(readTextFile(managed), managedText);
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, SearchGroupsPhysicalConflictsBeforePagingDistinctVirtualPaths)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path sourceMod = project / L"mods" / L"Source Mod";
+        const std::filesystem::path managedMod = project / L"mods" / L"Fluxora AI Overrides";
+        const std::filesystem::path firstVirtualPath =
+            std::filesystem::path(L"SKSE") / L"Plugins" / L"GrassControl.ini";
+        const std::filesystem::path secondVirtualPath =
+            std::filesystem::path(L"SKSE") / L"Plugins" / L"Alternate" / L"GrassControl.ini";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(sourceMod / firstVirtualPath, "[Grass]\r\nEnabled=false\r\n");
+        writeTextFile(managedMod / firstVirtualPath, "[Grass]\r\nEnabled=true\r\n");
+        writeTextFile(project / L"overwrite" / firstVirtualPath, "[Grass]\r\nEnabled=true\r\n");
+        writeTextFile(sourceMod / secondVirtualPath, "[Grass]\r\nEnabled=false\r\n");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            sourceMod,
+            L"Source Mod",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            managedMod,
+            L"Fluxora AI Overrides",
+            L"",
+            ModSourceRecord{L"local"}));
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Source Mod", L""},
+                ProfileOrderImportItemRecord{L"mod", L"Fluxora AI Overrides", L""}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-search-virtual-pages", project, L"Default");
+
+        const auto firstPage = service.search(
+            L"chat-search-virtual-pages",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"GrassControl.ini",
+                1,
+                L""});
+        ASSERT_EQ(firstPage.entries.size(), 1u);
+        EXPECT_EQ(firstPage.totalMatches, 2u);
+        EXPECT_FALSE(firstPage.complete);
+        EXPECT_FALSE(firstPage.nextCursor.empty());
+
+        const auto secondPage = service.search(
+            L"chat-search-virtual-pages",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"GrassControl.ini",
+                1,
+                firstPage.nextCursor,
+                {},
+                firstPage.revision});
+        ASSERT_EQ(secondPage.entries.size(), 1u);
+        EXPECT_EQ(secondPage.totalMatches, 2u);
+        EXPECT_TRUE(secondPage.complete);
+        EXPECT_TRUE(secondPage.nextCursor.empty());
+        EXPECT_NE(
+            firstPage.entries.front().relativePath,
+            secondPage.entries.front().relativePath);
+        EXPECT_NE(
+            firstPage.entries.front().fileRef,
+            secondPage.entries.front().fileRef);
     }
 
 #ifdef _WIN32

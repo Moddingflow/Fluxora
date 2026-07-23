@@ -23,6 +23,7 @@ import {
 import { transcribeVoiceWithWatchdog } from './ai-voice-transcription';
 
 export interface UseAiVoiceInputOptions {
+  contextHints: readonly string[];
   draft: string;
   language: string;
   ownerChatId: string;
@@ -122,6 +123,7 @@ const createVoiceOperationId = (): string => {
 };
 
 export function useAiVoiceInput({
+  contextHints,
   draft,
   language,
   ownerChatId,
@@ -293,6 +295,7 @@ export function useAiVoiceInput({
         {
           channelCount: 1,
           completionMode,
+          contextHints: [...contextHints],
           durationMs,
           language: 'auto',
           operationId,
@@ -322,7 +325,7 @@ export function useAiVoiceInput({
     } finally {
       pcm.fill(0);
     }
-  }, [clearTimer, fail, language, onDraftChange, onSend]);
+  }, [clearTimer, contextHints, fail, language, onDraftChange, onSend]);
 
   const cancel = useCallback(() => disposeActive(true), [disposeActive]);
 

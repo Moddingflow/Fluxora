@@ -513,7 +513,7 @@ fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             internal_name: "local.files.discover",
-            description: "Discover effective allowlisted files across registered build roots. Continue with revision and cursor until complete. Core owns unique, ambiguous, or not-found resolution. Never stage an ambiguous candidate; refine its exact relative path through local.files.search first.",
+            description: "Discover effective allowlisted files across registered build roots. Continue with revision and cursor until complete. Core owns effective-winner resolution. Physical owners of one normalized virtual path are one result; conflictingOwners are evidence, not writable candidates. Never stage when several distinct virtual targets remain.",
             parameters: vec![
                 optional("scopes", SCOPES),
                 required("aliases", NON_EMPTY_STRING_ARRAY),
@@ -526,7 +526,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             internal_name: "local.files.search",
-            description: "Search the complete allowlisted filename and relative-path index. Query must be non-empty.",
+            description: "Search the complete allowlisted filename and relative-path index. Build results are grouped by normalized virtual path before pagination and contain only the core-selected effective winner ref; filename and source-owner-path queries for that virtual file resolve to the same ref. Multiple entries are distinct virtual targets. Query must be non-empty.",
             parameters: vec![
                 optional("scope", ParameterKind::Enum(&["build", "game", "downloads"])),
                 required("query", NON_EMPTY_STRING),
@@ -583,7 +583,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             internal_name: "local.config.inspect_recipe",
-            description: "Preflight an allowlisted JSON or JSONC pointer and normalize its current and requested JSON values before staging.",
+            description: "Preflight an allowlisted JSON or JSONC pointer and normalize its current and requested JSON values before staging. Never use this tool for INI files.",
             parameters: vec![
                 required("fileRef", NON_EMPTY_STRING),
                 required("targetPointer", NON_EMPTY_STRING),
@@ -629,7 +629,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             internal_name: "local.ini.stage_set_key",
-            description: "Stage one server-validated INI set, add, or remove operation. The source mod remains unchanged.",
+            description: "Stage one server-validated INI set, add, or remove operation after local.ini.query. Do not call local.config.inspect_recipe for INI. The source mod remains unchanged.",
             parameters: vec![
                 required("fileRef", NON_EMPTY_STRING),
                 required("revision", NON_EMPTY_STRING),
@@ -845,6 +845,17 @@ pub fn normalize_tool_args(name: &str, args: &Value) -> Value {
         .is_none_or(|scope| scope.trim().is_empty());
     if scope_is_empty {
         normalized.insert("scope".to_string(), json!("build"));
+    }
+    let cursor_is_empty = normalized
+        .get("cursor")
+        .and_then(Value::as_str)
+        .is_none_or(|cursor| cursor.trim().is_empty());
+    let has_revision = normalized
+        .get("revision")
+        .and_then(Value::as_str)
+        .is_some_and(|revision| !revision.trim().is_empty());
+    if cursor_is_empty && has_revision {
+        normalized.insert("revision".to_string(), json!(""));
     }
     Value::Object(normalized)
 }

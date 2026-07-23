@@ -10,6 +10,7 @@
 #include "FluxoraCore/Services/ManagedAiOverrideService.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
@@ -19,6 +20,7 @@
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -36,7 +38,7 @@ namespace fluxora
     {
         constexpr std::uintmax_t maximumFileBytes = 5ull * 1024ull * 1024ull;
         constexpr std::size_t maximumChangedTextBytes = 2ull * 1024ull * 1024ull;
-        constexpr std::size_t maximumBatchFiles = 16;
+        constexpr std::size_t maximumBatchMutations = 16;
         constexpr std::size_t maximumSearchResults = 20;
         constexpr std::size_t maximumSearchCandidatesPerPage = 512;
         constexpr std::size_t maximumSearchTraversalEntriesPerPage = 100'000;
@@ -1687,6 +1689,22 @@ namespace fluxora
             }
             metadata.readOnly = isReadOnly(reference.path);
             metadata.hidden = isHidden(reference.path);
+            metadata.managedOverrideEligible =
+                reference.scope == BuildFileScope::Build &&
+                !reference.contentsAreVirtualRoot &&
+                reference.kind == BuildFileKind::Text &&
+                !isProtectedRelativePath(reference.relativePath);
+            metadata.directMutationEligible =
+                reference.scope == BuildFileScope::Build &&
+                reference.contentsAreVirtualRoot &&
+                lower(reference.fixedOwnerMod) == L"overwrite" &&
+                reference.kind == BuildFileKind::Text &&
+                (metadata.extension == L".json" ||
+                    metadata.extension == L".jsonc" ||
+                    metadata.extension == L".ini" ||
+                    metadata.extension == L".cfg" ||
+                    metadata.extension == L".conf") &&
+                !isProtectedRelativePath(reference.relativePath);
             metadata.indexRevision = reference.indexRevision;
             metadata.version = versionFor(reference.path, reference.read ? reference.readHash : L"");
             if (reference.path != reference.root)
@@ -1820,7 +1838,6 @@ namespace fluxora
                         {
                             const auto relative = path.lexically_relative(root.path);
                             return root.scope == BuildFileScope::Build &&
-                                !root.contentsAreVirtualRoot &&
                                 !relative.empty() &&
                                 !relative.is_absolute() &&
                                 *relative.begin() != L"..";
@@ -2045,6 +2062,82 @@ namespace fluxora
             std::size_t depth{0};
             std::wstring sortKey;
         };
+        struct EffectiveBuildFile
+        {
+            const WorkspaceIndexedFile* file{nullptr};
+            int priority{-1};
+            std::wstring pathKey;
+            std::map<std::wstring, std::wstring> owners;
+        };
+        const auto buildVirtualPath = [](const WorkspaceIndexedFile& file)
+        {
+            if (file.root->contentsAreVirtualRoot)
+            {
+                return file.relative.lexically_normal();
+            }
+            auto part = file.relative.begin();
+            if (part != file.relative.end())
+            {
+                ++part;
+            }
+            std::filesystem::path result;
+            for (; part != file.relative.end(); ++part)
+            {
+                result /= *part;
+            }
+            return result.lexically_normal();
+        };
+        std::map<std::wstring, EffectiveBuildFile> effectiveBuildFiles;
+        if (request.scope == BuildFileScope::Build)
+        {
+            std::map<std::wstring, int> priorities;
+            try
+            {
+                const auto items = InstanceMetadataStore::listCachedProfileOrderItems(
+                    session.projectDirectory,
+                    session.profileName.empty() ? L"Default" : session.profileName,
+                    requireRoot(session, BuildFileScope::Build).path);
+                for (const auto& item : items)
+                {
+                    if (item.kind == L"mod" && item.hasMod && item.mod.state != L"disabled")
+                    {
+                        priorities[lower(item.mod.folderName)] = item.position;
+                        priorities[lower(item.mod.displayName)] = item.position;
+                    }
+                }
+            }
+            catch (...)
+            {
+            }
+            for (const auto& file : index.files)
+            {
+                const std::filesystem::path virtualPath = buildVirtualPath(file);
+                if (virtualPath.empty())
+                {
+                    continue;
+                }
+                const std::wstring owner = file.root->fixedOwnerMod.empty()
+                    ? ownerModFor(BuildFileScope::Build, file.relative.generic_wstring())
+                    : file.root->fixedOwnerMod;
+                const auto priority = priorities.find(lower(owner));
+                const int value = file.root->alwaysWins
+                    ? (std::numeric_limits<int>::max)()
+                    : priority == priorities.end() ? -1 : priority->second;
+                const std::wstring candidatePathKey = lower(file.path.lexically_normal().generic_wstring());
+                auto& effective = effectiveBuildFiles[lower(virtualPath.generic_wstring())];
+                if (!owner.empty())
+                {
+                    effective.owners.try_emplace(lower(owner), owner);
+                }
+                if (effective.file == nullptr || value > effective.priority ||
+                    (value == effective.priority && candidatePathKey > effective.pathKey))
+                {
+                    effective.file = &file;
+                    effective.priority = value;
+                    effective.pathKey = candidatePathKey;
+                }
+            }
+        }
         std::vector<std::wstring> queryParts;
         std::wistringstream words(request.query);
         for (std::wstring word; words >> word;)
@@ -2064,8 +2157,8 @@ namespace fluxora
             }
         }
 
-        std::vector<RankedCandidate> matches;
-        matches.reserve(index.files.size());
+        std::vector<RankedCandidate> rankedMatches;
+        rankedMatches.reserve(index.files.size());
         for (const auto& file : index.files)
         {
             const std::wstring normalizedRelativePath =
@@ -2110,9 +2203,9 @@ namespace fluxora
             {
                 candidate.matchRank = 1;
             }
-            matches.push_back(std::move(candidate));
+            rankedMatches.push_back(std::move(candidate));
         }
-        std::sort(matches.begin(), matches.end(), [](const auto& left, const auto& right)
+        std::sort(rankedMatches.begin(), rankedMatches.end(), [](const auto& left, const auto& right)
         {
             if (left.matchRank != right.matchRank)
             {
@@ -2124,6 +2217,33 @@ namespace fluxora
             }
             return left.sortKey < right.sortKey;
         });
+        const std::size_t physicalMatchCount = rankedMatches.size();
+        std::vector<RankedCandidate> matches;
+        matches.reserve(rankedMatches.size());
+        if (request.scope == BuildFileScope::Build)
+        {
+            std::set<std::wstring> matchedVirtualPaths;
+            for (auto& ranked : rankedMatches)
+            {
+                const std::wstring virtualPathKey =
+                    lower(buildVirtualPath(*ranked.file).generic_wstring());
+                if (virtualPathKey.empty() || !matchedVirtualPaths.insert(virtualPathKey).second)
+                {
+                    continue;
+                }
+                const auto effective = effectiveBuildFiles.find(virtualPathKey);
+                if (effective == effectiveBuildFiles.end() || effective->second.file == nullptr)
+                {
+                    continue;
+                }
+                ranked.file = effective->second.file;
+                matches.push_back(std::move(ranked));
+            }
+        }
+        else
+        {
+            matches = std::move(rankedMatches);
+        }
 
         const std::size_t offset = cursorOffset(request.cursor, index.revision, L"Search");
         if (offset > matches.size())
@@ -2148,8 +2268,35 @@ namespace fluxora
                 ? BuildFileResolution::Unique
                 : BuildFileResolution::Ambiguous;
             reference.effectiveWinner = matches.size() == 1;
-            page.entries.push_back(metadataFor(*state_, session, reference));
+            BuildFileMetadata metadata = metadataFor(*state_, session, reference);
+            if (request.scope == BuildFileScope::Build)
+            {
+                const auto effective = effectiveBuildFiles.find(
+                    lower(buildVirtualPath(candidate).generic_wstring()));
+                if (effective != effectiveBuildFiles.end())
+                {
+                    const std::wstring winnerOwner = lower(metadata.ownerMod);
+                    for (const auto& [normalizedOwner, owner] : effective->second.owners)
+                    {
+                        if (normalizedOwner != winnerOwner)
+                        {
+                            metadata.conflictingOwners.push_back(owner);
+                        }
+                    }
+                }
+            }
+            page.entries.push_back(std::move(metadata));
         }
+        state_->logger.writeOperation(
+            LogLevel::Info,
+            "AiBuildFiles",
+            "Resolved file search scope=" + std::to_string(static_cast<int>(request.scope)) +
+                " indexedPhysical=" + std::to_string(index.files.size()) +
+                " matchedPhysical=" + std::to_string(physicalMatchCount) +
+                " matchedVirtual=" + std::to_string(matches.size()) +
+                " resolution=" + (matches.size() == 1 ? "unique-effective-winner" :
+                    matches.empty() ? "not-found" : "multiple-virtual-targets") +
+                " operationId=" + narrowAscii(request.operationId));
         return page;
     }
 
@@ -2487,9 +2634,9 @@ namespace fluxora
         {
             throw BuildFileWorkspaceError("validation-failed", "Run and operation ids are required.");
         }
-        if (mutations.empty() || mutations.size() > maximumBatchFiles)
+        if (mutations.empty() || mutations.size() > maximumBatchMutations)
         {
-            throw BuildFileWorkspaceError("too-large", "A file mutation batch must contain 1 to 16 files.");
+            throw BuildFileWorkspaceError("too-large", "A file mutation batch must contain 1 to 16 mutations.");
         }
         std::scoped_lock lock(state_->mutex);
         State::Session& session = requireSession(*state_, chatId);
@@ -2500,12 +2647,21 @@ namespace fluxora
 
         struct Plan
         {
+            struct Edit
+            {
+                BuildFileMutation mutation;
+                std::size_t oldStart{1};
+                std::wstring expectedText;
+                std::wstring replacementText;
+            };
+
             std::wstring referenceToken;
             BuildFileMutation mutation;
             std::filesystem::path sourcePath;
             std::filesystem::path root;
             std::filesystem::path path;
             BuildFileScope scope{BuildFileScope::Build};
+            std::wstring ownerMod;
             std::wstring relativePath;
             BuildFileTextEncoding encoding{BuildFileTextEncoding::Unsupported};
             bool created{false};
@@ -2519,22 +2675,65 @@ namespace fluxora
             std::wstring afterVersion;
             std::wstring verification{L"sha256-matched-after-reread"};
             std::size_t matchOffset{0};
+            std::vector<Edit> edits;
             std::optional<ManagedAiOverridePlan> managedOverride;
             bool registeredManagedMod{false};
         };
         std::vector<Plan> plans;
         plans.reserve(mutations.size());
-        std::set<std::wstring> uniqueRefs;
-        std::size_t changedBytes = 0;
-        for (const BuildFileMutation& mutation : mutations)
+        std::vector<std::vector<std::size_t>> mutationGroups;
+        std::map<std::wstring, std::size_t> groupByFile;
+        for (std::size_t mutationIndex = 0; mutationIndex < mutations.size(); ++mutationIndex)
         {
-            const std::wstring uniquenessKey = mutation.createFile
+            const BuildFileMutation& mutation = mutations[mutationIndex];
+            const std::wstring fileKey = mutation.createFile
                 ? L"create:" + mutation.parentRef + L":" + lower(mutation.fileName)
                 : L"patch:" + mutation.fileRef;
-            if (!uniqueRefs.insert(uniquenessKey).second)
+            const auto existing = groupByFile.find(fileKey);
+            if (existing == groupByFile.end())
             {
-                throw BuildFileWorkspaceError("validation-failed", "A batch cannot mutate one file twice.");
+                groupByFile.emplace(fileKey, mutationGroups.size());
+                mutationGroups.push_back({mutationIndex});
+                continue;
             }
+
+            auto& group = mutationGroups[existing->second];
+            const auto isIniMutation = [](const BuildFileMutation& candidate)
+            {
+                return !candidate.createFile &&
+                    candidate.format == BuildFileMutationFormat::Ini &&
+                    candidate.operation != BuildFileMutationOperation::ExactPatch &&
+                    candidate.operation != BuildFileMutationOperation::JsonSetPointer;
+            };
+            if (!isIniMutation(mutations[group.front()]) || !isIniMutation(mutation))
+            {
+                throw BuildFileWorkspaceError(
+                    "validation-failed",
+                    "A batch can mutate one file multiple times only through distinct INI keys.");
+            }
+            const std::wstring settingKey =
+                lower(trimText(mutation.section)) + L"\n" + lower(trimText(mutation.key));
+            const bool duplicateSetting = std::any_of(
+                group.begin(),
+                group.end(),
+                [&](const std::size_t groupedIndex)
+                {
+                    const BuildFileMutation& grouped = mutations[groupedIndex];
+                    return lower(trimText(grouped.section)) + L"\n" + lower(trimText(grouped.key)) ==
+                        settingKey;
+                });
+            if (duplicateSetting)
+            {
+                throw BuildFileWorkspaceError(
+                    "validation-failed",
+                    "A batch cannot mutate the same INI section and key twice.");
+            }
+            group.push_back(mutationIndex);
+        }
+        std::size_t changedBytes = 0;
+        for (const auto& mutationGroup : mutationGroups)
+        {
+            const BuildFileMutation& mutation = mutations[mutationGroup.front()];
             if (mutation.createFile)
             {
                 State::Reference& parent = requireReference(session, mutation.parentRef);
@@ -2565,6 +2764,9 @@ namespace fluxora
                 plan.path = plan.sourcePath;
                 plan.scope = parent.scope;
                 plan.relativePath = normalizedRelative(plan.path.lexically_relative(plan.root));
+                plan.ownerMod = parent.fixedOwnerMod.empty()
+                    ? ownerModFor(parent.scope, plan.relativePath)
+                    : parent.fixedOwnerMod;
                 plan.encoding = BuildFileTextEncoding::Utf8;
                 plan.created = true;
                 const std::wstring extension = lower(fileName.extension().wstring());
@@ -2604,6 +2806,7 @@ namespace fluxora
                 }
                 plan.root = managed.modsRoot;
                 plan.path = managed.targetPath;
+                plan.ownerMod = ManagedAiOverrideService::modName();
                 plan.relativePath = managed.relativePath;
                 plan.managedOverride = managed;
                 plan.afterText = mutation.content;
@@ -2625,11 +2828,19 @@ namespace fluxora
                 continue;
             }
             State::Reference& reference = requireReference(session, mutation.fileRef);
-            if (reference.scope != BuildFileScope::Build || reference.contentsAreVirtualRoot)
+            const bool directStructuredMutation =
+                reference.contentsAreVirtualRoot &&
+                lower(reference.fixedOwnerMod) == L"overwrite" &&
+                (mutation.operation == BuildFileMutationOperation::JsonSetPointer ||
+                    mutation.operation == BuildFileMutationOperation::IniSetKey ||
+                    mutation.operation == BuildFileMutationOperation::IniAddKey ||
+                    mutation.operation == BuildFileMutationOperation::IniRemoveKey);
+            if (reference.scope != BuildFileScope::Build ||
+                (reference.contentsAreVirtualRoot && !directStructuredMutation))
             {
                 throw BuildFileWorkspaceError(
                     "protected",
-                    "AI file changes are allowed only through the managed mod override scope.");
+                    "AI file changes require a managed mod override or a structured mutation of the effective Overwrite config.");
             }
             if (reference.resolution != BuildFileResolution::Unique || !reference.effectiveWinner)
             {
@@ -2675,6 +2886,9 @@ namespace fluxora
             plan.root = reference.root;
             plan.path = reference.path;
             plan.scope = reference.scope;
+            plan.ownerMod = reference.fixedOwnerMod.empty()
+                ? ownerModFor(reference.scope, reference.relativePath)
+                : reference.fixedOwnerMod;
             plan.relativePath = reference.relativePath;
             plan.encoding = reference.encoding;
             plan.beforeBytes = readBytes(reference.path);
@@ -2701,12 +2915,6 @@ namespace fluxora
                         "protected",
                         "Semantic JSON mutations require a mod-owned JSON effective winner.");
                 }
-                if (reference.contentsAreVirtualRoot)
-                {
-                    throw BuildFileWorkspaceError(
-                        "protected",
-                        "The effective file is owned by Overwrite and cannot be superseded by a managed mod without changing the original.");
-                }
                 const ConfigRecipeInspection recipe = state_->configRecipes.inspect(
                     reference.relativePath,
                     extension == L".jsonc" ? jsonWithoutComments(plan.beforeText) : plan.beforeText,
@@ -2716,26 +2924,30 @@ namespace fluxora
                 {
                     throw BuildFileWorkspaceError("needs-input", narrowAscii(recipe.question));
                 }
-                ManagedAiOverridePlan managed;
-                try
+                if (!reference.contentsAreVirtualRoot)
                 {
-                    managed = state_->managedOverrides.plan(
-                        session.projectDirectory,
-                        session.profileName,
-                        reference.root,
-                        reference.path);
+                    ManagedAiOverridePlan managed;
+                    try
+                    {
+                        managed = state_->managedOverrides.plan(
+                            session.projectDirectory,
+                            session.profileName,
+                            reference.root,
+                            reference.path);
+                    }
+                    catch (const std::exception&)
+                    {
+                        throw BuildFileWorkspaceError(
+                            "stale-version",
+                            "Managed override target is no longer available for this discovery result.");
+                    }
+                    plan.root = managed.modsRoot;
+                    plan.path = managed.targetPath;
+                    plan.ownerMod = ManagedAiOverrideService::modName();
+                    plan.relativePath = managed.relativePath;
+                    plan.created = !managed.targetExisted;
+                    plan.managedOverride = managed;
                 }
-                catch (const std::exception&)
-                {
-                    throw BuildFileWorkspaceError(
-                        "stale-version",
-                        "Managed override target is no longer available for this discovery result.");
-                }
-                plan.root = managed.modsRoot;
-                plan.path = managed.targetPath;
-                plan.relativePath = managed.relativePath;
-                plan.created = !managed.targetExisted;
-                plan.managedOverride = managed;
                 JsonValue document = JsonValue::null();
                 JsonValue expected = JsonValue::null();
                 JsonValue replacement = JsonValue::null();
@@ -2809,32 +3021,30 @@ namespace fluxora
                         "protected",
                         "Semantic INI mutations require a mod-owned effective winner.");
                 }
-                if (reference.contentsAreVirtualRoot)
+                if (!reference.contentsAreVirtualRoot)
                 {
-                    throw BuildFileWorkspaceError(
-                        "protected",
-                        "The effective file is owned by Overwrite and cannot be superseded by a managed mod without changing the original.");
+                    ManagedAiOverridePlan managed;
+                    try
+                    {
+                        managed = state_->managedOverrides.plan(
+                            session.projectDirectory,
+                            session.profileName,
+                            reference.root,
+                            reference.path);
+                    }
+                    catch (const std::exception&)
+                    {
+                        throw BuildFileWorkspaceError(
+                            "stale-version",
+                            "Managed override target is no longer available for this discovery result.");
+                    }
+                    plan.root = managed.modsRoot;
+                    plan.path = managed.targetPath;
+                    plan.ownerMod = ManagedAiOverrideService::modName();
+                    plan.relativePath = managed.relativePath;
+                    plan.created = !managed.targetExisted;
+                    plan.managedOverride = managed;
                 }
-                ManagedAiOverridePlan managed;
-                try
-                {
-                    managed = state_->managedOverrides.plan(
-                        session.projectDirectory,
-                        session.profileName,
-                        reference.root,
-                        reference.path);
-                }
-                catch (const std::exception&)
-                {
-                    throw BuildFileWorkspaceError(
-                        "stale-version",
-                        "Managed override target is no longer available for this discovery result.");
-                }
-                plan.root = managed.modsRoot;
-                plan.path = managed.targetPath;
-                plan.relativePath = managed.relativePath;
-                plan.created = !managed.targetExisted;
-                plan.managedOverride = managed;
                 const IniLineEdit edit = applyIniKeyOperation(
                     plan.beforeText,
                     mutation.operation,
@@ -2861,7 +3071,54 @@ namespace fluxora
                 plan.afterText.replace(edit.offset, edit.expected.size(), edit.replacement);
                 plan.verification = L"ini-key-matched-after-reread";
             }
-            if (!plan.managedOverride.has_value())
+            plan.edits.push_back(Plan::Edit{
+                plan.mutation,
+                lineAt(plan.beforeText, plan.matchOffset),
+                plan.mutation.expectedText,
+                plan.mutation.replacementText});
+            for (std::size_t groupedOffset = 1; groupedOffset < mutationGroup.size(); ++groupedOffset)
+            {
+                const BuildFileMutation& groupedMutation = mutations[mutationGroup[groupedOffset]];
+                if (groupedMutation.revision.empty() ||
+                    groupedMutation.revision != reference.indexRevision ||
+                    groupedMutation.baseSha256.empty() ||
+                    groupedMutation.baseSha256 != reference.readHash ||
+                    groupedMutation.baseSha256 != plan.beforeHash)
+                {
+                    throw BuildFileWorkspaceError(
+                        "stale-version",
+                        "Every INI mutation in one file batch must match the same read revision and hash.");
+                }
+                const auto values = iniKeyValues(
+                    plan.afterText,
+                    groupedMutation.section,
+                    groupedMutation.key);
+                if (!groupedMutation.expectedValue.empty() &&
+                    (values.size() != 1 || values.front() != trimText(groupedMutation.expectedValue)))
+                {
+                    throw BuildFileWorkspaceError(
+                        "stale-version",
+                        "INI key value changed after discovery.");
+                }
+                const IniLineEdit edit = applyIniKeyOperation(
+                    plan.afterText,
+                    groupedMutation.operation,
+                    groupedMutation.section,
+                    groupedMutation.key,
+                    groupedMutation.value);
+                Plan::Edit plannedEdit{
+                    groupedMutation,
+                    lineAt(plan.afterText, edit.offset),
+                    edit.expected,
+                    edit.replacement};
+                plan.afterText.replace(edit.offset, edit.expected.size(), edit.replacement);
+                plan.edits.push_back(std::move(plannedEdit));
+            }
+            if (plan.edits.size() > 1)
+            {
+                plan.verification = L"ini-keys-matched-after-reread";
+            }
+            if (!plan.managedOverride.has_value() && !reference.contentsAreVirtualRoot)
             {
                 ManagedAiOverridePlan managed;
                 try
@@ -2880,6 +3137,7 @@ namespace fluxora
                 }
                 plan.root = managed.modsRoot;
                 plan.path = managed.targetPath;
+                plan.ownerMod = ManagedAiOverrideService::modName();
                 plan.relativePath = managed.relativePath;
                 plan.created = !managed.targetExisted;
                 plan.managedOverride = managed;
@@ -2890,9 +3148,12 @@ namespace fluxora
             {
                 throw BuildFileWorkspaceError("too-large", "Resulting file exceeds the 5 MiB limit.");
             }
-            changedBytes += (std::max)(
-                plan.mutation.expectedText.size(),
-                plan.mutation.replacementText.size()) * sizeof(wchar_t);
+            for (const auto& edit : plan.edits)
+            {
+                changedBytes += (std::max)(
+                    edit.expectedText.size(),
+                    edit.replacementText.size()) * sizeof(wchar_t);
+            }
             if (changedBytes > maximumChangedTextBytes)
             {
                 throw BuildFileWorkspaceError("too-large", "Batch exceeds the 2 MiB changed-text limit.");
@@ -2941,7 +3202,7 @@ namespace fluxora
             checkpointRun.files.push_back(AiRollbackCheckpointFile{
                 relative.generic_wstring(),
                 plan.relativePath,
-                ownerModFor(plan.scope, plan.relativePath),
+                plan.ownerMod,
                 plan.beforeHash,
                 plan.afterHash,
                 plan.beforeBytes,
@@ -3014,34 +3275,37 @@ namespace fluxora
                         session.profileName,
                         *plan.managedOverride,
                         operationId);
-                    try
+                }
+                try
+                {
+                    const DecodedText verified = decodeText(verifiedBytes);
+                    for (const auto& edit : plan.edits)
                     {
-                        const DecodedText verified = decodeText(verifiedBytes);
-                        if (plan.mutation.operation == BuildFileMutationOperation::JsonSetPointer)
+                        if (edit.mutation.operation == BuildFileMutationOperation::JsonSetPointer)
                         {
                             JsonValue verifiedJson = JsonReader::parse(
-                                plan.mutation.format == BuildFileMutationFormat::Jsonc
+                                edit.mutation.format == BuildFileMutationFormat::Jsonc
                                     ? jsonWithoutComments(verified.text)
                                     : verified.text);
-                            if (serializeJsonValue(resolveJsonPointer(verifiedJson, plan.mutation.pointer)) !=
-                                serializeJsonValue(JsonReader::parse(plan.mutation.value)))
+                            if (serializeJsonValue(resolveJsonPointer(verifiedJson, edit.mutation.pointer)) !=
+                                serializeJsonValue(JsonReader::parse(edit.mutation.value)))
                             {
                                 throw BuildFileWorkspaceError(
                                     "validation-failed",
                                     "JSON Pointer postcondition did not match after reread.");
                             }
                         }
-                        else if (plan.mutation.operation != BuildFileMutationOperation::ExactPatch)
+                        else if (edit.mutation.operation != BuildFileMutationOperation::ExactPatch)
                         {
                             const auto values = iniKeyValues(
                                 verified.text,
-                                plan.mutation.section,
-                                plan.mutation.key);
+                                edit.mutation.section,
+                                edit.mutation.key);
                             const bool removed =
-                                plan.mutation.operation == BuildFileMutationOperation::IniRemoveKey;
+                                edit.mutation.operation == BuildFileMutationOperation::IniRemoveKey;
                             if ((removed && !values.empty()) ||
                                 (!removed && (values.size() != 1 ||
-                                    values.front() != trimText(plan.mutation.value))))
+                                    values.front() != trimText(edit.mutation.value))))
                             {
                                 throw BuildFileWorkspaceError(
                                     "validation-failed",
@@ -3049,16 +3313,16 @@ namespace fluxora
                             }
                         }
                     }
-                    catch (const BuildFileWorkspaceError&)
-                    {
-                        throw;
-                    }
-                    catch (const std::exception&)
-                    {
-                        throw BuildFileWorkspaceError(
-                            "validation-failed",
-                            "Managed override config could not be verified after reread.");
-                    }
+                }
+                catch (const BuildFileWorkspaceError&)
+                {
+                    throw;
+                }
+                catch (const std::exception&)
+                {
+                    throw BuildFileWorkspaceError(
+                        "validation-failed",
+                        "Structured config could not be verified after reread.");
                 }
                 if (plan.created)
                 {
@@ -3081,7 +3345,7 @@ namespace fluxora
                 BuildFileChange change;
                 change.fileRef = committedReference.token;
                 change.scope = committedReference.scope;
-                change.ownerMod = ownerModFor(committedReference.scope, committedReference.relativePath);
+                change.ownerMod = plan.ownerMod;
                 change.relativePath = committedReference.relativePath;
                 change.status = plan.created
                     ? BuildFileChangeStatus::Created
@@ -3090,29 +3354,44 @@ namespace fluxora
                 change.verification = plan.verification;
                 change.beforeVersion = plan.beforeVersion;
                 change.afterVersion = plan.afterVersion;
-                BuildFileDiffHunk hunk;
-                hunk.oldStart = plan.created ? 1 : lineAt(plan.beforeText, plan.matchOffset);
-                hunk.newStart = hunk.oldStart;
-                const auto removed = plan.mutation.createFile
-                    ? std::vector<std::wstring>{}
-                    : splitLines(plan.mutation.expectedText);
-                const auto added = splitLines(
-                    plan.mutation.createFile
-                        ? plan.mutation.content
-                        : plan.mutation.replacementText);
-                hunk.oldLines = removed.size();
-                hunk.newLines = added.size();
-                for (const auto& line : removed)
+                if (plan.mutation.createFile)
                 {
-                    hunk.lines.push_back(L"-" + line);
+                    BuildFileDiffHunk hunk;
+                    hunk.oldStart = 1;
+                    hunk.newStart = 1;
+                    const auto added = splitLines(plan.mutation.content);
+                    hunk.newLines = added.size();
+                    for (const auto& line : added)
+                    {
+                        hunk.lines.push_back(L"+" + line);
+                    }
+                    change.addedLines = added.size();
+                    change.hunks.push_back(std::move(hunk));
                 }
-                for (const auto& line : added)
+                else
                 {
-                    hunk.lines.push_back(L"+" + line);
+                    for (const auto& edit : plan.edits)
+                    {
+                        BuildFileDiffHunk hunk;
+                        hunk.oldStart = edit.oldStart;
+                        hunk.newStart = edit.oldStart;
+                        const auto removed = splitLines(edit.expectedText);
+                        const auto added = splitLines(edit.replacementText);
+                        hunk.oldLines = removed.size();
+                        hunk.newLines = added.size();
+                        for (const auto& line : removed)
+                        {
+                            hunk.lines.push_back(L"-" + line);
+                        }
+                        for (const auto& line : added)
+                        {
+                            hunk.lines.push_back(L"+" + line);
+                        }
+                        change.removedLines += removed.size();
+                        change.addedLines += added.size();
+                        change.hunks.push_back(std::move(hunk));
+                    }
                 }
-                change.removedLines = removed.size();
-                change.addedLines = added.size();
-                change.hunks.push_back(std::move(hunk));
                 checkpointRun.files[index].addedLines = change.addedLines;
                 checkpointRun.files[index].removedLines = change.removedLines;
                 checkpointRun.files[index].beforeVersion = change.beforeVersion;

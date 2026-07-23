@@ -209,6 +209,10 @@ endif()
 
 target_link_libraries(FluxoraCoreApiTests PRIVATE GTest::gtest_main FluxoraCore)
 
+if(WIN32)
+    target_link_libraries(FluxoraCoreApiTests PRIVATE shell32)
+endif()
+
 add_custom_command(
     TARGET FluxoraCoreApiTests
     POST_BUILD

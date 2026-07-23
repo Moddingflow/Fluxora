@@ -24,6 +24,7 @@ import aiMicIcon from '../../../../../icons/ai-mic.svg';
 import type { AiProviderDiagnostic } from './ai-chat-settings';
 import type { AiChatState } from './ai-chat-state';
 import { formatVoiceDuration } from './ai-voice-state';
+import { buildVoiceContextHints } from './ai-voice-context';
 import { useAiVoiceInput } from './use-ai-voice-input';
 import { AiMicrophonePermissionDialog } from './AiMicrophonePermissionDialog';
 import { AiFileDiffPreviewDialog } from './AiFileDiffPreviewDialog';
@@ -36,6 +37,7 @@ export interface AiChatPanelProps {
   showCheckedSites?: boolean;
   showDeveloperDiagnostics?: boolean;
   state: AiChatState;
+  voiceContextTerms?: readonly string[];
   onCancel: () => void;
   onClose: () => void;
   onCloseChat: (chatId: string) => void;
@@ -217,6 +219,7 @@ export function AiChatPanel({
   providerDiagnostic,
   showDeveloperDiagnostics = false,
   state,
+  voiceContextTerms = [],
   onCancel,
   onClose,
   onCloseChat,
@@ -269,7 +272,13 @@ export function AiChatPanel({
     ).slice(-6),
     [state.activeRunId, state.intermediateEvents, state.runs]
   );
+  const voiceContextHints = useMemo(() => buildVoiceContextHints({
+    buildTerms: voiceContextTerms,
+    draft: state.draft,
+    recentMessages: state.messages.map((message) => message.text)
+  }), [state.draft, state.messages, voiceContextTerms]);
   const voice = useAiVoiceInput({
+    contextHints: voiceContextHints,
     draft: state.draft,
     language,
     ownerChatId: state.activeChatId,

@@ -88,6 +88,7 @@ describe('AI voice facade contract', () => {
       const metadata: FluxoraVoiceTranscriptionRequest = {
         channelCount: 1,
         completionMode: 'draft',
+        contextHints: ['No Grass In Objects', 'Use-grass-cache'],
         durationMs: 250,
         language: 'auto',
         operationId: 'transcribe-1',
@@ -109,6 +110,7 @@ describe('AI voice facade contract', () => {
             headers: {
               'x-fluxora-channel-count': '1',
               'x-fluxora-completion-mode': 'draft',
+              'x-fluxora-context-hints': '%5B%22No%20Grass%20In%20Objects%22%2C%22Use-grass-cache%22%5D',
               'x-fluxora-duration-ms': '250',
               'x-fluxora-language': 'auto',
               'x-fluxora-operation-id': 'transcribe-1',

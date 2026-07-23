@@ -83,6 +83,9 @@ Mitigations:
 - writes require the current effective VFS winner and revision;
 - opaque ref, prior-read hash, expected semantic value, and supported recipe
   are checked by C++;
+- source-mod writes are redirected to the managed override, while an effective
+  Overwrite winner accepts only structured INI/JSON mutation with checkpoint,
+  reread postconditions, and rollback;
 - ambiguity produces one question and no mutation;
 - dirty-editor and external-edit races fail closed.
 
@@ -92,8 +95,9 @@ A tool overwrites a source mod, loses formatting, or rolls back over later work.
 
 Mitigations:
 
-- automatic writes are staged and limited to 16 distinct allowlisted files,
-  one mutation per file and 2 MiB of changed text;
+- automatic writes are staged and limited to 16 mutations across at most 16
+  distinct allowlisted files and 2 MiB of changed text; multiple mutations in
+  one file are allowed only for distinct case-insensitive INI section/key targets;
 - the entire batch is preflighted and committed atomically, with rollback on a
   write or verification failure;
 - source mods remain unchanged and the managed override is used;

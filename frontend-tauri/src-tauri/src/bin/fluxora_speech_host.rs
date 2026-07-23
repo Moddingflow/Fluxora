@@ -2,7 +2,7 @@ use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,12 @@ const AUDIO_CONTEXT_PADDING_TOKENS: usize = 64;
 const AUDIO_CONTEXT_QUANTUM_TOKENS: usize = 64;
 const MIN_AUDIO_CONTEXT_TOKENS: usize = 128;
 const MAX_AUDIO_CONTEXT_TOKENS: usize = 1_500;
+const ADAPTIVE_CONTEXT_MATCH_THRESHOLD: f32 = 0.72;
+const ADAPTIVE_CONTEXT_REPAIR_THRESHOLD: f32 = 0.64;
+const MAX_ADAPTIVE_CONTEXT_HINTS: usize = 4;
+const MAX_CONTEXT_HINTS: usize = 96;
+const MAX_CONTEXT_HINT_CHARS: usize = 96;
+const MAX_CONTEXT_HINT_TOTAL_CHARS: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecoderSampling {
@@ -261,6 +267,305 @@ impl Glossary {
     }
 }
 
+fn phonetic_characters(value: &str) -> Vec<char> {
+    let mut folded = String::with_capacity(value.len());
+    for character in value.chars().flat_map(char::to_lowercase) {
+        let replacement = match character {
+            'а' => "a",
+            'б' => "b",
+            'в' => "v",
+            'г' => "g",
+            'д' => "d",
+            'е' | 'ё' | 'э' => "e",
+            'ж' => "zh",
+            'з' => "z",
+            'и' | 'й' | 'ы' => "i",
+            'к' => "k",
+            'л' => "l",
+            'м' => "m",
+            'н' => "n",
+            'о' => "o",
+            'п' => "p",
+            'р' => "r",
+            'с' => "s",
+            'т' => "t",
+            'у' => "u",
+            'ф' => "f",
+            'х' => "h",
+            'ц' => "ts",
+            'ч' => "ch",
+            'ш' | 'щ' => "sh",
+            'ю' => "yu",
+            'я' => "ya",
+            'ь' | 'ъ' => "",
+            _ if character.is_ascii_alphanumeric() => {
+                folded.push(character);
+                continue;
+            }
+            _ => continue,
+        };
+        folded.push_str(replacement);
+    }
+    folded.chars().collect()
+}
+
+fn edit_distance(left: &[char], right: &[char]) -> usize {
+    if left.is_empty() {
+        return right.len();
+    }
+    if right.is_empty() {
+        return left.len();
+    }
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_character) in left.iter().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_character) in right.iter().enumerate() {
+            let substitution =
+                previous[right_index] + usize::from(left_character != right_character);
+            current[right_index + 1] = substitution
+                .min(current[right_index] + 1)
+                .min(previous[right_index + 1] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
+}
+
+fn best_phonetic_similarity(transcript: &[char], phrase: &[char]) -> f32 {
+    if transcript.is_empty() || phrase.is_empty() {
+        return 0.0;
+    }
+    let minimum_length = (phrase.len() * 3 / 4).max(4).min(transcript.len());
+    let maximum_length = (phrase.len() * 5 / 4 + 2).min(transcript.len());
+    let mut best = 0.0_f32;
+    for candidate_length in minimum_length..=maximum_length {
+        for candidate in transcript.windows(candidate_length) {
+            let distance = edit_distance(candidate, phrase);
+            let scale = candidate.len().max(phrase.len()) as f32;
+            best = best.max(1.0 - distance as f32 / scale);
+        }
+    }
+    best
+}
+
+fn context_hint_phrases(hint: &str) -> Vec<String> {
+    let mut phrases = Vec::new();
+    let words = hint
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if !hint.trim().is_empty() {
+        phrases.push(hint.trim().to_string());
+    }
+    for word_count in 2..=words.len().min(6) {
+        for phrase in words.windows(word_count) {
+            phrases.push(phrase.join(" "));
+        }
+    }
+    phrases.sort_by_key(|phrase| std::cmp::Reverse(phrase.chars().count()));
+    phrases.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    phrases
+}
+
+fn context_hint_score(transcript: &str, hint: &str) -> Option<f32> {
+    let transcript = phonetic_characters(transcript);
+    context_hint_phrases(hint)
+        .into_iter()
+        .filter_map(|phrase| {
+            let folded = phonetic_characters(&phrase);
+            (folded.len() >= 7).then(|| (best_phonetic_similarity(&transcript, &folded), phrase))
+        })
+        .map(|(score, _)| score)
+        .max_by(f32::total_cmp)
+}
+
+fn adaptive_context_hints(transcript: &str, hints: &[String]) -> Vec<String> {
+    let mut scored = hints
+        .iter()
+        .filter_map(|hint| {
+            let score = context_hint_score(transcript, hint)?;
+            (score >= ADAPTIVE_CONTEXT_MATCH_THRESHOLD).then_some((score, hint.clone()))
+        })
+        .collect::<Vec<_>>();
+    scored.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, phrase) in scored {
+        if seen.insert(phrase.to_lowercase()) {
+            selected.push(phrase);
+        }
+        if selected.len() >= MAX_ADAPTIVE_CONTEXT_HINTS {
+            break;
+        }
+    }
+    selected
+}
+
+#[derive(Debug, Clone)]
+struct PhoneticSourceCharacter {
+    value: char,
+    source_start: usize,
+    source_end: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PhoneticSpanMatch {
+    score: f32,
+    source_start: usize,
+    source_end: usize,
+}
+
+fn phonetic_characters_with_source(value: &str) -> Vec<PhoneticSourceCharacter> {
+    let mut folded = Vec::new();
+    for (source_start, source_character) in value.char_indices() {
+        let source_end = source_start + source_character.len_utf8();
+        for character in source_character.to_lowercase() {
+            let replacement = match character {
+                'а' => "a",
+                'б' => "b",
+                'в' => "v",
+                'г' => "g",
+                'д' => "d",
+                'е' | 'ё' | 'э' => "e",
+                'ж' => "zh",
+                'з' => "z",
+                'и' | 'й' | 'ы' => "i",
+                'к' => "k",
+                'л' => "l",
+                'м' => "m",
+                'н' => "n",
+                'о' => "o",
+                'п' => "p",
+                'р' => "r",
+                'с' => "s",
+                'т' => "t",
+                'у' => "u",
+                'ф' => "f",
+                'х' => "h",
+                'ц' => "ts",
+                'ч' => "ch",
+                'ш' | 'щ' => "sh",
+                'ю' => "yu",
+                'я' => "ya",
+                'ь' | 'ъ' => "",
+                _ if character.is_ascii_alphanumeric() => {
+                    folded.push(PhoneticSourceCharacter {
+                        value: character,
+                        source_start,
+                        source_end,
+                    });
+                    continue;
+                }
+                _ => continue,
+            };
+            folded.extend(replacement.chars().map(|value| PhoneticSourceCharacter {
+                value,
+                source_start,
+                source_end,
+            }));
+        }
+    }
+    folded
+}
+
+fn expand_to_word_boundaries(value: &str, mut start: usize, mut end: usize) -> (usize, usize) {
+    while let Some((previous_start, previous)) = value[..start].char_indices().next_back() {
+        if !previous.is_alphanumeric() {
+            break;
+        }
+        start = previous_start;
+    }
+    while let Some(next) = value[end..].chars().next() {
+        if !next.is_alphanumeric() {
+            break;
+        }
+        end += next.len_utf8();
+    }
+    (start, end)
+}
+
+fn best_phonetic_span(transcript: &str, phrase: &str) -> Option<PhoneticSpanMatch> {
+    let phonetic_transcript = phonetic_characters_with_source(transcript);
+    let phrase = phonetic_characters(phrase);
+    if phonetic_transcript.is_empty() || phrase.is_empty() {
+        return None;
+    }
+    let minimum_length = (phrase.len() * 3 / 4).max(4).min(phonetic_transcript.len());
+    let maximum_length = (phrase.len() * 5 / 4 + 2).min(phonetic_transcript.len());
+    let mut best: Option<PhoneticSpanMatch> = None;
+    for candidate_length in minimum_length..=maximum_length {
+        for candidate in phonetic_transcript.windows(candidate_length) {
+            let candidate_characters = candidate.iter().map(|item| item.value).collect::<Vec<_>>();
+            let distance = edit_distance(&candidate_characters, &phrase);
+            let scale = candidate.len().max(phrase.len()) as f32;
+            let score = 1.0 - distance as f32 / scale;
+            if best.as_ref().map_or(true, |current| score > current.score) {
+                let (source_start, source_end) = expand_to_word_boundaries(
+                    transcript,
+                    candidate.first()?.source_start,
+                    candidate.last()?.source_end,
+                );
+                best = Some(PhoneticSpanMatch {
+                    score,
+                    source_start,
+                    source_end,
+                });
+            }
+        }
+    }
+    best
+}
+
+fn normalize_phonetic_context_spans(transcript: &str, hints: &[String]) -> String {
+    let transcript_lowercase = transcript.to_lowercase();
+    let mut candidates = hints
+        .iter()
+        .filter(|hint| !transcript_lowercase.contains(&hint.to_lowercase()))
+        .filter(|hint| {
+            hint.chars()
+                .any(|character| character.is_ascii_alphabetic())
+        })
+        .filter(|hint| {
+            ![" - ", " – ", " — ", " | ", " / "]
+                .iter()
+                .any(|separator| hint.contains(separator))
+        })
+        .filter_map(|hint| {
+            let matched = best_phonetic_span(transcript, hint)?;
+            let word_count = hint
+                .split(|character: char| !character.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+                .count();
+            let threshold = if word_count >= 3 {
+                ADAPTIVE_CONTEXT_REPAIR_THRESHOLD
+            } else if word_count == 2 {
+                ADAPTIVE_CONTEXT_MATCH_THRESHOLD
+            } else {
+                0.86
+            };
+            (matched.score >= threshold).then_some((matched, hint))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| right.0.score.total_cmp(&left.0.score));
+
+    let mut replacements: Vec<(usize, usize, &str)> = Vec::new();
+    for (matched, hint) in candidates {
+        let overlaps = replacements
+            .iter()
+            .any(|(start, end, _)| matched.source_start < *end && matched.source_end > *start);
+        if !overlaps {
+            replacements.push((matched.source_start, matched.source_end, hint));
+        }
+    }
+    replacements.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+    let mut normalized = transcript.to_string();
+    for (start, end, hint) in replacements {
+        normalized.replace_range(start..end, hint);
+    }
+    normalized
+}
+
 struct TranscriptionOutput {
     transcript: String,
     no_speech: bool,
@@ -268,6 +573,13 @@ struct TranscriptionOutput {
     vad_time_ms: u64,
     inference_time_ms: u64,
     total_time_ms: u64,
+    adaptive_pass_used: bool,
+}
+
+struct WhisperPass {
+    transcript: String,
+    detected_language: Option<String>,
+    inference_time_ms: u64,
 }
 
 struct RealSpeechEngine {
@@ -325,57 +637,12 @@ impl RealSpeechEngine {
         })
     }
 
-    fn transcribe(
-        &mut self,
-        pcm: &[f32],
-        glossary: &Glossary,
+    fn decode(
+        &self,
+        speech_pcm: &[f32],
         language: Option<&str>,
-    ) -> Result<TranscriptionOutput, HostError> {
-        let total_started = Instant::now();
-        let vad_started = Instant::now();
-        let mut vad_params = WhisperVadParams::new();
-        vad_params.set_threshold(0.5);
-        let segments = self
-            .vad
-            .segments_from_samples(vad_params, pcm)
-            .map_err(|_| {
-                host_error(
-                    "speech.vad.failed",
-                    "Local voice activity detection failed.",
-                    true,
-                )
-            })?;
-        let vad_time_ms = vad_started.elapsed().as_millis() as u64;
-        if segments.num_segments() == 0 {
-            return Ok(TranscriptionOutput {
-                transcript: String::new(),
-                no_speech: true,
-                detected_language: None,
-                vad_time_ms,
-                inference_time_ms: 0,
-                total_time_ms: total_started.elapsed().as_millis() as u64,
-            });
-        }
-
-        let first_segment = segments.get_segment(0).ok_or_else(|| {
-            host_error(
-                "speech.vad.failed",
-                "Local voice activity detection returned an invalid speech window.",
-                true,
-            )
-        })?;
-        let last_segment = segments
-            .get_segment(segments.num_segments() - 1)
-            .ok_or_else(|| {
-                host_error(
-                    "speech.vad.failed",
-                    "Local voice activity detection returned an invalid speech window.",
-                    true,
-                )
-            })?;
-        let speech_window = vad_speech_window(pcm.len(), first_segment.start, last_segment.end);
-        let speech_pcm = &pcm[speech_window];
-
+        initial_prompt: Option<&str>,
+    ) -> Result<WhisperPass, HostError> {
         let plan = decoder_plan(speech_pcm.len());
         let mut params = FullParams::new(SamplingStrategy::Greedy {
             best_of: plan.best_of,
@@ -385,6 +652,9 @@ impl RealSpeechEngine {
         params.set_temperature_inc(0.0);
         params.set_translate(WHISPER_TRANSLATE);
         params.set_language(language);
+        if let Some(initial_prompt) = initial_prompt {
+            params.set_initial_prompt(initial_prompt);
+        }
         params.set_no_context(true);
         params.set_no_timestamps(true);
         params.set_single_segment(plan.single_segment);
@@ -431,17 +701,152 @@ impl RealSpeechEngine {
             .filter_map(|segment| segment.to_str_lossy().ok().map(|text| text.into_owned()))
             .collect::<Vec<_>>()
             .join("");
-        let transcript = glossary.normalize(&transcript, detected_language.as_deref());
+        Ok(WhisperPass {
+            transcript,
+            detected_language,
+            inference_time_ms,
+        })
+    }
+
+    fn transcribe(
+        &mut self,
+        pcm: &[f32],
+        glossary: &Glossary,
+        language: Option<&str>,
+        context_hints: &[String],
+    ) -> Result<TranscriptionOutput, HostError> {
+        let total_started = Instant::now();
+        let vad_started = Instant::now();
+        let mut vad_params = WhisperVadParams::new();
+        vad_params.set_threshold(0.5);
+        let segments = self
+            .vad
+            .segments_from_samples(vad_params, pcm)
+            .map_err(|_| {
+                host_error(
+                    "speech.vad.failed",
+                    "Local voice activity detection failed.",
+                    true,
+                )
+            })?;
+        let vad_time_ms = vad_started.elapsed().as_millis() as u64;
+        if segments.num_segments() == 0 {
+            return Ok(TranscriptionOutput {
+                transcript: String::new(),
+                no_speech: true,
+                detected_language: None,
+                vad_time_ms,
+                inference_time_ms: 0,
+                total_time_ms: total_started.elapsed().as_millis() as u64,
+                adaptive_pass_used: false,
+            });
+        }
+
+        let first_segment = segments.get_segment(0).ok_or_else(|| {
+            host_error(
+                "speech.vad.failed",
+                "Local voice activity detection returned an invalid speech window.",
+                true,
+            )
+        })?;
+        let last_segment = segments
+            .get_segment(segments.num_segments() - 1)
+            .ok_or_else(|| {
+                host_error(
+                    "speech.vad.failed",
+                    "Local voice activity detection returned an invalid speech window.",
+                    true,
+                )
+            })?;
+        let speech_window = vad_speech_window(pcm.len(), first_segment.start, last_segment.end);
+        let speech_pcm = &pcm[speech_window];
+        let context_normalizer = context_term_normalizer(context_hints)?;
+        let mut selected = self.decode(speech_pcm, language, None)?;
+        let mut transcript = normalize_transcript(
+            glossary,
+            context_normalizer.as_ref(),
+            &selected.transcript,
+            selected.detected_language.as_deref(),
+        );
+        let relevant_hints = if language.is_none() {
+            adaptive_context_hints(&selected.transcript, context_hints)
+        } else {
+            Vec::new()
+        };
+        let mut inference_time_ms = selected.inference_time_ms;
+        let mut adaptive_pass_used = false;
+        if needs_adaptive_pass(&transcript, &relevant_hints) {
+            let prompt = relevant_hints.join(". ");
+            let prompted = self.decode(speech_pcm, language, Some(&prompt))?;
+            inference_time_ms = inference_time_ms.saturating_add(prompted.inference_time_ms);
+            adaptive_pass_used = true;
+            let prompted_transcript = normalize_transcript(
+                glossary,
+                context_normalizer.as_ref(),
+                &prompted.transcript,
+                prompted.detected_language.as_deref(),
+            );
+            if hint_hit_count(&prompted_transcript, &relevant_hints)
+                > hint_hit_count(&transcript, &relevant_hints)
+            {
+                selected = prompted;
+                transcript = prompted_transcript;
+            }
+        }
+        transcript = normalize_phonetic_context_spans(&transcript, &relevant_hints);
         let no_speech = transcript.is_empty();
         Ok(TranscriptionOutput {
             transcript,
             no_speech,
-            detected_language: (!no_speech).then_some(detected_language).flatten(),
+            detected_language: (!no_speech).then_some(selected.detected_language).flatten(),
             vad_time_ms,
             inference_time_ms,
             total_time_ms: total_started.elapsed().as_millis() as u64,
+            adaptive_pass_used,
         })
     }
+}
+
+fn context_term_normalizer(hints: &[String]) -> Result<Option<TermNormalizer>, HostError> {
+    if hints.is_empty() {
+        return Ok(None);
+    }
+    TermNormalizer::compile(
+        hints
+            .iter()
+            .map(|hint| GlossaryTerm {
+                canonical: hint.clone(),
+                aliases: Vec::new(),
+            })
+            .collect(),
+    )
+    .map(Some)
+}
+
+fn normalize_transcript(
+    glossary: &Glossary,
+    context_normalizer: Option<&TermNormalizer>,
+    transcript: &str,
+    detected_language: Option<&str>,
+) -> String {
+    let normalized = glossary.normalize(transcript, detected_language);
+    context_normalizer
+        .map(|normalizer| normalizer.normalize(&normalized))
+        .unwrap_or(normalized)
+        .trim()
+        .to_string()
+}
+
+fn hint_hit_count(transcript: &str, hints: &[String]) -> usize {
+    let transcript = transcript.to_lowercase();
+    hints
+        .iter()
+        .filter(|hint| transcript.contains(&hint.to_lowercase()))
+        .count()
+}
+
+fn needs_adaptive_pass(transcript: &str, hints: &[String]) -> bool {
+    !hints.is_empty() && hint_hit_count(transcript, hints) < hints.len()
 }
 
 fn host_error(code: &str, message: &str, retryable: bool) -> HostError {
@@ -469,6 +874,50 @@ fn speech_language(metadata: &Value) -> Result<Option<&str>, HostError> {
             false,
         ))
     }
+}
+
+fn speech_context_hints(metadata: &Value) -> Result<Vec<String>, HostError> {
+    let Some(values) = metadata.get("contextHints") else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = values.as_array() else {
+        return Err(host_error(
+            "speech.request.context",
+            "The speech recognition context is invalid.",
+            false,
+        ));
+    };
+    let mut hints = Vec::with_capacity(values.len().min(MAX_CONTEXT_HINTS));
+    let mut seen = HashSet::with_capacity(values.len().min(MAX_CONTEXT_HINTS));
+    let mut total_characters = 0_usize;
+    for value in values {
+        let Some(hint) = value.as_str().map(str::trim) else {
+            return Err(host_error(
+                "speech.request.context",
+                "The speech recognition context is invalid.",
+                false,
+            ));
+        };
+        let character_count = hint.chars().count();
+        total_characters = total_characters.saturating_add(character_count);
+        let key = hint.to_lowercase();
+        if !(2..=MAX_CONTEXT_HINT_CHARS).contains(&character_count)
+            || !hint.bytes().any(|byte| byte.is_ascii_alphabetic())
+            || hint.chars().any(char::is_control)
+            || total_characters > MAX_CONTEXT_HINT_TOTAL_CHARS
+            || values.len() > MAX_CONTEXT_HINTS
+        {
+            return Err(host_error(
+                "speech.request.context",
+                "The speech recognition context is invalid.",
+                false,
+            ));
+        }
+        if seen.insert(key) {
+            hints.push(hint.to_string());
+        }
+    }
+    Ok(hints)
 }
 
 fn verify_sha256(path: &Path, expected: &str, code: &str) -> Result<(), HostError> {
@@ -767,6 +1216,7 @@ fn run_host() {
                             .get("durationMs")
                             .and_then(Value::as_u64)
                             .unwrap_or_else(|| (pcm.len() as u64 * 1_000) / 16_000);
+                        let context_hints = speech_context_hints(&request.metadata)?;
                         let output = if fake_engine {
                             if pcm.iter().all(|sample| sample.abs() < 0.0001) {
                                 TranscriptionOutput {
@@ -776,6 +1226,7 @@ fn run_host() {
                                     vad_time_ms: 0,
                                     inference_time_ms: 0,
                                     total_time_ms: 0,
+                                    adaptive_pass_used: false,
                                 }
                             } else {
                                 let text = request
@@ -790,13 +1241,20 @@ fn run_host() {
                                     .or(language)
                                     .unwrap_or("en")
                                     .to_string();
+                                let context_normalizer = context_term_normalizer(&context_hints)?;
                                 TranscriptionOutput {
-                                    transcript: glossary.normalize(text, Some(&detected_language)),
+                                    transcript: normalize_transcript(
+                                        &glossary,
+                                        context_normalizer.as_ref(),
+                                        text,
+                                        Some(&detected_language),
+                                    ),
                                     no_speech: false,
                                     detected_language: Some(detected_language),
                                     vad_time_ms: 0,
                                     inference_time_ms: 0,
                                     total_time_ms: 0,
+                                    adaptive_pass_used: false,
                                 }
                             }
                         } else {
@@ -809,7 +1267,7 @@ fn run_host() {
                                         true,
                                     )
                                 })?
-                                .transcribe(&pcm, &glossary, language)?
+                                .transcribe(&pcm, &glossary, language, &context_hints)?
                         };
                         let real_time_factor = if duration_ms == 0 {
                             0.0
@@ -830,7 +1288,8 @@ fn run_host() {
                             "vadTimeMs": output.vad_time_ms,
                             "inferenceTimeMs": output.inference_time_ms,
                             "totalTimeMs": output.total_time_ms,
-                            "realTimeFactor": real_time_factor
+                            "realTimeFactor": real_time_factor,
+                            "adaptivePassUsed": output.adaptive_pass_used
                         }))
                     }
                 }
@@ -907,6 +1366,93 @@ mod tests {
             glossary.normalize("masterful pluginized", Some("en")),
             "masterful pluginized"
         );
+        assert_eq!(
+            glossary.normalize("включи ноуграс и ноубджект и Use-grass-cache", Some("ru")),
+            "включи No Grass In Objects и Use-grass-cache"
+        );
+        assert_eq!(
+            glossary.normalize(
+                "в настройках но грессы и нервы джекц, затем дилот фром грозкэш",
+                Some("ru")
+            ),
+            "в настройках No Grass In Objects, затем Only Load From Grass Cache"
+        );
+    }
+
+    #[test]
+    fn mixed_language_transcript_selects_only_phonetically_relevant_build_context() {
+        let hints = vec![
+            "No Grass In Objects - Grass Control".to_string(),
+            "Community Shaders".to_string(),
+            "SSE Display Tweaks".to_string(),
+        ];
+
+        assert_eq!(
+            adaptive_context_hints(
+                "Можешь включить генерацию кэша травы в ноуграс и ноубджект?",
+                &hints
+            ),
+            ["No Grass In Objects - Grass Control"]
+        );
+        assert_eq!(
+            adaptive_context_hints(
+                "Можешь, пожалуйста, включить генерацию кэша травы в настройках, но грессы и нервы джекц.",
+                &hints
+            ),
+            ["No Grass In Objects - Grass Control"]
+        );
+    }
+
+    #[test]
+    fn mixed_language_context_repairs_a_confident_phonetic_span_without_translating_russian() {
+        assert_eq!(
+            normalize_phonetic_context_spans(
+                "Можешь включить кэш в настройках, ноу грас ин обджектс.",
+                &["No Grass In Objects".to_string()]
+            ),
+            "Можешь включить кэш в настройках, No Grass In Objects."
+        );
+        assert_eq!(
+            normalize_phonetic_context_spans(
+                "Открой Community Shaders и ноу грас ин обджектс.",
+                &[
+                    "Community Shaders".to_string(),
+                    "No Grass In Objects".to_string()
+                ]
+            ),
+            "Открой Community Shaders и No Grass In Objects."
+        );
+    }
+
+    #[test]
+    fn adaptive_pass_still_runs_when_only_one_of_multiple_spoken_terms_is_exact() {
+        let hints = vec![
+            "No Grass In Objects".to_string(),
+            "Only Load From Grass Cache".to_string(),
+        ];
+
+        assert!(needs_adaptive_pass(
+            "Включи No Grass In Objects и онли лоуд фром грас кэш",
+            &hints
+        ));
+        assert!(!needs_adaptive_pass(
+            "Включи No Grass In Objects и Only Load From Grass Cache",
+            &hints
+        ));
+    }
+
+    #[test]
+    fn speech_context_accepts_bounded_english_terms_for_local_adaptation() {
+        let hints = speech_context_hints(&json!({
+            "contextHints": ["No Grass In Objects", "GrassControl.ini"]
+        }))
+        .unwrap();
+
+        assert_eq!(hints, ["No Grass In Objects", "GrassControl.ini"]);
+        assert!(speech_context_hints(&json!({
+            "contextHints": vec!["context"; 97]
+        }))
+        .is_err());
     }
 
     #[test]

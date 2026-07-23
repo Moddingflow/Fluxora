@@ -13,8 +13,8 @@ Status: current release checklist, 2026-07-20.
 | Semantic progress and bounded stagnation | Implemented | Stable semantic fingerprints count distinct pages, ranges, parsed values, recipe/native state, staging and verification; three repeated successful results stop as `ai.tool.no-new-evidence`, while errors use a separate recovery budget. |
 | Native session preopen | Implemented | The Rust shell idempotently calls `buildFiles.beginChat` before the first Gemini tool round; recovery is reserved for bridge restart or true session loss. |
 | Build-scoped filesystem access | Implemented | C++ canonicalizes every operation against registered roots and rejects traversal/reparse escapes and protected types. |
-| Core-owned mutation authority | Implemented | Unique effective winner, revision, opaque ref, read hash, expected value, format policy, checkpoint, reread, verification, and rollback are core checks. |
-| Source mods remain unchanged | Implemented | Supported writes target the managed `Fluxora AI Overrides` profile layer. |
+| Core-owned mutation authority | Implemented | Build matches are grouped by normalized virtual path before pagination, each group is rebound to its profile/Overwrite winner, and only that opaque ref can be authorized; revision, read hash, expected value, format policy, checkpoint, reread, verification, and rollback remain core checks. |
+| Source mods remain unchanged | Implemented | Source-mod writes target `Fluxora AI Overrides`; only the effective Overwrite INI/JSON config may be changed directly, with checkpoint and rollback. |
 | Independent chat tabs | Implemented | Messages, summaries, events, runs, and cancellation are keyed by chat/operation; cancelling one run does not kill the shared host. |
 | Real context accounting | Implemented | `getModel` limits and `countTokens` drive input usage; fallback counts are marked estimated. |
 | Structured compression | Implemented | Compression starts at 90%, updates one summary, advances the provider-history cursor, and recounts before generation. |
@@ -51,14 +51,26 @@ Search pagination is revision-aware. A stale cursor is rejected or restarted
 explicitly; it must not be interpreted as a complete scan. Content scanning
 cooperatively checks cancellation and caps every file read.
 
-Automatic mutation is a staged, bounded transaction of at most 16 distinct
-allowlisted text/config files, one mutation per file and 2 MiB changed text.
+Build filename/path search counts unique normalized virtual paths, not physical
+owners. The core returns one effective winner and records the shadowed owners as
+`conflictingOwners`; filename and source-owner-path searches resolve to the same
+winner ref. Multiple results therefore represent distinct virtual targets.
+Before staging, the Rust broker requires that exact core ref and its mutation
+eligibility. Winner-ref mismatch, missing eligibility, multiple targets, and
+missing proof are separate typed blockers and never authorize a write or manual
+fallback.
+
+Automatic mutation is a staged, bounded transaction of at most 16 mutations
+across at most 16 distinct allowlisted text/config files and 2 MiB changed
+text. Multiple mutations in one file are limited to distinct case-insensitive
+INI section/key targets; duplicate targets fail before commit.
 The core preflights the whole batch and writes only managed overrides after
 matching revisions, read hashes and expected values. Any failed write or
 postcondition rolls back the complete batch. It then rereads and verifies every
 result. Rollback requires verified post-write hashes, so it cannot overwrite a
-later edit. Game, Downloads and Overwrite are read-only. Unsaved Monaco buffers
-are protected by the Rust dirty-ref registry.
+later edit. Game and Downloads are read-only. Overwrite accepts only structured
+INI/JSON mutations of a unique effective config; arbitrary patch/create remains
+blocked. Unsaved Monaco buffers are protected by the Rust dirty-ref registry.
 
 ## Provider And Gateway Controls
 

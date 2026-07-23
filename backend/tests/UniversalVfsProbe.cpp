@@ -208,7 +208,8 @@ int wmain(int argc, wchar_t** argv)
     {
         return readOnlyComparisonMode(argc, argv);
     }
-    if (argc != 4 || argv[1] == nullptr || argv[2] == nullptr || argv[3] == nullptr)
+    if (argc != 5 || argv[1] == nullptr || argv[2] == nullptr || argv[3] == nullptr ||
+        argv[4] == nullptr)
     {
         return 10;
     }
@@ -216,6 +217,7 @@ int wmain(int argc, wchar_t** argv)
     const std::filesystem::path data(argv[1]);
     const std::filesystem::path gameRoot(argv[2]);
     const std::filesystem::path status(argv[3]);
+    const std::filesystem::path profileApiIni(argv[4]);
     const auto fail = [&status](int code, const std::string& detail)
     {
         return finish(status, code, detail + ";win32=" + std::to_string(GetLastError()));
@@ -237,6 +239,32 @@ int wmain(int argc, wchar_t** argv)
         readFile(data / L"textures" / L"pbr" / L"surface.dds") != "PBR-DDS")
     {
         return fail(13, "pbr-assets");
+    }
+
+    wchar_t wideLanguage[32]{};
+    const DWORD wideLanguageLength = GetPrivateProfileStringW(
+        L"General",
+        L"sLanguage",
+        L"MISSING",
+        wideLanguage,
+        static_cast<DWORD>(std::size(wideLanguage)),
+        profileApiIni.c_str());
+    const std::string profileApiIniAnsi = profileApiIni.string();
+    char ansiLanguage[32]{};
+    const DWORD ansiLanguageLength = GetPrivateProfileStringA(
+        "General",
+        "sLanguage",
+        "MISSING",
+        ansiLanguage,
+        static_cast<DWORD>(std::size(ansiLanguage)),
+        profileApiIniAnsi.c_str());
+    if (wideLanguageLength != 7 || std::wstring_view(wideLanguage) != L"RUSSIAN" ||
+        ansiLanguageLength != 7 || std::string_view(ansiLanguage) != "RUSSIAN")
+    {
+        return fail(
+            28,
+            "profile-api-wide=" + std::to_string(wideLanguageLength) +
+                "-ansi=" + std::to_string(ansiLanguageLength));
     }
 
     std::string relativeValue;

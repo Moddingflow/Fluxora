@@ -292,7 +292,7 @@ pub fn declaration() -> Value {
 pub fn request_input_declaration() -> Value {
     json!({
         "name": REQUEST_INPUT_PROVIDER_TOOL,
-        "description": "Pause the same repair goal for one concrete user decision when multiple plausible files, parameters, or values remain. Do not ask the user to perform the repair manually.",
+        "description": "After Fluxora has returned native read-only build evidence, pause the same repair goal for one concrete decision about the verified files, parameters, or values. Never ask for a path or ask the user to perform the repair manually.",
         "parameters": {
             "type": "OBJECT",
             "required": ["question"],

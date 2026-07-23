@@ -2073,6 +2073,14 @@ export const App = () => {
       overwriteModItem
     ]
   );
+  const aiVoiceBuildTerms = useMemo(() => {
+    const selectedName = selectedModItem?.isMod ? modItemTitle(selectedModItem) : '';
+    const loadedNames = installedMods.map((mod) => mod.name);
+    const workspaceNames = modsWorkspace.items
+      .filter((item) => item.isMod)
+      .map(modItemTitle);
+    return [selectedName, selectedProject?.name ?? '', ...loadedNames, ...workspaceNames];
+  }, [installedMods, modsWorkspace.items, selectedModItem, selectedProject?.name]);
 
   const selectedModDeletionItems = useMemo(
     () =>
@@ -15581,6 +15589,7 @@ export const App = () => {
             showCheckedSites={developerModeEnabled}
             showDeveloperDiagnostics={developerModeEnabled}
             state={aiChat}
+            voiceContextTerms={aiVoiceBuildTerms}
             onCancel={cancelAiChatRun}
             onClose={() => dispatchAiChat({ type: 'close' })}
             onCloseChat={(chatId) => {

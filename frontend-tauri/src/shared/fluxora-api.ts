@@ -364,6 +364,7 @@ export interface FluxoraVoiceTranscriptionRequest extends OperationRequest {
   durationMs: number;
   completionMode: FluxoraVoiceCompletionMode;
   language: FluxoraVoiceLanguage;
+  contextHints?: string[];
 }
 
 export interface FluxoraVoiceTranscriptionResult {

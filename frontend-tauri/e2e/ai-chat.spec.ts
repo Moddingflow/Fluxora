@@ -51,6 +51,7 @@ const installMockProductRuntime = async (page: Page) => {
       __fluxoraVoiceLifecycle?: string[];
       __fluxoraVoiceTrackStops?: number;
       __fluxoraVoiceOperationIds?: string[];
+      __fluxoraVoiceContextHints?: unknown;
       __fluxoraChatOperationIds?: string[];
     };
     const stubWindow = window as StubWindow;
@@ -399,6 +400,7 @@ const installMockProductRuntime = async (page: Page) => {
       };
       api.ai.transcribeVoice = async (_pcm: Uint8Array, request: Record<string, unknown>) => {
         calls.push('ai.transcribeVoice');
+        stubWindow.__fluxoraVoiceContextHints = request.contextHints;
         const operationId = operationIdOf(request, 'ai_voice_transcribe');
         (stubWindow.__fluxoraVoiceOperationIds ??= []).push(operationId);
         if (window.localStorage.getItem('fluxora.e2e.voice-hang') === 'yes') {
@@ -757,7 +759,7 @@ test('owns microphone consent, persists Allow and restores the prompt after Priv
 test('records locally, paints 32 levels and adds the transcript to the existing draft', async ({ page }) => {
   await page.goto(baseUrl);
   await openSelectedBuildAi(page);
-  await page.getByLabel('Message Fluxora AI').fill('Сначала');
+  await page.getByLabel('Message Fluxora AI').fill('Сначала Use-grass-cache');
 
   await startVoiceAndAllowIfNeeded(page);
   await expect(page.getByText('Listening locally')).toBeVisible();
@@ -765,7 +767,11 @@ test('records locally, paints 32 levels and adds the transcript to the existing 
   await expect(page.locator('.ai-voice-waveform > span')).toHaveCount(32);
   await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
 
-  await expect(page.getByLabel('Message Fluxora AI')).toHaveValue('Сначала проверь голосовой ввод');
+  await expect(page.getByLabel('Message Fluxora AI')).toHaveValue(
+    'Сначала Use-grass-cache проверь голосовой ввод'
+  );
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraVoiceContextHints ?? []))
+    .toContain('Use-grass-cache');
   await expect.poll(() => page.evaluate(() => (window as any).__fluxoraVoiceTrackStops ?? 0)).toBe(1);
   await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
     .toEqual(expect.arrayContaining(['ai.prepareVoice', 'ai.transcribeVoice']));

@@ -19,6 +19,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#include <shlobj.h>
 #include <windows.h>
 #endif
 
@@ -780,6 +781,24 @@ namespace fluxora::tests
         const std::filesystem::path project(created.find(L"projectDirectory")->asString());
         const std::filesystem::path config(created.find(L"configPath")->asString());
 
+        wchar_t documentsPath[MAX_PATH]{};
+        ASSERT_TRUE(SUCCEEDED(SHGetFolderPathW(
+            nullptr,
+            CSIDL_PERSONAL,
+            nullptr,
+            SHGFP_TYPE_CURRENT,
+            documentsPath)));
+        const std::wstring profileIniName =
+            L"FluxoraProfileMountProbe-" + std::to_wstring(GetCurrentProcessId()) + L".ini";
+        const std::filesystem::path profileApiIni =
+            std::filesystem::path(documentsPath) /
+            L"My Games" /
+            L"Skyrim Special Edition" /
+            profileIniName;
+        writeTextFile(
+            project / L"profiles" / L"Default" / profileIniName,
+            "[General]\nsLanguage=RUSSIAN\n");
+
         ASSERT_EQ(
             fluxora_create_empty_mod(
                 project.c_str(),
@@ -824,7 +843,8 @@ namespace fluxora::tests
                 .field(
                     L"arguments",
                     L"\"" + (game / L"Data").wstring() + L"\" \"" +
-                        game.wstring() + L"\" \"" + status.wstring() + L"\"")
+                        game.wstring() + L"\" \"" + status.wstring() + L"\" \"" +
+                        profileApiIni.wstring() + L"\"")
                 .field(L"workingDirectory", game.wstring())
                 .field(L"iconPath", L"")
             .endObject()

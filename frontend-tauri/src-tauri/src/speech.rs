@@ -20,6 +20,10 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(180);
 const MIN_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const HOST_RESET_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_CONTEXT_HINTS: usize = 96;
+const MAX_CONTEXT_HINT_CHARS: usize = 96;
+const MAX_CONTEXT_HINT_TOTAL_CHARS: usize = 4_096;
+const MAX_CONTEXT_HINT_HEADER_BYTES: usize = 12_288;
 
 fn transcription_timeout(duration_ms: u64) -> Duration {
     let scaled_ms = duration_ms.saturating_mul(3).saturating_add(5_000);
@@ -71,6 +75,7 @@ struct VoiceMetadata {
     duration_ms: u64,
     completion_mode: String,
     language: String,
+    context_hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +185,7 @@ struct HostVoiceTranscriptionResult {
     inference_time_ms: u64,
     total_time_ms: u64,
     real_time_factor: f64,
+    adaptive_pass_used: bool,
 }
 
 impl From<HostVoiceTranscriptionResult> for VoiceTranscriptionResult {
@@ -200,13 +206,14 @@ impl From<HostVoiceTranscriptionResult> for VoiceTranscriptionResult {
 
 fn transcription_metrics(value: &HostVoiceTranscriptionResult) -> String {
     format!(
-        "backend={} threads={} modelLoadMs=0 vadMs={} inferenceMs={} totalMs={} realTimeFactor={:.4}",
+        "backend={} threads={} modelLoadMs=0 vadMs={} inferenceMs={} totalMs={} realTimeFactor={:.4} adaptivePassUsed={}",
         value.backend.as_str(),
         value.threads,
         value.vad_time_ms,
         value.inference_time_ms,
         value.total_time_ms,
-        value.real_time_factor
+        value.real_time_factor,
+        value.adaptive_pass_used
     )
 }
 
@@ -334,6 +341,91 @@ fn validate_operation_id(operation_id: &str) -> Result<(), VoiceError> {
     Ok(())
 }
 
+fn decode_percent_encoded(value: &str) -> Result<String, VoiceError> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len() {
+            return Err(voice_error(
+                "speech.request.metadata",
+                "Voice transcription context is invalid.",
+                false,
+            ));
+        }
+        let hex = |byte: u8| match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        };
+        let high = hex(bytes[index + 1]);
+        let low = hex(bytes[index + 2]);
+        let (Some(high), Some(low)) = (high, low) else {
+            return Err(voice_error(
+                "speech.request.metadata",
+                "Voice transcription context is invalid.",
+                false,
+            ));
+        };
+        decoded.push((high << 4) | low);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| {
+        voice_error(
+            "speech.request.metadata",
+            "Voice transcription context is invalid.",
+            false,
+        )
+    })
+}
+
+fn parse_context_hints(headers: &tauri::http::HeaderMap) -> Result<Vec<String>, VoiceError> {
+    let Some(encoded) = headers
+        .get("x-fluxora-context-hints")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Ok(Vec::new());
+    };
+    if encoded.len() > MAX_CONTEXT_HINT_HEADER_BYTES {
+        return Err(voice_error(
+            "speech.request.metadata",
+            "Voice transcription context is too large.",
+            false,
+        ));
+    }
+    let decoded = decode_percent_encoded(encoded)?;
+    let hints: Vec<String> = serde_json::from_str(&decoded).map_err(|_| {
+        voice_error(
+            "speech.request.metadata",
+            "Voice transcription context is invalid.",
+            false,
+        )
+    })?;
+    let total_characters = hints.iter().map(|hint| hint.chars().count()).sum::<usize>();
+    if hints.len() > MAX_CONTEXT_HINTS
+        || total_characters > MAX_CONTEXT_HINT_TOTAL_CHARS
+        || hints.iter().any(|hint| {
+            let characters = hint.chars().count();
+            !(2..=MAX_CONTEXT_HINT_CHARS).contains(&characters)
+                || !hint.bytes().any(|byte| byte.is_ascii_alphabetic())
+                || hint.chars().any(char::is_control)
+        })
+    {
+        return Err(voice_error(
+            "speech.request.metadata",
+            "Voice transcription context is invalid.",
+            false,
+        ));
+    }
+    Ok(hints)
+}
+
 fn parse_voice_metadata(
     headers: &tauri::http::HeaderMap,
     pcm_len: usize,
@@ -368,6 +460,7 @@ fn parse_voice_metadata(
     let duration_ms = parse_u64_header(headers, "x-fluxora-duration-ms")?;
     let completion_mode = header_value(headers, "x-fluxora-completion-mode")?.to_ascii_lowercase();
     let language = header_value(headers, "x-fluxora-language")?.to_ascii_lowercase();
+    let context_hints = parse_context_hints(headers)?;
     if sample_rate_hz != SAMPLE_RATE_HZ as u32
         || channel_count != 1
         || !matches!(completion_mode.as_str(), "draft" | "send")
@@ -394,6 +487,7 @@ fn parse_voice_metadata(
         duration_ms,
         completion_mode,
         language,
+        context_hints,
     })
 }
 
@@ -1084,7 +1178,8 @@ pub(crate) async fn fluxora_ai_transcribe_voice(
             "channelCount": metadata.channel_count,
             "durationMs": metadata.duration_ms,
             "completionMode": metadata.completion_mode,
-            "language": metadata.language
+            "language": metadata.language,
+            "contextHints": metadata.context_hints
         }),
         &pcm,
         transcription_timeout(metadata.duration_ms),
@@ -1283,6 +1378,24 @@ mod tests {
     }
 
     #[test]
+    fn raw_pcm_decodes_bounded_multilingual_context_hints() {
+        let mut contextual = headers(250);
+        contextual.insert(
+            "x-fluxora-context-hints",
+            HeaderValue::from_static(
+                "%5B%22No%20Grass%20In%20Objects%22%2C%22GrassControl.ini%22%5D",
+            ),
+        );
+
+        let metadata = parse_voice_metadata(&contextual, MIN_SAMPLES * 4).unwrap();
+
+        assert_eq!(
+            metadata.context_hints,
+            ["No Grass In Objects", "GrassControl.ini"]
+        );
+    }
+
+    #[test]
     fn host_crash_policy_allows_exactly_one_restart() {
         assert_eq!(MAX_RESTARTS, 1);
     }
@@ -1372,11 +1485,13 @@ mod tests {
             inference_time_ms: 1_200,
             total_time_ms: 1_250,
             real_time_factor: 0.0417,
+            adaptive_pass_used: true,
         };
 
         let metrics = transcription_metrics(&result);
         assert!(metrics.contains("backend=vulkan"));
         assert!(metrics.contains("threads=8"));
+        assert!(metrics.contains("adaptivePassUsed=true"));
         assert!(!metrics.contains("secret spoken content"));
         assert!(!metrics.contains("secret-language"));
     }
