@@ -18,7 +18,7 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Renderer Node exposure | `window.process` and `window.require` are unavailable | Playwright startup smoke |
 | command model | no synchronous native calls, renderer uses typed facade API, Tauri shell uses allowlisted async command handlers | code review plus `rg` check |
 | Search typing | input updates immediately while heavy result rendering can lag | React `useDeferredValue` for project/templates/mods/plugins/downloads/profiles/executables searches |
-| Mods/plugins/downloads list DOM | render visible rows plus overscan, not the full collection | `createVirtualWindow` unit tests and App usage |
+| Mods/plugins/downloads list DOM | render visible rows plus overscan, not the full collection; mods/plugins derive the window from the live viewport, scroll velocity and measured display-frame interval | `createVirtualWindow`/`createAdaptiveVirtualWindow` unit tests and App usage |
 | Archive placement tree DOM | render visible rows plus overscan, not the full placement preview | `createVirtualWindow` usage in install details |
 | Mod file tree | load directories incrementally and avoid rendering unopened children | existing lazy `mods.getFileTree` directory loading |
 | Text editor startup | Dedicated secondary-window entrypoint must render independently from generic bridge/Nexus/catalog startup; Monaco and the initial file read start in parallel; editor file/tree reads must not queue behind background workspace work | delayed-startup Playwright smoke, lazy `TextEditorWindow`/`MonacoEditorSurface` chunks, interactive bridge-lane routing test and production bundle review |
@@ -43,10 +43,19 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 ## Implementation notes
 
 - `frontend-tauri/src/renderer/ui-performance.ts` is the shared renderer helper for virtual windows.
+- `frontend-tauri/src/renderer/components/virtualization/AdaptiveVirtualList.tsx` owns
+  mods/plugins scroll position locally, measures the actual viewport with
+  `ResizeObserver`, coalesces updates on `requestAnimationFrame`, and expands
+  directional overscan from measured velocity plus display-frame duration. A scroll
+  frame therefore does not update the root `App` state, and no fixed 30/60 FPS timer
+  is involved.
 - `frontend-tauri/tests/ui-performance.test.ts` verifies overscan math, stale scroll clamping and empty-list behavior.
 - `App.tsx` uses React `useDeferredValue`, matching current React guidance for keeping input responsive while expensive list rendering updates in the background.
 - `App.tsx` keeps mods/plugins/downloads/search state local to renderer. It does not move project/mod/install decisions out of C++.
 - `styles.css` defines focus, reduced-motion, row containment and shared component tokens.
+- Already-windowed mod/plugin rows use immediate paint rather than
+  `content-visibility: auto`; delayed browser paint on top of React windowing caused
+  visible row pop-in during fast scrolling.
 - `mod_conflicts(mod_id, relative_path COLLATE NOCASE, source)` is the covering
   index for the cached conflict-summary query. Correlated operation logs report
   `ConflictSummary`, `NxmIntake`, `NxmPreflight` and `InstallFinalization`

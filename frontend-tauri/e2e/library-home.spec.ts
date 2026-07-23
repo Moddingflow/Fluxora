@@ -3251,6 +3251,68 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
 };
 
+const configureDisabledPluginToggleFixture = async (
+  page: Page,
+  extraPluginNames: readonly string[] = []
+) => {
+  await page.goto(baseUrl);
+  await page.evaluate(async (additionalPluginNames) => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      fluxora: any;
+    };
+    const originalRows = await scope.fluxora.plugins.list('', '', null, {
+      operationId: 'plugin_selected_toggle_fixture'
+    });
+    const pluginTemplate = originalRows.find(
+      (item: any) => item.orderId === 'plugin_skyui'
+    );
+    let pluginRows = structuredClone(originalRows).map((item: any) =>
+      item.orderId === 'plugin_skyui' ? { ...item, isEnabled: false } : item
+    );
+    additionalPluginNames.forEach((pluginName, index) => {
+      pluginRows.push({
+        ...structuredClone(pluginTemplate),
+        id: pluginName,
+        orderId: `plugin_selected_toggle_${index}`,
+        order: pluginRows.length,
+        name: pluginName,
+        sourceMod: pluginName.replace(/\.[^.]+$/, ''),
+        isEnabled: false,
+        masterFiles: [],
+        missingMasters: []
+      });
+    });
+
+    scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.setEnabled = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      pluginName: string,
+      isEnabled: boolean,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.setEnabled',
+        payload: {
+          isEnabled,
+          operation,
+          pluginName,
+          profileName,
+          projectDirectory,
+          templateId
+        }
+      });
+      pluginRows = pluginRows.map((item: any) =>
+        item.name === pluginName ? { ...item, isEnabled } : item
+      );
+      return structuredClone(pluginRows);
+    };
+  }, extraPluginNames);
+};
+
 const openSkyrimBuildWithDuplicateDecision = async (page: Page) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('fluxora.test.duplicateDecision', 'upgrade');
@@ -3297,6 +3359,54 @@ const enableLargePostInstallRevealWorkspace = async (page: Page) => {
     scope.fluxora.mods.getWorkspace = async (...args: unknown[]) =>
       expandWorkspace(await getWorkspace(...args));
   });
+};
+
+const enableLargeAdaptiveScrollWorkspace = async (
+  page: Page,
+  itemCount = 5000
+) => {
+  await page.evaluate(async (requestedItemCount) => {
+    const scope = window as typeof window & { fluxora: any };
+    const getPersistedWorkspace = scope.fluxora.mods.getPersistedWorkspace;
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    const expandMods = (snapshot: { installedMods: any[]; modOrder: any[] }) => {
+      const template = snapshot.modOrder.find((item: any) => item.isMod);
+      const modOrder = Array.from({ length: requestedItemCount }, (_, index) => ({
+        ...structuredClone(template),
+        id: `D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Performance mod ${index}`,
+        order: index,
+        orderId: `mod_performance_${index}`,
+        modUuid: `mod_performance_${index}`,
+        name: `Performance mod ${index}`
+      }));
+
+      return {
+        ...snapshot,
+        installedMods: structuredClone(modOrder),
+        modOrder
+      };
+    };
+    scope.fluxora.mods.getPersistedWorkspace = async (...args: unknown[]) =>
+      expandMods(await getPersistedWorkspace(...args));
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) =>
+      expandMods(await getWorkspace(...args));
+
+    const originalPlugins = await scope.fluxora.plugins.list('', '', null, {
+      operationId: 'adaptive_scroll_fixture'
+    });
+    const pluginTemplate = originalPlugins.find((item: any) => item.isPlugin);
+    const pluginRows = Array.from({ length: requestedItemCount }, (_, index) => ({
+      ...structuredClone(pluginTemplate),
+      id: `PerformancePlugin${index}.esp`,
+      isLocked: false,
+      name: `PerformancePlugin${index}.esp`,
+      order: index,
+      orderId: `plugin_performance_${index}`,
+      sourceMod: `Performance mod ${index}`
+    }));
+    scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+  }, itemCount);
 };
 
 const resetPostInstallRevealAnimationProbe = async (page: Page, orderId: string) => {
@@ -3858,6 +3968,100 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
   expect(await callMethods(page)).not.toContain('projects.delete');
   await buildDialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
   await expect(buildDialog).toHaveCount(0);
+});
+
+test('enables the selected plugin from its row context menu', async ({ page }) => {
+  await configureDisabledPluginToggleFixture(page);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  await expect(pluginRow.getByRole('checkbox')).not.toBeChecked();
+  await pluginRow.click({ button: 'right' });
+
+  const enableSelected = page.getByRole('menuitem', {
+    name: 'Включить выбранный плагин',
+    exact: true
+  });
+  await expect(enableSelected).toBeEnabled();
+  await enableSelected.click();
+
+  await expect
+    .poll(() => latestCallPayload(page, 'plugins.setEnabled'))
+    .toMatchObject({
+      isEnabled: true,
+      pluginName: 'SkyUI.esp'
+    });
+  await expect(pluginRow.getByRole('checkbox')).toBeChecked();
+});
+
+test('enables every selected plugin from the plural row context action', async ({ page }) => {
+  await configureDisabledPluginToggleFixture(page, ['RaceMenu.esp']);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const skyuiRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const racemenuRow = page.getByRole('row', { name: /RaceMenu\.esp plugin/ });
+  await skyuiRow.click();
+  await page.keyboard.down('Control');
+  await racemenuRow.click();
+  await page.keyboard.up('Control');
+  await expect(skyuiRow).toHaveAttribute('data-selected', 'true');
+  await expect(racemenuRow).toHaveAttribute('data-selected', 'true');
+
+  await racemenuRow.click({ button: 'right' });
+  const enableSelected = page.getByRole('menuitem', {
+    name: 'Включить выбранные плагины',
+    exact: true
+  });
+  await expect(enableSelected).toBeEnabled();
+  await enableSelected.click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (
+            window as typeof window & {
+              __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+            }
+          ).__fluxoraCalls ?? []
+        )
+          .filter((call) => call.method === 'plugins.setEnabled')
+          .map((call) => ({
+            isEnabled: call.payload?.isEnabled,
+            operationId: call.payload?.operation?.operationId,
+            pluginName: call.payload?.pluginName
+          }))
+      )
+    )
+    .toEqual([
+      {
+        isEnabled: true,
+        operationId: expect.stringMatching(/^op_/),
+        pluginName: 'SkyUI.esp'
+      },
+      {
+        isEnabled: true,
+        operationId: expect.stringMatching(/^op_/),
+        pluginName: 'RaceMenu.esp'
+      }
+    ]);
+
+  const selectedToggleOperationIds = await page.evaluate(() =>
+    (
+      (
+        window as typeof window & {
+          __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+        }
+      ).__fluxoraCalls ?? []
+    )
+      .filter((call) => call.method === 'plugins.setEnabled')
+      .map((call) => call.payload?.operation?.operationId)
+  );
+  expect(new Set(selectedToggleOperationIds).size).toBe(1);
+  await expect(skyuiRow.getByRole('checkbox')).toBeChecked();
+  await expect(racemenuRow.getByRole('checkbox')).toBeChecked();
 });
 
 test('hides open-in-explorer actions for multi-selected mod and plugin rows', async ({ page }) => {
@@ -6522,9 +6726,12 @@ test('continuously scrolls the mod list while a dragged row stays at either edge
 
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
-  await expect(page.getByRole('row', { name: /Scroll fixture 39 mod/ })).toBeAttached();
-
   const body = page.locator('.mod-list__body');
+  await expect(body).toHaveAttribute('data-virtualized', 'adaptive');
+  await expect
+    .poll(() => body.evaluate((element) => Math.round(element.scrollHeight / 48)))
+    .toBeGreaterThan(40);
+
   const source = page.getByRole('row', { name: /Unofficial Patch mod/ });
   const sourceBox = await source.boundingBox();
   const bodyBox = await body.boundingBox();
@@ -7035,6 +7242,57 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
     element.scrollTop = 0;
   });
   await expect(separatorRow).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('fast 5k mod and plugin scrolls paint the destination window without growing the DOM', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(baseUrl);
+  await enableLargeAdaptiveScrollWorkspace(page);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const assertFastDestinationWindow = async (
+    body: Locator,
+    targetOrderId: string
+  ) => {
+    await expect(body).toHaveAttribute('data-virtualized', 'adaptive');
+    const result = await body.evaluate(async (element, orderId) => {
+      const targetIndex = 4200;
+      element.scrollTop = targetIndex * 48;
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      const target = element.querySelector<HTMLElement>(
+        `[data-order-id="${orderId}"]`
+      );
+      const rows = element.querySelectorAll<HTMLElement>('[data-order-id]');
+      return {
+        contentVisibility: target ? getComputedStyle(target).contentVisibility : '',
+        endIndex: Number(element.dataset.virtualEndIndex),
+        renderedRows: rows.length,
+        scrollHeight: element.scrollHeight,
+        startIndex: Number(element.dataset.virtualStartIndex),
+        targetIsRendered: Boolean(target)
+      };
+    }, targetOrderId);
+
+    expect(result.targetIsRendered).toBe(true);
+    expect(result.contentVisibility).toBe('visible');
+    expect(result.startIndex).toBeLessThanOrEqual(4200);
+    expect(result.endIndex).toBeGreaterThan(4200);
+    expect(result.renderedRows).toBeLessThan(150);
+    expect(result.scrollHeight).toBeGreaterThanOrEqual(5000 * 48);
+    expect(result.scrollHeight).toBeLessThanOrEqual(5001 * 48);
+  };
+
+  await assertFastDestinationWindow(
+    page.locator('.mod-list__body[data-virtualized="adaptive"]'),
+    'mod_performance_4200'
+  );
+  await assertFastDestinationWindow(
+    page.locator('.plugin-table .mod-table__body[data-virtualized="adaptive"]').first(),
+    'plugin_performance_4200'
+  );
 });
 
 test('Replace and Merge reveal and highlight the existing row', async ({ page }) => {

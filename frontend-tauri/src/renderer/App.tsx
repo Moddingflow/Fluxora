@@ -65,6 +65,10 @@ import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
 import { AppTitlebar } from './components/chrome/AppTitlebar';
+import {
+  AdaptiveVirtualList,
+  type AdaptiveVirtualListHandle
+} from './components/virtualization/AdaptiveVirtualList';
 import { Badge, Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
 import {
@@ -961,11 +965,7 @@ const projectMatchesSelection = (project: FluxoraProject, selection: string): bo
   project.projectDirectory === selection;
 
 const modRowHeight = 48;
-const modVisibleRows = 28;
-const modOverscanRows = 8;
 const pluginRowHeight = 48;
-const pluginVisibleRows = 28;
-const pluginOverscanRows = 8;
 const modLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
 const pluginLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
 const effectiveFileTreeSkeletonRows = Array.from({ length: 14 }, (_, index) => index);
@@ -1512,7 +1512,7 @@ export const App = () => {
   const [modsToolbarMenuPosition, setModsToolbarMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
   const [modCreationDialog, setModCreationDialog] = useState<ModCreationDialogState | null>(null);
-  const [modListScrollTop, setModListScrollTop] = useState(0);
+  const modListVirtualizerRef = useRef<AdaptiveVirtualListHandle | null>(null);
   const [draggedModOrderIds, setDraggedModOrderIds] = useState<ReadonlySet<string>>(
     () => new Set<string>()
   );
@@ -1585,7 +1585,7 @@ export const App = () => {
     useState<RowContextMenuPosition | null>(null);
   const [pluginSeparatorDialog, setPluginSeparatorDialog] =
     useState<PluginSeparatorDialogRequest | null>(null);
-  const [pluginListScrollTop, setPluginListScrollTop] = useState(0);
+  const pluginListVirtualizerRef = useRef<AdaptiveVirtualListHandle | null>(null);
   const [draggedPluginOrderIds, setDraggedPluginOrderIds] = useState<ReadonlySet<string>>(
     () => new Set<string>()
   );
@@ -2070,7 +2070,8 @@ export const App = () => {
     items: displayedModItems,
     rowHeight: modRowHeight,
     scopeKey: selectedProject?.id ?? null,
-    onScrollTopChange: setModListScrollTop
+    onScrollTopChange: (scrollTop) =>
+      modListVirtualizerRef.current?.synchronizeScrollPosition(scrollTop)
   });
 
   const selectableModOrderIds = useMemo(
@@ -2641,14 +2642,6 @@ export const App = () => {
     bridgeStatus?.capabilities?.features.operationCancellation?.state === 'available';
   const transferCancellationSupported = settingsCapabilities.transferCancellationAvailable;
 
-  const visibleModWindow = useMemo(() => {
-    return createVirtualWindow(displayedModItems, modListScrollTop, {
-      rowHeight: modRowHeight,
-      visibleRows: modVisibleRows,
-      overscanRows: modOverscanRows
-    });
-  }, [displayedModItems, modListScrollTop]);
-
   const modConflictScrollbarMarkers = useMemo(() => {
     if (displayedModItems.length === 0) {
       return [];
@@ -2682,14 +2675,6 @@ export const App = () => {
     pendingInstallOrchestrator.session?.state,
     selectedModItem
   ]);
-
-  const visiblePluginWindow = useMemo(() => {
-    return createVirtualWindow(filteredPluginItems, pluginListScrollTop, {
-      rowHeight: pluginRowHeight,
-      visibleRows: pluginVisibleRows,
-      overscanRows: pluginOverscanRows
-    });
-  }, [filteredPluginItems, pluginListScrollTop]);
 
   const visibleDownloadWindow = useMemo(() => {
     return createVirtualWindow(filteredDownloadItems, downloadListScrollTop, {
@@ -2903,7 +2888,7 @@ export const App = () => {
         items: pendingInstallOrchestrator.mergeAuthoritativeItems(nextOrder)
       });
       if (resetScroll) {
-        setModListScrollTop(0);
+        modListVirtualizerRef.current?.scrollTo(0);
       }
       setDraggedModOrderIds(new Set<string>());
       setModDropTarget(null);
@@ -3442,6 +3427,92 @@ export const App = () => {
       if (shouldRevert) {
         dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
         setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all plugins: ${errorMessage(error)}`);
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
+    }
+  };
+
+  const setSelectedPluginsEnabled = async (isEnabled: boolean) => {
+    if (
+      !selectedProject ||
+      !pluginCapabilities.bridgeAvailable ||
+      !pluginCapabilities.projectSupported
+    ) {
+      return;
+    }
+
+    const targetItems = pluginsWorkspace.items.filter(
+      (candidate) =>
+        candidate.isPlugin &&
+        pluginsWorkspace.selectedOrderIds.has(candidate.orderId) &&
+        !candidate.isLocked &&
+        candidate.isEnabled !== isEnabled
+    );
+    if (targetItems.length === 0) {
+      return;
+    }
+
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const previousItems = pluginsWorkspace.items;
+    const sequence = pluginEnableSaveSequenceRef.current + 1;
+    pluginEnableSaveSequenceRef.current = sequence;
+    targetItems.forEach((candidate) => {
+      latestPluginEnableSequenceByOrderIdRef.current.set(candidate.orderId, sequence);
+      pendingPluginEnableStatesByOrderIdRef.current.set(candidate.orderId, {
+        contextKey,
+        isEnabled,
+        pending: true,
+        sequence
+      });
+    });
+
+    setMessage(null);
+    targetItems.forEach((candidate) => {
+      dispatchPluginsWorkspace({
+        type: 'item-enabled-set',
+        orderId: candidate.orderId,
+        isEnabled
+      });
+    });
+
+    try {
+      const operationId = createRendererOperationId('plugins_set_selected_enabled');
+      let confirmedOrder = previousItems;
+      for (const candidate of targetItems) {
+        confirmedOrder = await window.fluxora.plugins.setEnabled(
+          project.projectDirectory,
+          project.templateId,
+          profileName,
+          candidate.name,
+          isEnabled,
+          { operationId }
+        );
+      }
+
+      targetItems.forEach((candidate) =>
+        completeLatestPluginEnableSave(candidate.orderId, sequence)
+      );
+      dispatchPluginsWorkspace({
+        type: 'items-loaded',
+        items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+      });
+    } catch (error) {
+      let shouldRevert = false;
+      targetItems.forEach((candidate) => {
+        if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
+          shouldRevert = true;
+        }
+      });
+
+      if (shouldRevert) {
+        dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
+        const targetLabel =
+          targetItems.length === 1 ? pluginItemTitle(targetItems[0]) : 'selected plugins';
+        setMessage(
+          `Could not ${isEnabled ? 'enable' : 'disable'} ${targetLabel}: ${errorMessage(error)}`
+        );
         await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
     }
@@ -4336,7 +4407,7 @@ export const App = () => {
         items: applyPendingPluginEnableStates(nextPlugins, contextKey, snapshotSequence)
       });
       if (resetScroll) {
-        setPluginListScrollTop(0);
+        pluginListVirtualizerRef.current?.scrollTo(0);
       }
       setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
@@ -11879,19 +11950,18 @@ export const App = () => {
           <span role="columnheader">Latest</span>
           <span role="columnheader">Статус</span>
         </div>
-        <div
+        <AdaptiveVirtualList
           className="mod-list__body"
           role="rowgroup"
-          ref={postInstallModRevealContainerRef}
+          items={displayedModItems}
+          rowHeight={modRowHeight}
+          getItemKey={(item) => item.orderId}
+          scrollContainerRef={postInstallModRevealContainerRef}
+          virtualizerRef={modListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
           onPointerCancel={cancelRowReorderDrag}
-          onScroll={(event) => setModListScrollTop(event.currentTarget.scrollTop)}
-        >
-          {visibleModWindow.topSpacer > 0 ? (
-            <div style={{ height: visibleModWindow.topSpacer }} aria-hidden="true" />
-          ) : null}
-          {visibleModWindow.items.map((item) => {
+          renderItem={(item) => {
             const isSelected = modsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === modMenuOrderId;
             const isOverwrite = isModOverwriteItem(item);
@@ -12180,11 +12250,8 @@ export const App = () => {
                 )}
               </div>
             );
-          })}
-          {visibleModWindow.bottomSpacer > 0 ? (
-            <div style={{ height: visibleModWindow.bottomSpacer }} aria-hidden="true" />
-          ) : null}
-        </div>
+          }}
+        />
         {modConflictScrollbarMarkers.length > 0 ? (
           <div className="mod-conflict-scrollbar" aria-hidden="true">
             {modConflictScrollbarMarkers.map((marker) => (
@@ -12569,6 +12636,13 @@ export const App = () => {
     }
 
     const hasMultipleSelectedPluginRows = pluginsWorkspace.selectedOrderIds.size > 1;
+    const selectedPluginItems = pluginsWorkspace.items.filter(
+      (candidate) =>
+        candidate.isPlugin && pluginsWorkspace.selectedOrderIds.has(candidate.orderId)
+    );
+    const selectedPluginEnableTargets = selectedPluginItems.filter(
+      (candidate) => !candidate.isLocked && !candidate.isEnabled
+    );
     const isCollapsed =
       item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
     const pluginSeparatorOrderIds = item.isSeparator
@@ -12625,6 +12699,26 @@ export const App = () => {
                 <span>Открыть в проводнике</span>
               </button>
             ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              disabled={
+                Boolean(pluginsBusyLabel) ||
+                !pluginCapabilities.bulkToggleSupported ||
+                selectedPluginEnableTargets.length === 0
+              }
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                void setSelectedPluginsEnabled(true);
+              }}
+            >
+              <CheckCircle2 size={14} aria-hidden="true" />
+              <span>
+                {selectedPluginItems.length === 1
+                  ? 'Включить выбранный плагин'
+                  : 'Включить выбранные плагины'}
+              </span>
+            </button>
             <button
               type="button"
               role="menuitem"
@@ -12797,17 +12891,17 @@ export const App = () => {
           <span role="columnheader">Source</span>
           <span role="columnheader">Статус</span>
         </div>
-        <div
+        <AdaptiveVirtualList
           className="mod-table__body"
+          role="rowgroup"
+          items={filteredPluginItems}
+          rowHeight={pluginRowHeight}
+          getItemKey={(item) => item.orderId}
+          virtualizerRef={pluginListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
           onPointerCancel={cancelRowReorderDrag}
-          onScroll={(event) => setPluginListScrollTop(event.currentTarget.scrollTop)}
-        >
-          {visiblePluginWindow.topSpacer > 0 ? (
-            <div style={{ height: visiblePluginWindow.topSpacer }} aria-hidden="true" />
-          ) : null}
-          {visiblePluginWindow.items.map((item) => {
+          renderItem={(item) => {
             const isSelected = pluginsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === pluginMenuOrderId;
             const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
@@ -12990,11 +13084,8 @@ export const App = () => {
                 {isMenuOpen ? renderPluginRowMenu(item) : null}
               </div>
             );
-          })}
-          {visiblePluginWindow.bottomSpacer > 0 ? (
-            <div style={{ height: visiblePluginWindow.bottomSpacer }} aria-hidden="true" />
-          ) : null}
-        </div>
+          }}
+        />
       </div>
     );
   };
@@ -13754,7 +13845,7 @@ export const App = () => {
                 type: 'search-changed',
                 searchText: event.target.value
               });
-              setPluginListScrollTop(0);
+              pluginListVirtualizerRef.current?.scrollTo(0);
             }}
             placeholder="Search plugins"
             aria-label="Search plugins"
@@ -15144,7 +15235,7 @@ export const App = () => {
                       type: 'search-changed',
                       searchText: event.target.value
                     });
-                    setModListScrollTop(0);
+                    modListVirtualizerRef.current?.scrollTo(0);
                   }}
                   placeholder="Search mods"
                   aria-label="Search mods"

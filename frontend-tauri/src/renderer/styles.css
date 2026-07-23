@@ -5141,6 +5141,18 @@ input::placeholder {
   overscroll-behavior: contain;
 }
 
+.mod-list__body[data-virtualized="adaptive"],
+.plugin-table .mod-table__body[data-virtualized="adaptive"] {
+  overflow-anchor: none;
+}
+
+.adaptive-virtual-list__spacer {
+  width: 1px;
+  min-height: 0;
+  contain: strict;
+  pointer-events: none;
+}
+
 .mod-row {
   position: relative;
   display: grid;
@@ -5171,14 +5183,16 @@ input::placeholder {
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  content-visibility: auto;
-  contain-intrinsic-size: 48px;
+  contain: layout style;
+  content-visibility: visible;
 }
 
 .plugin-row:not(.mod-row--head) {
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
+  contain: layout style;
+  content-visibility: visible;
 }
 
 .mod-list-row:active,

@@ -16,7 +16,7 @@ describe('mods pane redesign', () => {
 
     expect(app).toContain('className="mod-list mod-list--table"');
     expect(app).toContain('role="table" aria-label="Mod order"');
-    expect(app).toContain('visibleModWindow.items.map');
+    expect(app).toContain('items={displayedModItems}');
     expect(app).toContain('<StatusDot');
     expect(app).toContain('modTableStatusView(item)');
     expect(app).toContain("const visibleConflictHighlight =");
@@ -65,7 +65,7 @@ describe('mods pane redesign', () => {
     expect(app).toContain('showPluginMissingMastersStatus');
   });
 
-  it('exposes bulk enable and disable actions from mod and plugin context menus', () => {
+  it('exposes selected and bulk enable actions from plugin context menus', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain('Включить все моды');
@@ -76,6 +76,10 @@ describe('mods pane redesign', () => {
     expect(app).toContain('Выключить все плагины');
     expect(app).toContain('void setAllPluginsEnabled(true)');
     expect(app).toContain('void setAllPluginsEnabled(false)');
+    expect(app).toContain('Включить выбранный плагин');
+    expect(app).toContain('Включить выбранные плагины');
+    expect(app).toContain('void setSelectedPluginsEnabled(true)');
+    expect(app).toContain("createRendererOperationId('plugins_set_selected_enabled')");
     expect(app).toContain('window.fluxora.plugins.setAllEnabled');
     expect(app).not.toContain("'Enabling all plugins'");
     expect(app).not.toContain("'Disabling all plugins'");
