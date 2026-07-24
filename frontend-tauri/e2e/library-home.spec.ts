@@ -7753,6 +7753,57 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(rightPane.getByRole('button', { name: 'NXM', exact: true })).toHaveCount(0);
 });
 
+test('restores collapsed mod and plugin separators per build after restart', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.sameGameBuild', 'true'));
+  await page.reload();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const modSeparator = page.getByRole('row', { name: /Core fixes separator/ });
+  const pluginSeparator = page.getByRole('row', { name: /Late patches separator/ });
+  await modSeparator.getByRole('button', { name: 'Collapse Core fixes' }).click();
+  await pluginSeparator.getByRole('button', { name: 'Collapse Late patches' }).click();
+  await expect(modSeparator).toHaveAttribute('aria-expanded', 'false');
+  await expect(pluginSeparator).toHaveAttribute('aria-expanded', 'false');
+
+  await page.reload();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  );
+  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  );
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Open Skyrim performance profile' }).click();
+  await expect(page.getByRole('heading', { name: 'Skyrim performance profile' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  );
+  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  );
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Open Skyrim graphics overhaul' }).click();
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  );
+  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  );
+});
+
 test('creates a plugin separator from the row menu and moves the selected plugins into it', async ({
   page
 }) => {

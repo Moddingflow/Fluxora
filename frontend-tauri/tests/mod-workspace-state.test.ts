@@ -695,6 +695,19 @@ describe('mod workspace state', () => {
     ]);
   });
 
+  it('restores persisted collapsed separators when a build workspace loads', () => {
+    const loaded = modWorkspaceReducer(emptyModWorkspaceState(), {
+      type: 'items-loaded',
+      items,
+      collapsedSeparatorOrderIds: new Set(['sep_visuals', 'missing-separator'])
+    });
+
+    expect([...loaded.collapsedSeparatorOrderIds]).toEqual(['sep_visuals']);
+    expect(visibleModOrderItems(loaded.items, '', loaded.collapsedSeparatorOrderIds)).toEqual([
+      items[0]
+    ]);
+  });
+
   it('collapses and expands every separator without changing selection', () => {
     const groupedItems = [
       ...items,

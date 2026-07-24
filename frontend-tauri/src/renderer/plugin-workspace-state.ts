@@ -46,7 +46,11 @@ export interface PluginWorkspaceState {
 export type PluginWorkspaceAction =
   | { type: 'load-started' }
   | { type: 'load-failed'; message: string; silent?: boolean }
-  | { type: 'items-loaded'; items: FluxoraPluginOrderItem[] }
+  | {
+      type: 'items-loaded';
+      items: FluxoraPluginOrderItem[];
+      collapsedSeparatorOrderIds?: ReadonlySet<string>;
+    }
   | { type: 'items-reordered'; orderId: string; targetIndex: number }
   | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
   | { type: 'unlocked-items-enabled-set'; isEnabled: boolean }
@@ -727,7 +731,7 @@ export const pluginWorkspaceReducer = (
     case 'items-loaded': {
       const collapsedSeparatorOrderIds = pruneCollapsedSeparators(
         action.items,
-        state.collapsedSeparatorOrderIds
+        action.collapsedSeparatorOrderIds ?? state.collapsedSeparatorOrderIds
       );
       const selected = selectedPluginOrderItem(
         action.items,

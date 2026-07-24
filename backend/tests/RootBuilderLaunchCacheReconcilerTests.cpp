@@ -111,6 +111,38 @@ namespace fluxora::tests
         EXPECT_EQ(readTextFile(cacheFile), "runtime");
     }
 
+    TEST(RootBuilderLaunchCacheReconcilerTests, AcceptsExistingVfsWhiteoutForDeletedRuntimeFile)
+    {
+        TempDirectory temp;
+        const std::filesystem::path relativeMarker = L"PrecacheGrass.txt";
+        const std::filesystem::path cacheMarker = temp.path() / L"cache" / relativeMarker;
+        writeTextFile(cacheMarker, "NGIO runtime activity");
+        const std::vector<RootBuilderLaunchCacheBaselineFile> baseline{
+            baselineFile(temp.path() / L"cache", relativeMarker)
+        };
+        ASSERT_TRUE(std::filesystem::remove(cacheMarker));
+
+        const std::filesystem::path whiteout =
+            temp.path() / L"whiteouts" / L"game-root" / relativeMarker;
+        writeTextFile(whiteout, "");
+#ifdef _WIN32
+        ASSERT_NE(
+            SetFileAttributesW(
+                whiteout.c_str(),
+                FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED),
+            0);
+#endif
+
+        Logger logger;
+        const RootBuilderLaunchCacheReconcileResult result =
+            RootBuilderLaunchCacheReconciler(logger).reconcile(requestFor(temp.path(), baseline));
+
+        ASSERT_TRUE(result.success) << result.failure;
+        EXPECT_TRUE(result.cacheChanged);
+        EXPECT_EQ(result.whiteouts, 1U);
+        EXPECT_TRUE(std::filesystem::is_regular_file(whiteout));
+    }
+
     TEST(RootBuilderLaunchCacheReconcilerTests, DoesNotFollowDirectoryReparsePoints)
     {
 #ifndef _WIN32

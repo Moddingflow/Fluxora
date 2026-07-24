@@ -268,6 +268,30 @@ namespace fluxora
                     " (" + error.message() + ")";
                 return false;
             }
+
+            error.clear();
+            const bool existingWhiteout = std::filesystem::exists(path, error);
+            if (error)
+            {
+                failure = "could not inspect existing whiteout " + toUtf8(path.wstring()) +
+                    " (" + error.message() + ")";
+                return false;
+            }
+            if (existingWhiteout)
+            {
+                error.clear();
+                if (std::filesystem::is_regular_file(path, error))
+                {
+                    return true;
+                }
+                if (error)
+                {
+                    failure = "could not inspect existing whiteout " + toUtf8(path.wstring()) +
+                        " (" + error.message() + ")";
+                    return false;
+                }
+            }
+
             std::ofstream marker(path, std::ios::binary | std::ios::trunc);
             if (!marker)
             {

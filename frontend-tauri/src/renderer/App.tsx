@@ -241,6 +241,10 @@ import {
   type ModConflictMarkerState
 } from './mod-workspace-state';
 import {
+  loadCollapsedSeparatorOrderIds,
+  saveCollapsedSeparatorOrderIds
+} from './separator-collapse-persistence';
+import {
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   enabledPluginNameKeys,
@@ -1468,6 +1472,7 @@ export const App = () => {
     undefined,
     emptyModWorkspaceState
   );
+  const modsWorkspaceProjectIdRef = useRef<string | null>(null);
   const [installedMods, setInstalledMods] = useState<FluxoraInstalledMod[]>([]);
   const [modUpdateResultsByProject, setModUpdateResultsByProject] =
     useState<ModUpdateResultsByProject>({});
@@ -1579,6 +1584,33 @@ export const App = () => {
     undefined,
     emptyPluginWorkspaceState
   );
+  const pluginsWorkspaceProjectIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const projectId = modsWorkspaceProjectIdRef.current;
+    if (!projectId || modsWorkspace.loadState !== 'ready') {
+      return;
+    }
+
+    saveCollapsedSeparatorOrderIds(
+      window.localStorage,
+      projectId,
+      'mods',
+      modsWorkspace.collapsedSeparatorOrderIds
+    );
+  }, [modsWorkspace.collapsedSeparatorOrderIds, modsWorkspace.loadState]);
+  useEffect(() => {
+    const projectId = pluginsWorkspaceProjectIdRef.current;
+    if (!projectId || pluginsWorkspace.loadState !== 'ready') {
+      return;
+    }
+
+    saveCollapsedSeparatorOrderIds(
+      window.localStorage,
+      projectId,
+      'plugins',
+      pluginsWorkspace.collapsedSeparatorOrderIds
+    );
+  }, [pluginsWorkspace.collapsedSeparatorOrderIds, pluginsWorkspace.loadState]);
   const [pluginsBusyLabel, setPluginsBusyLabel] = useState<string | null>(null);
   const [pluginMenuOrderId, setPluginMenuOrderId] = useState<string | null>(null);
   const [pluginMenuPosition, setPluginMenuPosition] =
@@ -2883,9 +2915,15 @@ export const App = () => {
       }
 
       setInstalledMods(nextInstalledMods);
+      modsWorkspaceProjectIdRef.current = project.id;
       dispatchModsWorkspace({
         type: 'items-loaded',
-        items: pendingInstallOrchestrator.mergeAuthoritativeItems(nextOrder)
+        items: pendingInstallOrchestrator.mergeAuthoritativeItems(nextOrder),
+        collapsedSeparatorOrderIds: loadCollapsedSeparatorOrderIds(
+          window.localStorage,
+          project.id,
+          'mods'
+        )
       });
       if (resetScroll) {
         modListVirtualizerRef.current?.scrollTo(0);
@@ -4359,6 +4397,7 @@ export const App = () => {
     }
 
     if (!capabilities.bridgeAvailable) {
+      pluginsWorkspaceProjectIdRef.current = project.id;
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
       setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
@@ -4366,6 +4405,7 @@ export const App = () => {
     }
 
     if (!capabilities.projectSupported) {
+      pluginsWorkspaceProjectIdRef.current = project.id;
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
       setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
@@ -4402,9 +4442,15 @@ export const App = () => {
       if (!isCurrentWorkspaceStoreLoad('plugins', loadSequence)) {
         return false;
       }
+      pluginsWorkspaceProjectIdRef.current = project.id;
       dispatchPluginsWorkspace({
         type: 'items-loaded',
-        items: applyPendingPluginEnableStates(nextPlugins, contextKey, snapshotSequence)
+        items: applyPendingPluginEnableStates(nextPlugins, contextKey, snapshotSequence),
+        collapsedSeparatorOrderIds: loadCollapsedSeparatorOrderIds(
+          window.localStorage,
+          project.id,
+          'plugins'
+        )
       });
       if (resetScroll) {
         pluginListVirtualizerRef.current?.scrollTo(0);

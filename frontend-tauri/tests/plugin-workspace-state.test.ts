@@ -355,6 +355,21 @@ describe('plugin workspace state', () => {
     expect(moved.collapsedSeparatorOrderIds.has('sep_patches')).toBe(true);
   });
 
+  it('restores persisted collapsed plugin separators when a build workspace loads', () => {
+    const loaded = pluginWorkspaceReducer(emptyPluginWorkspaceState(), {
+      type: 'items-loaded',
+      items,
+      collapsedSeparatorOrderIds: new Set(['sep_patches', 'missing-separator'])
+    });
+
+    expect([...loaded.collapsedSeparatorOrderIds]).toEqual(['sep_patches']);
+    expect(
+      visiblePluginOrderItems(loaded.items, '', loaded.collapsedSeparatorOrderIds).map(
+        (item) => item.orderId
+      )
+    ).toEqual(['plugin_skyrim', 'sep_patches']);
+  });
+
   it('collapses and expands every plugin separator without changing selection', () => {
     const groupedItems = [
       ...items,

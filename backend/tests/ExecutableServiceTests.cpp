@@ -420,6 +420,46 @@ namespace fluxora::tests
             "high");
     }
 
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheWarmResolveAcceptsExistingVfsWhiteout)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+        const std::filesystem::path managedMarker =
+            paths.overwrite / L"root" / L"PrecacheGrass.txt";
+        writeTextFile(managedMarker, "NGIO runtime activity");
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        const std::filesystem::path cachedMarker =
+            cold.rootBuilderLaunchCacheDirectory / L"PrecacheGrass.txt";
+        ASSERT_TRUE(std::filesystem::is_regular_file(cachedMarker));
+        ASSERT_TRUE(std::filesystem::remove(cachedMarker));
+        ASSERT_TRUE(std::filesystem::remove(managedMarker));
+
+        const std::filesystem::path whiteout =
+            paths.project / L".flow" / L"vfs" / L"whiteouts" /
+            L"game-root" / L"PrecacheGrass.txt";
+        writeTextFile(whiteout, "");
+#ifdef _WIN32
+        ASSERT_NE(
+            SetFileAttributesW(
+                whiteout.c_str(),
+                FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED),
+            0);
+#endif
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(
+            normalized(warm.resolvedExecutablePath),
+            normalized(cold.resolvedExecutablePath));
+        EXPECT_FALSE(std::filesystem::exists(
+            warm.rootBuilderLaunchCacheDirectory / L"PrecacheGrass.txt"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(whiteout));
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheUsesSealedManifestFastPathOnWarmResolve)
     {
         TempDirectory temp;

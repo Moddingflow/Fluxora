@@ -47,7 +47,11 @@ export interface ModWorkspaceState {
 export type ModWorkspaceAction =
   | { type: 'load-started' }
   | { type: 'load-failed'; message: string; silent?: boolean }
-  | { type: 'items-loaded'; items: FluxoraModOrderItem[] }
+  | {
+      type: 'items-loaded';
+      items: FluxoraModOrderItem[];
+      collapsedSeparatorOrderIds?: ReadonlySet<string>;
+    }
   | {
       type: 'install-completed';
       installed: FluxoraInstalledModSummary;
@@ -942,7 +946,7 @@ export const modWorkspaceReducer = (
     case 'items-loaded': {
       const collapsedSeparatorOrderIds = pruneCollapsedSeparators(
         action.items,
-        state.collapsedSeparatorOrderIds
+        action.collapsedSeparatorOrderIds ?? state.collapsedSeparatorOrderIds
       );
       const selected = selectedModOrderItem(
         action.items,
