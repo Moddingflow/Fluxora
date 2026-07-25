@@ -6414,14 +6414,18 @@ extern "C"
                 options.progress = [progressCallback, progressUserData](
                     std::size_t completed,
                     std::size_t total,
-                    std::wstring_view modId)
+                    std::wstring_view currentItem)
                 {
+                    const std::uintmax_t overallPercent = total == 0
+                        ? 0
+                        : static_cast<std::uintmax_t>((completed * 100) / total);
                     fluxora::JsonWriter writer;
                     writer.beginObject();
                     writer.field(L"phase", L"metadata");
                     writer.field(L"completed", static_cast<std::uintmax_t>(completed));
                     writer.field(L"total", static_cast<std::uintmax_t>(total));
-                    writer.field(L"modId", modId);
+                    writer.field(L"currentItem", currentItem);
+                    writer.field(L"overallPercent", overallPercent);
                     writer.endObject();
                     progressCallback(writer.str().c_str(), progressUserData);
                 };
@@ -6988,6 +6992,26 @@ extern "C"
                 rules,
                 isBlank(profileName) ? L"" : profileName));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_invalidate_plugin_discovery_caches(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            core().plugins().invalidateDiscoveryCaches();
+
+            fluxora::JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"invalidated", true);
+            writer.endObject();
+            return writeToBuffer(writer.str(), jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

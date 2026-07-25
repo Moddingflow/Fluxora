@@ -668,7 +668,13 @@ namespace fluxora
             bool cancelled = false;
             bool quotaKnown = false;
             bool deadlineStopped = false;
-            std::size_t completedMetadataGroups = 0;
+            std::size_t completedMetadataMods = 0;
+            std::size_t totalMetadataMods = 0;
+            for (const auto& [key, mods] : groups)
+            {
+                (void)key;
+                totalMetadataMods += mods.size();
+            }
             const auto cancelIfRequested = [&]()
             {
                 if (cancelled || !options_.cancellationRequested())
@@ -1005,10 +1011,16 @@ namespace fluxora
                         ++result.counters.updates;
                     }
                 }
-                ++completedMetadataGroups;
                 if (options_.progress)
                 {
-                    options_.progress(completedMetadataGroups, groups.size(), key.second);
+                    for (const InstalledModRecord* mod : mods)
+                    {
+                        ++completedMetadataMods;
+                        options_.progress(
+                            completedMetadataMods,
+                            totalMetadataMods,
+                            mod->folderName);
+                    }
                 }
             };
 

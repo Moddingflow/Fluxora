@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -251,6 +252,39 @@ namespace fluxora::tests
         EXPECT_TRUE(result.mods.front().hasUpdate);
         EXPECT_EQ(result.counters.checked, 1U);
         EXPECT_EQ(result.counters.updates, 1U);
+    }
+
+    TEST_F(ModUpdateServiceFixture, ProgressNamesTheInstalledModBeingChecked)
+    {
+        registerNexusMod(L"Readable Progress Mod A", L"1.0", L"420", L"100");
+        registerNexusMod(L"Readable Progress Mod B", L"1.0", L"420", L"100");
+        api_.filesResponse.files = {
+            NexusFileMetadata{L"100", L"1.0", L"1", true, NexusFileAvailability::Active, 100}
+        };
+        std::vector<std::tuple<std::size_t, std::size_t, std::wstring>> progress;
+        ModUpdateServiceOptions options;
+        options.cachePath = temp_.path() / L"progress-nexus-update-cache.sqlite3";
+        options.progress = [&progress](
+            std::size_t completed,
+            std::size_t total,
+            std::wstring_view currentItem)
+        {
+            progress.emplace_back(completed, total, currentItem);
+        };
+        ModUpdateService service(logger_, pathSettings_, api_, std::move(options));
+
+        const ModUpdateCheckResult result = service.check(ModUpdateCheckRequest{
+            project_,
+            ModUpdateCheckMode::Manual});
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(progress.size(), 2U);
+        EXPECT_EQ(std::get<0>(progress.front()), 1U);
+        EXPECT_EQ(std::get<0>(progress.back()), 2U);
+        EXPECT_EQ(std::get<1>(progress.front()), 2U);
+        EXPECT_EQ(std::get<1>(progress.back()), 2U);
+        EXPECT_EQ(std::get<2>(progress.front()), L"Readable Progress Mod A");
+        EXPECT_EQ(std::get<2>(progress.back()), L"Readable Progress Mod B");
     }
 
     TEST_F(ModUpdateServiceFixture, SweepDeadlineStopsIssuingRequestsAndReturnsPartialNetworkError)

@@ -617,6 +617,27 @@ try {
     if (@($persistedPlugins | Where-Object { $_.name -eq 'OfflineOnly.esp' }).Count -ne 0) {
         throw 'plugins.listPersisted performed live disk discovery instead of returning persisted profile state.'
     }
+
+    $freshPluginsResponse = Invoke-BridgeHostRequest `
+        -EnvironmentVariables $fixtureEnvironment `
+        -Request @{
+            jsonrpc = '2.0'
+            id = 'plugins_list_fresh'
+            method = 'plugins.list'
+            params = @{
+                projectDirectory = $projectDirectory
+                templateId = 'skyrimse'
+                profileName = 'Default'
+                forceDiscoveryRefresh = $true
+            }
+            meta = $requestMeta
+        }
+    if ($freshPluginsResponse.result.ok -ne $true) {
+        throw "Expected fresh plugins.list success, received: $($freshPluginsResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    if (@($freshPluginsResponse.result.data | Where-Object { $_.name -eq 'OfflineOnly.esp' }).Count -ne 1) {
+        throw "Fresh plugins.list did not discover the new disk plugin: $($freshPluginsResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
 }
 finally {
     if ($persistedPluginsFixtureRoot.StartsWith($protocolTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {

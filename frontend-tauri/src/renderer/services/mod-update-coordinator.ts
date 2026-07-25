@@ -95,6 +95,7 @@ export const createModUpdateCoordinator = (
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: {
     projectDirectory: string;
+    mode: FluxoraModUpdateCheckMode;
     operationId: string;
     promise: Promise<FluxoraModUpdateCheckResult>;
   } | null = null;
@@ -106,16 +107,22 @@ export const createModUpdateCoordinator = (
     }
   };
 
-  const cancelInFlight = (): void => {
-    const current = inFlight;
-    if (!current) {
-      return;
-    }
+  const requestCancellation = (
+    current: NonNullable<typeof inFlight>
+  ): void => {
     void options.api
       .cancel(current.operationId, {
         operationId: options.createOperationId('mods_check_updates_cancel')
       })
       .catch(() => undefined);
+  };
+
+  const cancelInFlight = (): void => {
+    const current = inFlight;
+    if (!current) {
+      return;
+    }
+    requestCancellation(current);
   };
 
   const scheduleAutomatic = (result?: FluxoraModUpdateCheckResult): void => {
@@ -124,30 +131,24 @@ export const createModUpdateCoordinator = (
       return;
     }
     const parsedNext = result?.nextEligibleAt ? Date.parse(result.nextEligibleAt) : Number.NaN;
-    const delay = Number.isFinite(parsedNext)
-      ? Math.max(1_000, parsedNext - now())
-      : automaticFallbackDelayMs;
+    const remainingDelay = parsedNext - now();
+    const delay =
+      Number.isFinite(parsedNext) && remainingDelay > 0
+        ? remainingDelay
+        : automaticFallbackDelayMs;
     timer = setTimer(() => {
       timer = null;
       void run('automatic').catch(() => undefined);
     }, delay);
   };
 
-  const run = (
+  const startRun = (
     mode: FluxoraModUpdateCheckMode,
-    requestedOperationId?: string
+    projectDirectory: string,
+    startedGeneration: number,
+    operationId: string
   ): Promise<FluxoraModUpdateCheckResult> => {
-    const projectDirectory = activeProjectDirectory;
-    if (!projectDirectory) {
-      return Promise.reject(new Error('No Fluxora build is active for update checking.'));
-    }
-    if (inFlight?.projectDirectory === projectDirectory) {
-      return inFlight.promise;
-    }
-
     clearScheduledCheck();
-    const startedGeneration = generation;
-    const operationId = requestedOperationId ?? options.createOperationId(`mods_check_updates_${mode}`);
     const promise = options.api
       .checkUpdates(
         { projectDirectory, mode },
@@ -162,10 +163,8 @@ export const createModUpdateCoordinator = (
           options.onApplied(projectDirectory, result);
           if (result.state === 'partial' && result.reason === 'authenticationUnavailable') {
             options.onAuthenticationUnavailable?.();
-            clearScheduledCheck();
-          } else {
-            scheduleAutomatic(result);
           }
+          scheduleAutomatic(result);
         }
         return result;
       })
@@ -180,8 +179,55 @@ export const createModUpdateCoordinator = (
           inFlight = null;
         }
       });
-    inFlight = { projectDirectory, operationId, promise };
+    inFlight = { projectDirectory, mode, operationId, promise };
     return promise;
+  };
+
+  const run = (
+    mode: FluxoraModUpdateCheckMode,
+    requestedOperationId?: string
+  ): Promise<FluxoraModUpdateCheckResult> => {
+    const projectDirectory = activeProjectDirectory;
+    if (!projectDirectory) {
+      return Promise.reject(new Error('No Fluxora build is active for update checking.'));
+    }
+    const operationId =
+      requestedOperationId ?? options.createOperationId(`mods_check_updates_${mode}`);
+    if (inFlight?.projectDirectory === projectDirectory) {
+      if (mode !== 'manual' || inFlight.mode === 'manual') {
+        return inFlight.promise;
+      }
+
+      const automatic = inFlight;
+      const startedGeneration = generation;
+      requestCancellation(automatic);
+      clearScheduledCheck();
+      const queuedPromise = automatic.promise
+        .catch(() => undefined)
+        .then(() => {
+          if (
+            generation !== startedGeneration ||
+            activeProjectDirectory !== projectDirectory
+          ) {
+            throw new Error('The active Fluxora build changed before the manual update check.');
+          }
+          return startRun('manual', projectDirectory, startedGeneration, operationId);
+        })
+        .finally(() => {
+          if (inFlight?.promise === queuedPromise) {
+            inFlight = null;
+          }
+        });
+      inFlight = {
+        projectDirectory,
+        mode: 'manual',
+        operationId,
+        promise: queuedPromise
+      };
+      return queuedPromise;
+    }
+
+    return startRun(mode, projectDirectory, generation, operationId);
   };
 
   return {

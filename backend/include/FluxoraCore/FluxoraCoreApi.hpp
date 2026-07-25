@@ -666,6 +666,10 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_invalidate_plugin_discovery_caches(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_get_persisted_plugins(
         const wchar_t* projectDirectory,
         const wchar_t* templateId,

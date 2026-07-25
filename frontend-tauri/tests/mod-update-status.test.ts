@@ -81,20 +81,21 @@ describe('mod update status', () => {
     expect(byProject['c:\\builds\\b']).toBe(completed);
   });
 
-  it('distinguishes baseline and recheck freshness from a confirmed Latest value', () => {
+  it('keeps baseline and recheck freshness internal instead of showing persistent warnings', () => {
     const partial = result('partial', 'authenticationUnavailable');
 
-    expect(modUpdateFreshnessView(item('completed'), partial).label).toBeNull();
+    expect(modUpdateFreshnessView(item('completed'), partial)).toMatchObject({
+      label: null,
+      tone: 'confirmed'
+    });
     expect(modUpdateFreshnessView(item('baseline_pending'), partial)).toMatchObject({
-      label: 'Не проверено',
-      tone: 'warning'
+      label: null,
+      tone: 'confirmed'
     });
     expect(modUpdateFreshnessView(item('recheck_required'), partial)).toMatchObject({
-      label: 'Требуется проверка',
-      tone: 'warning'
+      label: null,
+      tone: 'confirmed'
     });
-    expect(modUpdateFreshnessView(item('baseline_pending'), partial).title)
-      .toContain('авторизация Nexus');
   });
 
   it('treats older rows without a freshness field as unknown instead of crashing the table', () => {

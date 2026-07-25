@@ -776,6 +776,274 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, MovePluginRejectsOrdersThatPlaceDependenciesBeforeTheirMasters)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Plugin Master Order Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path masterPlugin =
+            mods / L"Master Mod" / L"AddOns" / L"A_Master.ABC";
+        const std::filesystem::path dependentPlugin =
+            mods / L"Dependent Mod" / L"AddOns" / L"B_Dependent.ABC";
+        writeBethesdaPluginFile(masterPlugin, {});
+        writeBethesdaPluginFile(dependentPlugin, {"A_Master.ABC"});
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Master Mod", L"Master Mod", {}, true, {}},
+                InstalledModImportRecord{mods / L"Dependent Mod", L"Dependent Mod", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+        const std::vector<PluginEntry> initial =
+            plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* master = findPlugin(initial, L"A_Master.ABC");
+        const PluginEntry* dependent = findPlugin(initial, L"B_Dependent.ABC");
+        ASSERT_NE(master, nullptr);
+        ASSERT_NE(dependent, nullptr);
+        ASSERT_LT(master->order, dependent->order);
+
+        EXPECT_THROW(
+            (void)plugins.movePlugin(
+                project,
+                context,
+                L"Default",
+                dependent->orderId,
+                master->order),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)plugins.movePlugin(
+                project,
+                context,
+                L"Default",
+                master->orderId,
+                dependent->order),
+            std::invalid_argument);
+
+        const std::vector<PluginEntry> afterRejectedMoves =
+            plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* persistedMaster = findPlugin(afterRejectedMoves, L"A_Master.ABC");
+        const PluginEntry* persistedDependent = findPlugin(afterRejectedMoves, L"B_Dependent.ABC");
+        ASSERT_NE(persistedMaster, nullptr);
+        ASSERT_NE(persistedDependent, nullptr);
+        EXPECT_LT(persistedMaster->order, persistedDependent->order);
+#endif
+    }
+
+    TEST(PluginServiceTests, ListPluginsRepairsExternallyCorruptedMasterOrderStably)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Plugin Master Repair Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path masterPlugin =
+            mods / L"Master Mod" / L"AddOns" / L"A_Master.ABC";
+        const std::filesystem::path firstDependentPlugin =
+            mods / L"First Dependent Mod" / L"AddOns" / L"B_Dependent.ABC";
+        const std::filesystem::path secondDependentPlugin =
+            mods / L"Second Dependent Mod" / L"AddOns" / L"C_Dependent.ABC";
+        const std::filesystem::path independentPlugin =
+            mods / L"Independent Mod" / L"AddOns" / L"X_Independent.ABC";
+        writeBethesdaPluginFile(masterPlugin, {});
+        writeBethesdaPluginFile(firstDependentPlugin, {"A_Master.ABC"});
+        writeBethesdaPluginFile(secondDependentPlugin, {"A_Master.ABC"});
+        writeBethesdaPluginFile(independentPlugin, {});
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Master Mod", L"Master Mod", {}, true, {}},
+                InstalledModImportRecord{
+                    mods / L"First Dependent Mod",
+                    L"First Dependent Mod",
+                    {},
+                    true,
+                    {}
+                },
+                InstalledModImportRecord{
+                    mods / L"Second Dependent Mod",
+                    L"Second Dependent Mod",
+                    {},
+                    true,
+                    {}
+                },
+                InstalledModImportRecord{
+                    mods / L"Independent Mod",
+                    L"Independent Mod",
+                    {},
+                    true,
+                    {}
+                }
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+        (void)plugins.listPlugins(project, context, L"Default");
+
+        InstanceMetadataStore::replaceProfilePluginOrderItems(
+            project,
+            L"Default",
+            {
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Base.master", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"B_Dependent.ABC", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"C_Dependent.ABC", {}},
+                ProfilePluginOrderImportItemRecord{L"separator", {}, L"Late patches"},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"X_Independent.ABC", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"A_Master.ABC", {}}
+            });
+        writeTextFile(
+            project / L"profiles" / L"Default" / L"enabled.dat",
+            "*Base.master\n"
+            "*B_Dependent.ABC\n"
+            "*C_Dependent.ABC\n"
+            "*X_Independent.ABC\n"
+            "*A_Master.ABC\n");
+
+        const std::vector<ProfilePluginOrderItemRecord> corruptedRecords =
+            InstanceMetadataStore::listProfilePluginOrderItems(
+                project,
+                L"Default",
+                {
+                    L"Base.master",
+                    L"B_Dependent.ABC",
+                    L"C_Dependent.ABC",
+                    L"X_Independent.ABC",
+                    L"A_Master.ABC"
+                });
+        ASSERT_EQ(corruptedRecords.size(), 6U);
+
+        const std::vector<PluginEntry> repaired =
+            plugins.listPlugins(project, context, L"Default");
+        ASSERT_EQ(repaired.size(), 6U);
+        EXPECT_EQ(repaired[0].name, L"Base.master");
+        EXPECT_EQ(repaired[1].name, L"X_Independent.ABC");
+        EXPECT_EQ(repaired[2].name, L"A_Master.ABC");
+        EXPECT_EQ(repaired[3].kind, L"separator");
+        EXPECT_EQ(repaired[3].name, L"Late patches");
+        EXPECT_EQ(repaired[4].name, L"B_Dependent.ABC");
+        EXPECT_EQ(repaired[5].name, L"C_Dependent.ABC");
+
+        const std::vector<ProfilePluginOrderItemRecord> persistedRecords =
+            InstanceMetadataStore::listProfilePluginOrderItems(
+                project,
+                L"Default",
+                {
+                    L"Base.master",
+                    L"X_Independent.ABC",
+                    L"A_Master.ABC",
+                    L"B_Dependent.ABC",
+                    L"C_Dependent.ABC"
+                });
+        ASSERT_EQ(persistedRecords.size(), corruptedRecords.size());
+        for (std::size_t index = 0; index < persistedRecords.size(); ++index)
+        {
+            EXPECT_EQ(persistedRecords[index].id, repaired[index].orderId);
+        }
+        for (const ProfilePluginOrderItemRecord& corruptedRecord : corruptedRecords)
+        {
+            EXPECT_TRUE(std::any_of(
+                persistedRecords.begin(),
+                persistedRecords.end(),
+                [&corruptedRecord](const ProfilePluginOrderItemRecord& persistedRecord)
+                {
+                    return persistedRecord.id == corruptedRecord.id;
+                }));
+        }
+
+        EXPECT_EQ(
+            readTextFile(project / L"profiles" / L"Default" / L"enabled.dat"),
+            "*Base.master\n"
+            "*X_Independent.ABC\n"
+            "*A_Master.ABC\n"
+            "*B_Dependent.ABC\n"
+            "*C_Dependent.ABC\n");
+#endif
+    }
+
+    TEST(PluginServiceTests, NewlyDiscoveredPluginsAppendAfterExistingOrderAndSeparators)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Generated Plugin Order Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path existingPlugin =
+            mods / L"Existing Mod" / L"AddOns" / L"Existing.ABC";
+        const std::filesystem::path generatedDirectory =
+            mods / L"PGPatcher Output" / L"AddOns";
+        writeTextFile(existingPlugin, "plugin");
+        std::filesystem::create_directories(generatedDirectory);
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Existing Mod", L"Existing Mod", {}, true, {}},
+                InstalledModImportRecord{
+                    mods / L"PGPatcher Output",
+                    L"PGPatcher Output",
+                    {},
+                    true,
+                    {}
+                }
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+        const std::vector<PluginEntry> initial =
+            plugins.listPlugins(project, context, L"Default");
+        ASSERT_EQ(initial.size(), 2U);
+        const std::vector<PluginEntry> withSeparator =
+            plugins.createPluginSeparator(
+                project,
+                context,
+                L"Default",
+                L"Late patches",
+                static_cast<int>(initial.size()));
+        ASSERT_EQ(withSeparator.size(), 3U);
+        EXPECT_EQ(withSeparator.back().kind, L"separator");
+
+        writeTextFile(generatedDirectory / L"PGPatcher.ABC", "plugin");
+        writeTextFile(generatedDirectory / L"PG_1.ABC", "plugin");
+        plugins.invalidateDiscoveryCaches();
+
+        const std::vector<PluginEntry> refreshed =
+            plugins.listPlugins(project, context, L"Default");
+        ASSERT_EQ(refreshed.size(), 5U);
+        EXPECT_EQ(refreshed[2].kind, L"separator");
+        EXPECT_EQ(refreshed[3].name, L"PG_1.ABC");
+        EXPECT_EQ(refreshed[4].name, L"PGPatcher.ABC");
+#endif
+    }
+
     TEST(PluginServiceTests, ExplicitInvalidationRefreshesInPlacePluginHeaderChanges)
     {
 #ifndef _WIN32

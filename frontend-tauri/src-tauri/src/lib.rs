@@ -235,6 +235,7 @@ async fn record_operation_progress(app: &AppHandle, payload: &Value) {
 #[derive(Default)]
 struct BridgeState {
     process: Mutex<BridgeProcess>,
+    plugin_process: Mutex<BridgeProcess>,
     interactive_process: Mutex<BridgeProcess>,
     background_process: Mutex<BridgeProcess>,
     connection_process: Mutex<BridgeProcess>,
@@ -973,12 +974,41 @@ fn downloads_folder_batch_reason(changes: &[DownloadsFolderChange]) -> String {
     "batch".to_string()
 }
 
+fn is_transient_install_work_component(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    [
+        ".fomod-package",
+        ".installing",
+        ".merging",
+        ".replacing",
+        ".root",
+    ]
+    .iter()
+    .any(|marker| {
+        lower.rfind(marker).is_some_and(|marker_position| {
+            let continuation = &lower[marker_position + marker.len()..];
+            // Content-layout normalization writes through a generated
+            // "<install-work-directory>.layout[-N]" sibling.
+            continuation.is_empty()
+                || continuation == ".layout"
+                || continuation
+                    .strip_prefix(".layout-")
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+        })
+    })
+}
+
 fn is_transient_build_content_path(path: &Path) -> bool {
     if path.components().any(|component| {
         component
             .as_os_str()
             .to_str()
-            .is_some_and(|value| value.eq_ignore_ascii_case(".flow"))
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case(".flow")
+                    || is_transient_install_work_component(value)
+            })
     }) {
         return true;
     }
@@ -6957,6 +6987,7 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BridgeLane {
     Main,
+    Plugin,
     Interactive,
     Background,
     Connection,
@@ -6965,8 +6996,9 @@ enum BridgeLane {
 }
 
 impl BridgeLane {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Main,
+        Self::Plugin,
         Self::Interactive,
         Self::Background,
         Self::Connection,
@@ -6977,6 +7009,7 @@ impl BridgeLane {
     fn label(self) -> &'static str {
         match self {
             Self::Main => "main",
+            Self::Plugin => "plugin",
             Self::Interactive => "interactive",
             Self::Background => "background",
             Self::Connection => "connection",
@@ -6990,6 +7023,7 @@ impl BridgeState {
     fn process(&self, lane: BridgeLane) -> &Mutex<BridgeProcess> {
         match lane {
             BridgeLane::Main => &self.process,
+            BridgeLane::Plugin => &self.plugin_process,
             BridgeLane::Interactive => &self.interactive_process,
             BridgeLane::Background => &self.background_process,
             BridgeLane::Connection => &self.connection_process,
@@ -7001,6 +7035,7 @@ impl BridgeState {
 
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
+        "plugins.list" | "plugins.listPersisted" => BridgeLane::Plugin,
         "mods.checkUpdates" | "apiLimits.list" => BridgeLane::Background,
         "connections.listStatus"
         | "connections.restoreAll"
@@ -11189,6 +11224,12 @@ mod tests {
         assert!(is_transient_build_content_path(Path::new(
             "C:/Build/profiles/Default/plugins.txt.fluxora-bak"
         )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/Interrupted Install.installing/textures/partial.dds"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/Faultier's PBR Armors and Clothes.installing.layout/textures/layout.dds"
+        )));
         assert!(!is_transient_build_content_path(Path::new(
             "C:/Build/mods/SkyUI/SkyUI_SE.esp"
         )));
@@ -11382,6 +11423,33 @@ mod tests {
     }
 
     #[test]
+    fn operation_progress_payload_preserves_mod_update_progress() {
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "method": "operations.progress",
+            "params": {
+                "phase": "checking-mod-updates",
+                "completed": 2,
+                "total": 5,
+                "currentItem": "Unofficial Patch",
+                "overallPercent": 40
+            },
+            "meta": {
+                "operationId": "op_mod_updates_manual"
+            }
+        });
+
+        let payload = operation_progress_payload(&envelope);
+
+        assert_eq!(payload["operationId"], "op_mod_updates_manual");
+        assert_eq!(payload["phase"], "checking-mod-updates");
+        assert_eq!(payload["completed"], 2);
+        assert_eq!(payload["total"], 5);
+        assert_eq!(payload["currentItem"], "Unofficial Patch");
+        assert_eq!(payload["overallPercent"], 40);
+    }
+
+    #[test]
     fn operation_progress_payload_preserves_nested_install_conflict_snapshot() {
         let envelope = json!({
             "jsonrpc": "2.0",
@@ -11512,6 +11580,7 @@ mod tests {
             bridge_lane_for_method("mods.getWorkspace"),
             BridgeLane::Main
         );
+        assert_eq!(bridge_lane_for_method("plugins.list"), BridgeLane::Plugin);
         assert_eq!(
             bridge_lane_for_method("mods.checkUpdates"),
             BridgeLane::Background
@@ -11606,8 +11675,8 @@ mod tests {
             ("mods.saveTextFile", BridgeLane::Main),
             ("textFiles.read", BridgeLane::Interactive),
             ("textFiles.save", BridgeLane::Main),
-            ("plugins.list", BridgeLane::Main),
-            ("plugins.listPersisted", BridgeLane::Main),
+            ("plugins.list", BridgeLane::Plugin),
+            ("plugins.listPersisted", BridgeLane::Plugin),
             ("plugins.move", BridgeLane::Main),
             ("plugins.createSeparator", BridgeLane::Main),
             ("plugins.deleteSeparator", BridgeLane::Main),
@@ -12446,6 +12515,18 @@ mod tests {
     }
 
     #[test]
+    fn plugin_bridge_lane_does_not_wait_for_the_main_lane_lock() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            let _main_lane = state.process.lock().await;
+            let plugin_lane =
+                timeout(Duration::from_millis(50), state.plugin_process.lock()).await;
+
+            assert!(plugin_lane.is_ok());
+        });
+    }
+
+    #[test]
     fn background_bridge_lane_does_not_wait_for_the_main_or_interactive_lane_locks() {
         tauri::async_runtime::block_on(async {
             let state = BridgeState::default();
@@ -12528,6 +12609,7 @@ mod tests {
             BridgeLane::ALL,
             [
                 BridgeLane::Main,
+                BridgeLane::Plugin,
                 BridgeLane::Interactive,
                 BridgeLane::Background,
                 BridgeLane::Connection,

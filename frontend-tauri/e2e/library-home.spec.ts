@@ -2278,6 +2278,33 @@ test.beforeEach(async ({ page }) => {
             window.localStorage.getItem('fluxora.test.modUpdateLatest') === 'true';
           const shouldReturnPartial =
             window.localStorage.getItem('fluxora.test.modUpdatePartial') === 'authentication';
+          const shouldEmitManualProgress =
+            updateRequest?.mode === 'manual' &&
+            window.localStorage.getItem('fluxora.test.modUpdateProgress') === 'true';
+          if (shouldEmitManualProgress) {
+            const operationId = operation?.operationId ?? 'op_mod_updates_manual';
+            for (const callback of operationProgressCallbacks) {
+              callback({
+                operationId,
+                phase: 'metadata',
+                completed: 1,
+                total: 2,
+                currentItem: 'Unofficial Patch',
+                overallPercent: 50
+              });
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 500));
+            for (const callback of operationProgressCallbacks) {
+              callback({
+                operationId,
+                phase: 'metadata',
+                completed: 2,
+                total: 2,
+                currentItem: 'SkyUI',
+                overallPercent: 100
+              });
+            }
+          }
           if (shouldAdvanceLatest && !shouldReturnPartial) {
             const updated = modRows.find((item) => item.name === 'Unofficial Patch');
             if (updated) {
@@ -5791,6 +5818,112 @@ test('starts coverage reconciliation only after the pending invalidation settles
 
 });
 
+test('refreshes plugins before a slow mod workspace reconciliation finishes', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __deferNextWatcherMods?: () => void;
+      __releaseWatcherMods?: () => void;
+      __watcherModsStarted?: boolean;
+      __watcherPluginRefreshCount?: number;
+      fluxora: any;
+    };
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    const listPlugins = scope.fluxora.plugins.list;
+    let deferNextWatcherMods = false;
+    scope.__deferNextWatcherMods = () => {
+      deferNextWatcherMods = true;
+      scope.__watcherModsStarted = false;
+      scope.__watcherPluginRefreshCount = 0;
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      if (deferNextWatcherMods) {
+        deferNextWatcherMods = false;
+        scope.__watcherModsStarted = true;
+        await new Promise<void>((resolve) => {
+          scope.__releaseWatcherMods = resolve;
+        });
+      }
+      return getWorkspace(...args);
+    };
+    scope.fluxora.plugins.list = async (...args: unknown[]) => {
+      const operation = args[3] as { operationId?: string } | undefined;
+      const rows = await listPlugins(...args);
+      if (operation?.operationId?.includes('_build_content_plugins_changed_')) {
+        scope.__watcherPluginRefreshCount = (scope.__watcherPluginRefreshCount ?? 0) + 1;
+        const template = rows.find((item: any) => item.orderId === 'plugin_skyui');
+        const generatedRows = [
+          ...rows,
+          {
+            ...structuredClone(template),
+            id: 'pgpatcher.esp',
+            orderId: 'plugin_pgpatcher',
+            order: rows.length,
+            name: 'pgpatcher.esp',
+            sourceMod: 'PGPatcher Output'
+          }
+        ];
+        return (scope.__watcherPluginRefreshCount ?? 0) >= 2
+          ? [
+              ...generatedRows,
+              {
+                ...structuredClone(template),
+                id: 'pg_1.esp',
+                orderId: 'plugin_pg_1',
+                order: rows.length + 1,
+                name: 'pg_1.esp',
+                sourceMod: 'PGPatcher Output'
+              }
+            ]
+          : generatedRows;
+      }
+      return rows;
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await page.evaluate(() => {
+    (window as any).__deferNextWatcherMods();
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'pgpatcher.esp',
+          kind: 'create',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\PGPatcher Output\\pgpatcher.esp'
+        }
+      ]
+    });
+  });
+
+  await expect.poll(() => page.evaluate(() => (window as any).__watcherModsStarted)).toBe(true);
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'pg_1.esp',
+          kind: 'create',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\PGPatcher Output\\pg_1.esp'
+        }
+      ]
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__watcherPluginRefreshCount ?? 0))
+    .toBeGreaterThanOrEqual(2);
+  await expect
+    .poll(() =>
+      page
+        .getByLabel('Right pane')
+        .locator('.plugin-row[data-order-id]')
+        .evaluateAll((rows) => rows.slice(-2).map((row) => row.getAttribute('data-order-id')))
+    )
+    .toEqual(['plugin_pgpatcher', 'plugin_pg_1']);
+  await page.evaluate(() => (window as any).__releaseWatcherMods());
+});
+
 test('autonomously retries a failed watcher invalidation before exact refresh', async ({ page }) => {
   await page.goto(baseUrl);
   await page.evaluate(() => {
@@ -6426,6 +6559,35 @@ test('silently refreshes the Latest file version after the build workspace is re
   expect(browserDialogCount).toBe(0);
 });
 
+test('shows real per-mod progress only for a manual update check', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.modUpdateProgress', 'true');
+    (window as typeof window & { __fluxoraNexusInitiallyLinked?: boolean })
+      .__fluxoraNexusInitiallyLinked = true;
+  });
+  await page.goto(baseUrl);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.checkUpdates'))
+    .toMatchObject({ updateRequest: { mode: 'automatic' } });
+  await expect(page.locator('.mod-update-check-splash')).toHaveCount(0);
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await page.getByRole('menu', { name: 'Действия со сборкой' })
+    .getByRole('menuitem', { name: 'Проверить обновления' })
+    .click();
+
+  const splash = page.locator('.mod-update-check-splash');
+  await expect(splash).toBeVisible();
+  await expect(splash).toContainText('Проверяем обновления модов');
+  await expect(splash).toContainText('Проверено 1 из 2');
+  await expect(splash).toContainText('Unofficial Patch');
+  await expect(splash.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+  await expect(splash).toHaveCount(0);
+});
+
 test('keeps automatic partial updates quiet and shows only a short manual message', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('fluxora.test.modUpdatePartial', 'authentication');
@@ -6446,7 +6608,7 @@ test('keeps automatic partial updates quiet and shows only a short manual messag
   await expect(
     page.getByRole('row', { name: /Unofficial Patch mod/ })
       .locator('.mod-list-row__latest-freshness')
-  ).toHaveText('Не проверено');
+  ).toHaveCount(0);
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
   await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
@@ -6466,6 +6628,56 @@ test('keeps automatic partial updates quiet and shows only a short manual messag
     page.getByRole('row', { name: /Unofficial Patch mod/ })
       .locator('.mod-list-row__latest-value')
   ).toHaveText('4.4.0');
+});
+
+test('refreshes plugins before a slow mod reload after toggling a mod', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __armModToggleRefresh?: () => void;
+      __modToggleModsStarted?: boolean;
+      __modTogglePluginsRefreshed?: boolean;
+      __releaseModToggleMods?: () => void;
+      fluxora: any;
+    };
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    const listPlugins = scope.fluxora.plugins.list;
+    let armed = false;
+    scope.__armModToggleRefresh = () => {
+      armed = true;
+      scope.__modToggleModsStarted = false;
+      scope.__modTogglePluginsRefreshed = false;
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      if (armed) {
+        armed = false;
+        scope.__modToggleModsStarted = true;
+        await new Promise<void>((resolve) => {
+          scope.__releaseModToggleMods = resolve;
+        });
+      }
+      return getWorkspace(...args);
+    };
+    scope.fluxora.plugins.list = async (...args: unknown[]) => {
+      if (armed) {
+        scope.__modTogglePluginsRefreshed = true;
+      }
+      return listPlugins(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await page.evaluate(() => (window as any).__armModToggleRefresh());
+  await page.getByLabel('Disable Unofficial Patch').click({ force: true });
+
+  await expect.poll(() => page.evaluate(() => (window as any).__modToggleModsStarted)).toBe(true);
+  const pluginsRefreshedBeforeModsFinished = await page.evaluate(
+    () => (window as any).__modTogglePluginsRefreshed === true
+  );
+  await page.evaluate(() => (window as any).__releaseModToggleMods());
+
+  expect(pluginsRefreshedBeforeModsFinished).toBe(true);
 });
 
 test('uses the redesigned mods pane for real mod list operations', async ({ page }) => {
@@ -8186,7 +8398,7 @@ test('drags plugin rows without selecting text', async ({ page }) => {
     });
 });
 
-test('drags every movable selected plugin row and separator as one ordered group', async ({
+test('shows a blocked drop target and does not persist a plugin above its required master', async ({
   page
 }) => {
   await page.goto(baseUrl);
@@ -8196,20 +8408,36 @@ test('drags every movable selected plugin row and separator as one ordered group
       fluxora: any;
     };
     const originalRows = await scope.fluxora.plugins.list('', '', null, {
-      operationId: 'plugin_group_drag_fixture'
+      operationId: 'plugin_master_order_fixture'
     });
+    const basePlugin = originalRows.find((item: any) => item.orderId === 'plugin_skyrim');
     const template = originalRows.find((item: any) => item.orderId === 'plugin_skyui');
-    let pluginRows = [
-      ...structuredClone(originalRows),
+    const separator = originalRows.find((item: any) => item.orderId === 'sep_patches');
+    const pluginRows = [
+      { ...structuredClone(basePlugin), order: 0 },
       {
         ...structuredClone(template),
-        id: 'RaceMenu.esp',
-        orderId: 'plugin_racemenu',
-        order: originalRows.length,
-        name: 'RaceMenu.esp',
-        sourceMod: 'RaceMenu',
+        id: 'Required.esm',
+        orderId: 'plugin_required',
+        order: 1,
+        name: 'Required.esm',
+        extension: 'ESM',
+        sourceMod: 'Required Master',
+        isMaster: true,
+        masterFiles: [],
         missingMasters: []
-      }
+      },
+      {
+        ...structuredClone(template),
+        id: 'Dependent.esp',
+        orderId: 'plugin_dependent',
+        order: 2,
+        name: 'Dependent.esp',
+        sourceMod: 'Dependent Plugin',
+        masterFiles: ['Required.esm'],
+        missingMasters: []
+      },
+      { ...structuredClone(separator), order: 3 }
     ];
     scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
     scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
@@ -8225,10 +8453,121 @@ test('drags every movable selected plugin row and separator as one ordered group
         method: 'plugins.move',
         payload: { operation, orderId, profileName, projectDirectory, targetIndex, templateId }
       });
+      return structuredClone(pluginRows);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  const dependent = rightPane.getByRole('row', { name: /Dependent\.esp plugin/ });
+  const master = rightPane.getByRole('row', { name: /Required\.esm plugin/ });
+  await moveRowDragToSlot(page, dependent, master, 'before', 'Нельзя');
+
+  await expect(master).toHaveAttribute('data-drop-blocked', 'true');
+  await expect(page.locator('body')).toHaveClass(/row-reorder-blocked/);
+  expect(await master.evaluate((row) => getComputedStyle(row).cursor)).toBe('not-allowed');
+  await expect(master.locator('.row-drop-target-chip')).toHaveAttribute(
+    'title',
+    'Dependent.esp должен загружаться после Required.esm.'
+  );
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      rightPane.locator('.plugin-row[data-order-id]').evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual(['plugin_skyrim', 'plugin_required', 'plugin_dependent', 'sep_patches']);
+  expect(
+    await page.evaluate(
+      () =>
+        ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+          (call) => call.method === 'plugins.move'
+        ).length
+    )
+  ).toBe(0);
+});
+
+test('drags every movable selected plugin row and separator as one ordered group', async ({
+  page
+}) => {
+  await page.goto(baseUrl);
+  await page.evaluate(async () => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __pluginReorderWatcherInvalidated?: boolean;
+      __releaseSecondPluginMove?: () => void;
+      __secondPluginMoveStarted?: boolean;
+      fluxora: any;
+    };
+    const originalRows = await scope.fluxora.plugins.list('', '', null, {
+      operationId: 'plugin_group_drag_fixture'
+    });
+    const invalidateFileCaches = scope.fluxora.mods.invalidateFileCaches;
+    const template = originalRows.find((item: any) => item.orderId === 'plugin_skyui');
+    let moveCount = 0;
+    let pluginRows = [
+      ...structuredClone(originalRows),
+      {
+        ...structuredClone(template),
+        id: 'RaceMenu.esp',
+        orderId: 'plugin_racemenu',
+        order: originalRows.length,
+        name: 'RaceMenu.esp',
+        sourceMod: 'RaceMenu',
+        missingMasters: []
+      }
+    ];
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__pluginReorderWatcherInvalidated = true;
+      return invalidateFileCaches(...args);
+    };
+    scope.fluxora.plugins.list = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.list',
+        payload: { operation: args[3] }
+      });
+      return structuredClone(pluginRows);
+    };
+    scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.move = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      orderId: string,
+      targetIndex: number,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.move',
+        payload: { operation, orderId, profileName, projectDirectory, targetIndex, templateId }
+      });
+      moveCount += 1;
+      if (moveCount === 2) {
+        scope.__secondPluginMoveStarted = true;
+        await new Promise<void>((resolve) => {
+          scope.__releaseSecondPluginMove = resolve;
+        });
+      }
       const sourceIndex = pluginRows.findIndex((item: any) => item.orderId === orderId);
       const [moving] = pluginRows.splice(sourceIndex, 1);
       pluginRows.splice(Math.max(0, Math.min(targetIndex, pluginRows.length)), 0, moving);
       pluginRows = pluginRows.map((item: any, order: number) => ({ ...item, order }));
+      if (moveCount === 1) {
+        (scope as any).__emitFluxoraBuildContentChanged({
+          changes: [
+            {
+              area: 'profiles',
+              fileName: 'loadorder.txt',
+              kind: 'modify',
+              path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\profiles\\Default\\loadorder.txt'
+            }
+          ]
+        });
+      }
       return structuredClone(pluginRows);
     };
   });
@@ -8249,6 +8588,55 @@ test('drags every movable selected plugin row and separator as one ordered group
   await expect(skyui).toHaveAttribute('data-dragging', 'true');
   await page.mouse.up();
 
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__secondPluginMoveStarted))
+    .toBe(true);
+  await expect
+    .poll(() =>
+      rightPane.locator('.plugin-row[data-order-id]').evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual(['plugin_skyrim', 'plugin_racemenu', 'sep_patches', 'plugin_skyui']);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__pluginReorderWatcherInvalidated))
+    .toBe(true);
+  expect(
+    await page.evaluate(() =>
+      (
+        (window as typeof window & {
+          __fluxoraCalls?: Array<{
+            method: string;
+            payload?: { operation?: { operationId?: string } };
+          }>;
+        }).__fluxoraCalls ?? []
+      ).some(
+        (call) =>
+          call.method === 'plugins.list' &&
+          call.payload?.operation?.operationId?.includes('_build_content_plugins_changed_')
+      )
+    )
+  ).toBe(false);
+
+  await page.evaluate(() => (window as any).__releaseSecondPluginMove());
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{
+              method: string;
+              payload?: { operation?: { operationId?: string } };
+            }>;
+          }).__fluxoraCalls ?? []
+        ).some(
+          (call) =>
+            call.method === 'plugins.list' &&
+            call.payload?.operation?.operationId?.includes('_build_content_plugins_changed_')
+        )
+      )
+    )
+    .toBe(true);
   await expect
     .poll(() =>
       rightPane.locator('.plugin-row[data-order-id]').evaluateAll((rows) =>

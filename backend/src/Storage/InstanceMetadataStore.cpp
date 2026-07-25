@@ -80,7 +80,8 @@ namespace fluxora
         std::wstring_view,
         std::wstring_view,
         std::wstring_view,
-        ArchiveModLinkMode)
+        ArchiveModLinkMode,
+        const ArchiveInstallSourceMetadata&)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
@@ -88,6 +89,13 @@ namespace fluxora
     void InstanceMetadataStore::failArchiveInstallAttempt(
         const std::filesystem::path&,
         std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::vector<InstalledModArchiveSourceRecord>
+        InstanceMetadataStore::listInstalledModArchiveSources(
+            const std::filesystem::path&)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
@@ -391,6 +399,15 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    std::vector<ProfilePluginOrderItemRecord> InstanceMetadataStore::reorderProfilePluginOrderItems(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const std::vector<std::wstring>&,
+        const std::vector<std::wstring>&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     void InstanceMetadataStore::replaceProfilePluginOrderItems(
         const std::filesystem::path&,
         std::wstring_view,
@@ -571,7 +588,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
-        constexpr int instanceDatabaseSchemaVersion = 12;
+        constexpr int instanceDatabaseSchemaVersion = 13;
         constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
@@ -1927,8 +1944,24 @@ namespace fluxora
                 "is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0, 1)),"
                 "linked_at TEXT NOT NULL,"
                 "unlinked_at TEXT NOT NULL DEFAULT '',"
-                "operation_id TEXT NOT NULL DEFAULT ''"
+                "operation_id TEXT NOT NULL DEFAULT '',"
+                "archive_file_name TEXT NOT NULL DEFAULT '',"
+                "archive_version TEXT NOT NULL DEFAULT '',"
+                "source_provider TEXT NOT NULL DEFAULT '',"
+                "source_game_domain TEXT NOT NULL DEFAULT '',"
+                "source_remote_mod_id TEXT NOT NULL DEFAULT '',"
+                "source_remote_file_id TEXT NOT NULL DEFAULT '',"
+                "source_url TEXT NOT NULL DEFAULT '',"
+                "source_latest_version TEXT NOT NULL DEFAULT ''"
                 ");");
+            ensureColumn(database, "archive_mod_links", L"archive_file_name", "archive_file_name TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"archive_version", "archive_version TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_provider", "source_provider TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_game_domain", "source_game_domain TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_remote_mod_id", "source_remote_mod_id TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_remote_file_id", "source_remote_file_id TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_url", "source_url TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "archive_mod_links", L"source_latest_version", "source_latest_version TEXT NOT NULL DEFAULT ''");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS archive_install_attempts ("
                 "operation_id TEXT PRIMARY KEY NOT NULL,"
@@ -2125,7 +2158,7 @@ namespace fluxora
                     "ELSE last_check_state END, "
                     "last_attempted_at = CASE WHEN last_attempted_at = '' THEN last_checked_at ELSE last_attempted_at END;");
             }
-            database.exec("PRAGMA user_version = 12;");
+            database.exec("PRAGMA user_version = 13;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -5126,23 +5159,39 @@ namespace fluxora
                 return true;
             }
 
-            constexpr std::array<std::wstring_view, 4> suffixes{
+            const std::wstring lowerFolderName = toLower(std::wstring(folderName));
+            constexpr std::array<std::wstring_view, 5> workMarkers{
                 L".fomod-package",
                 L".installing",
                 L".merging",
-                L".replacing"
+                L".replacing",
+                L".root"
             };
-            for (std::wstring_view suffix : suffixes)
+            for (std::wstring_view marker : workMarkers)
             {
-                if (folderName.size() >= suffix.size() &&
-                    std::equal(
-                        suffix.rbegin(),
-                        suffix.rend(),
-                        folderName.rbegin(),
-                        [](wchar_t left, wchar_t right)
-                        {
-                            return std::towlower(left) == std::towlower(right);
-                        }))
+                const std::size_t markerPosition = lowerFolderName.rfind(marker);
+                if (markerPosition == std::wstring::npos)
+                {
+                    continue;
+                }
+
+                const std::wstring_view continuation(
+                    lowerFolderName.data() + markerPosition + marker.size(),
+                    lowerFolderName.size() - markerPosition - marker.size());
+                // Content-layout normalization uses a sibling named
+                // "<install-work-directory>.layout[-N]" before the final rename.
+                const bool generatedLayoutSibling =
+                    continuation == L".layout" ||
+                    (continuation.starts_with(L".layout-") &&
+                        continuation.size() > std::wstring_view(L".layout-").size() &&
+                        std::all_of(
+                            continuation.begin() + std::wstring_view(L".layout-").size(),
+                            continuation.end(),
+                            [](wchar_t value)
+                            {
+                                return value >= L'0' && value <= L'9';
+                            }));
+                if (continuation.empty() || generatedLayoutSibling)
                 {
                     return true;
                 }
@@ -5353,6 +5402,51 @@ namespace fluxora
         return history.stepRow() ? ArchiveBuildStatus::Deleted : ArchiveBuildStatus::Ready;
     }
 
+    std::vector<InstalledModArchiveSourceRecord>
+        InstanceMetadataStore::listInstalledModArchiveSources(
+            const std::filesystem::path& projectDirectory)
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "SELECT mods.uuid, links.archive_sha256, links.archive_file_name, "
+            "links.archive_version, links.source_provider, links.source_game_domain, "
+            "links.source_remote_mod_id, links.source_remote_file_id, links.source_url, "
+            "links.source_latest_version "
+            "FROM archive_mod_links AS links "
+            "JOIN mods ON mods.id = links.mod_id "
+            "WHERE links.is_current = 1 AND mods.state IN ('installed', 'disabled') "
+            "ORDER BY links.mod_id, links.id;");
+
+        std::vector<InstalledModArchiveSourceRecord> sources;
+        std::wstring previousModUuid;
+        while (statement.stepRow())
+        {
+            InstalledModArchiveSourceRecord source;
+            source.modUuid = statement.columnText(0);
+            source.archiveSha256 = statement.columnText(1);
+            source.archiveFileName = statement.columnText(2);
+            source.version = statement.columnText(3);
+            source.source.provider = statement.columnText(4);
+            source.source.gameDomain = statement.columnText(5);
+            source.source.remoteModId = statement.columnText(6);
+            source.source.remoteFileId = statement.columnText(7);
+            source.source.url = statement.columnText(8);
+            source.source.latestVersion = statement.columnText(9);
+            source.linkMode = previousModUuid == source.modUuid
+                ? ArchiveModLinkMode::Merge
+                : ArchiveModLinkMode::Replace;
+            previousModUuid = source.modUuid;
+            sources.push_back(std::move(source));
+        }
+        return sources;
+    }
+
     void InstanceMetadataStore::beginArchiveInstallAttempt(
         const std::filesystem::path& projectDirectory,
         std::wstring_view archiveSha256,
@@ -5393,7 +5487,8 @@ namespace fluxora
             std::int64_t modId,
             std::wstring_view modUuid,
             std::wstring_view operationId,
-            bool mergeLink)
+            bool mergeLink,
+            const ArchiveInstallSourceMetadata& source)
         {
             Statement attempt = database.prepare(
                 "SELECT archive_sha256 FROM archive_install_attempts WHERE operation_id = ? LIMIT 1;");
@@ -5420,13 +5515,23 @@ namespace fluxora
 
             Statement link = database.prepare(
                 "INSERT INTO archive_mod_links("
-                "archive_sha256, mod_id, mod_uuid, is_current, linked_at, operation_id"
-                ") VALUES(?, ?, ?, 1, ?, ?);");
+                "archive_sha256, mod_id, mod_uuid, is_current, linked_at, operation_id, "
+                "archive_file_name, archive_version, source_provider, source_game_domain, "
+                "source_remote_mod_id, source_remote_file_id, source_url, source_latest_version"
+                ") VALUES(?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);");
             link.bindText(1, archiveSha256);
             link.bindInt64(2, modId);
             link.bindText(3, modUuid);
             link.bindText(4, now);
             link.bindText(5, operationId);
+            link.bindText(6, source.archiveFileName);
+            link.bindText(7, source.version);
+            link.bindText(8, source.source.provider);
+            link.bindText(9, source.source.gameDomain);
+            link.bindText(10, source.source.remoteModId);
+            link.bindText(11, source.source.remoteFileId);
+            link.bindText(12, source.source.url);
+            link.bindText(13, source.source.latestVersion);
             link.stepDone();
 
             Statement clear = database.prepare(
@@ -5555,7 +5660,8 @@ namespace fluxora
         std::wstring_view archiveSha256,
         std::wstring_view modUuid,
         std::wstring_view operationId,
-        ArchiveModLinkMode linkMode)
+        ArchiveModLinkMode linkMode,
+        const ArchiveInstallSourceMetadata& source)
     {
         const std::wstring sha256 = trim(std::wstring(archiveSha256));
         const std::wstring uuid = trim(std::wstring(modUuid));
@@ -5583,7 +5689,8 @@ namespace fluxora
             modId,
             uuid,
             operation,
-            linkMode == ArchiveModLinkMode::Merge);
+            linkMode == ArchiveModLinkMode::Merge,
+            source);
         transaction.commit();
     }
 
@@ -6111,7 +6218,8 @@ namespace fluxora
                 record.id,
                 record.uuid,
                 operation,
-                metadata.mergeArchiveLink);
+                metadata.mergeArchiveLink,
+                metadata.archiveSource);
         }
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
         if (pendingInstallFinalizeFailureForTesting.exchange(false, std::memory_order_relaxed))
@@ -7361,6 +7469,79 @@ namespace fluxora
         syncProfilePluginOrderItems(database, normalizedProfileName, pluginNames);
         transaction.commit();
 
+        return readProfilePluginOrderItems(database, normalizedProfileName);
+    }
+
+    std::vector<ProfilePluginOrderItemRecord> InstanceMetadataStore::reorderProfilePluginOrderItems(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::vector<std::wstring>& pluginNames,
+        const std::vector<std::wstring>& orderedItemIds)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = profileNameOrDefault(profileName);
+        Database database = openInstanceDatabase(projectDirectory);
+
+        Transaction transaction(database);
+        syncProfilePluginOrderItems(database, normalizedProfileName, pluginNames);
+
+        std::vector<ProfileOrderStorageItem> current =
+            readProfileOrderStorageItems(
+                database,
+                normalizedProfileName,
+                "profile_plugin_order_items");
+        if (orderedItemIds.size() != current.size())
+        {
+            throw std::invalid_argument(
+                "Plugin order repair must contain every persisted order item.");
+        }
+
+        std::map<std::wstring, ProfileOrderStorageItem> currentById;
+        for (const ProfileOrderStorageItem& item : current)
+        {
+            currentById.emplace(item.id, item);
+        }
+
+        std::set<std::wstring> seenIds;
+        std::vector<ProfileOrderStorageItem> reordered;
+        reordered.reserve(orderedItemIds.size());
+        for (const std::wstring& itemId : orderedItemIds)
+        {
+            const auto currentItem = currentById.find(itemId);
+            if (currentItem == currentById.end() || !seenIds.insert(itemId).second)
+            {
+                throw std::invalid_argument(
+                    "Plugin order repair contains an unknown or duplicate order item.");
+            }
+
+            reordered.push_back(currentItem->second);
+        }
+
+        const bool changed = !std::equal(
+            current.begin(),
+            current.end(),
+            reordered.begin(),
+            reordered.end(),
+            [](const ProfileOrderStorageItem& left, const ProfileOrderStorageItem& right)
+            {
+                return left.id == right.id;
+            });
+        if (changed)
+        {
+            writeProfileOrderStorageItemPositions(
+                database,
+                normalizedProfileName,
+                "profile_plugin_order_items",
+                reordered);
+        }
+
+        transaction.commit();
         return readProfilePluginOrderItems(database, normalizedProfileName);
     }
 

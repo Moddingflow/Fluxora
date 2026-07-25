@@ -1577,6 +1577,223 @@ namespace fluxora
             return entries;
         }
 
+        struct PluginDependencyOrderNormalization
+        {
+            std::vector<PluginEntry> entries;
+            std::size_t relationCount{0};
+            std::size_t movedPluginCount{0};
+            bool cycleDetected{false};
+        };
+
+        PluginDependencyOrderNormalization normalizePluginDependencyOrder(
+            std::vector<PluginEntry> entries)
+        {
+            std::vector<std::size_t> pluginEntryIndexes;
+            std::map<std::wstring, std::size_t> pluginIndexByName;
+            for (std::size_t entryIndex = 0; entryIndex < entries.size(); ++entryIndex)
+            {
+                const PluginEntry& entry = entries[entryIndex];
+                if (entry.kind != pluginKind || entry.name.empty())
+                {
+                    continue;
+                }
+
+                const std::size_t pluginIndex = pluginEntryIndexes.size();
+                pluginEntryIndexes.push_back(entryIndex);
+                pluginIndexByName.emplace(toLower(entry.name), pluginIndex);
+            }
+
+            std::vector<std::vector<std::size_t>> dependents(pluginEntryIndexes.size());
+            std::vector<std::size_t> incomingRelationCounts(pluginEntryIndexes.size(), 0);
+            std::set<std::pair<std::size_t, std::size_t>> relations;
+            for (std::size_t dependentIndex = 0;
+                 dependentIndex < pluginEntryIndexes.size();
+                 ++dependentIndex)
+            {
+                const PluginEntry& dependent = entries[pluginEntryIndexes[dependentIndex]];
+                for (const std::wstring& masterName : dependent.masterFiles)
+                {
+                    const auto masterIndex = pluginIndexByName.find(toLower(masterName));
+                    if (masterIndex == pluginIndexByName.end())
+                    {
+                        continue;
+                    }
+
+                    const std::pair<std::size_t, std::size_t> relation{
+                        masterIndex->second,
+                        dependentIndex
+                    };
+                    if (!relations.insert(relation).second)
+                    {
+                        continue;
+                    }
+
+                    dependents[masterIndex->second].push_back(dependentIndex);
+                    ++incomingRelationCounts[dependentIndex];
+                }
+            }
+
+            PluginDependencyOrderNormalization result;
+            result.entries = std::move(entries);
+            result.relationCount = relations.size();
+            if (relations.empty())
+            {
+                return result;
+            }
+
+            std::set<std::size_t> ready;
+            for (std::size_t pluginIndex = 0;
+                 pluginIndex < incomingRelationCounts.size();
+                 ++pluginIndex)
+            {
+                if (incomingRelationCounts[pluginIndex] == 0)
+                {
+                    ready.insert(pluginIndex);
+                }
+            }
+
+            std::vector<std::size_t> normalizedPluginOrder;
+            normalizedPluginOrder.reserve(pluginEntryIndexes.size());
+            while (!ready.empty())
+            {
+                const std::size_t pluginIndex = *ready.begin();
+                ready.erase(ready.begin());
+                normalizedPluginOrder.push_back(pluginIndex);
+                for (const std::size_t dependentIndex : dependents[pluginIndex])
+                {
+                    if (--incomingRelationCounts[dependentIndex] == 0)
+                    {
+                        ready.insert(dependentIndex);
+                    }
+                }
+            }
+
+            if (normalizedPluginOrder.size() != pluginEntryIndexes.size())
+            {
+                result.cycleDetected = true;
+                return result;
+            }
+
+            for (std::size_t pluginIndex = 0;
+                 pluginIndex < normalizedPluginOrder.size();
+                 ++pluginIndex)
+            {
+                if (normalizedPluginOrder[pluginIndex] != pluginIndex)
+                {
+                    ++result.movedPluginCount;
+                }
+            }
+            if (result.movedPluginCount == 0)
+            {
+                return result;
+            }
+
+            const std::vector<PluginEntry> originalEntries = result.entries;
+            for (std::size_t pluginIndex = 0;
+                 pluginIndex < normalizedPluginOrder.size();
+                 ++pluginIndex)
+            {
+                result.entries[pluginEntryIndexes[pluginIndex]] =
+                    originalEntries[pluginEntryIndexes[normalizedPluginOrder[pluginIndex]]];
+            }
+            for (int entryIndex = 0;
+                 entryIndex < static_cast<int>(result.entries.size());
+                 ++entryIndex)
+            {
+                result.entries[static_cast<std::size_t>(entryIndex)].order = entryIndex;
+            }
+
+            return result;
+        }
+
+        std::vector<PluginEntry> buildEntriesWithRepairedDependencyOrder(
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& context,
+            std::wstring_view profileName,
+            const std::vector<StoredPlugin>& stored,
+            std::vector<ProfilePluginOrderItemRecord>& orderRecords,
+            const std::map<std::wstring, DetectedPlugin>& detected,
+            Logger& logger,
+            std::string_view operation)
+        {
+            std::vector<PluginEntry> entries =
+                buildEntries(projectDirectory, context, stored, orderRecords, detected);
+            PluginDependencyOrderNormalization normalization =
+                normalizePluginDependencyOrder(entries);
+            if (normalization.cycleDetected)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "PluginDiagnostics",
+                    std::string(operation) +
+                        " profile=\"" +
+                        toUtf8(profileNameOrDefault(context, profileName)) +
+                        "\", dependencyOrderRepair=\"skipped-cycle\"" +
+                        ", relations=" + std::to_string(normalization.relationCount) + ".");
+                return entries;
+            }
+            if (normalization.movedPluginCount == 0)
+            {
+                return entries;
+            }
+
+            std::set<std::wstring> visibleOrderIds;
+            for (const PluginEntry& entry : entries)
+            {
+                visibleOrderIds.insert(entry.orderId);
+            }
+
+            std::vector<std::wstring> desiredOrderIds;
+            desiredOrderIds.reserve(orderRecords.size());
+            for (const ProfilePluginOrderItemRecord& record : orderRecords)
+            {
+                desiredOrderIds.push_back(record.id);
+            }
+
+            std::size_t normalizedEntryIndex = 0;
+            for (std::size_t recordIndex = 0;
+                 recordIndex < orderRecords.size();
+                 ++recordIndex)
+            {
+                if (!visibleOrderIds.contains(orderRecords[recordIndex].id))
+                {
+                    continue;
+                }
+                if (normalizedEntryIndex >= normalization.entries.size())
+                {
+                    throw std::logic_error(
+                        "Plugin dependency repair produced an inconsistent order.");
+                }
+
+                desiredOrderIds[recordIndex] =
+                    normalization.entries[normalizedEntryIndex].orderId;
+                ++normalizedEntryIndex;
+            }
+            if (normalizedEntryIndex != normalization.entries.size())
+            {
+                throw std::logic_error(
+                    "Plugin dependency repair could not map every visible order item.");
+            }
+
+            orderRecords = InstanceMetadataStore::reorderProfilePluginOrderItems(
+                projectDirectory,
+                profileName,
+                storedPluginNames(stored),
+                desiredOrderIds);
+            entries = buildEntries(projectDirectory, context, stored, orderRecords, detected);
+            logger.writeOperation(
+                LogLevel::Info,
+                "PluginDiagnostics",
+                std::string(operation) +
+                    " profile=\"" +
+                    toUtf8(profileNameOrDefault(context, profileName)) +
+                    "\", dependencyOrderRepair=\"applied\"" +
+                    ", relations=" + std::to_string(normalization.relationCount) +
+                    ", movedPlugins=" +
+                    std::to_string(normalization.movedPluginCount) + ".");
+            return entries;
+        }
+
         std::vector<StoredPlugin> storedPluginsFromEntries(const std::vector<PluginEntry>& entries)
         {
             std::vector<StoredPlugin> plugins;
@@ -1655,6 +1872,62 @@ namespace fluxora
             }
 
             return false;
+        }
+
+        void ensurePluginDependencyOrderForMove(
+            const std::vector<PluginEntry>& entries,
+            std::wstring_view movingOrderId)
+        {
+            std::map<std::wstring, int> pluginIndexByName;
+            for (int index = 0; index < static_cast<int>(entries.size()); ++index)
+            {
+                const PluginEntry& entry = entries[static_cast<std::size_t>(index)];
+                if (entry.kind == pluginKind && !entry.name.empty())
+                {
+                    pluginIndexByName.emplace(toLower(entry.name), index);
+                }
+            }
+
+            for (int dependentIndex = 0;
+                 dependentIndex < static_cast<int>(entries.size());
+                 ++dependentIndex)
+            {
+                const PluginEntry& dependent =
+                    entries[static_cast<std::size_t>(dependentIndex)];
+                if (dependent.kind != pluginKind)
+                {
+                    continue;
+                }
+
+                for (const std::wstring& masterName : dependent.masterFiles)
+                {
+                    const auto masterIndex = pluginIndexByName.find(toLower(masterName));
+                    if (masterIndex == pluginIndexByName.end() ||
+                        masterIndex->second < dependentIndex)
+                    {
+                        continue;
+                    }
+
+                    const PluginEntry& master =
+                        entries[static_cast<std::size_t>(masterIndex->second)];
+                    if (equalsIgnoreCase(master.orderId, dependent.orderId))
+                    {
+                        continue;
+                    }
+                    if (equalsIgnoreCase(dependent.orderId, movingOrderId))
+                    {
+                        throw std::invalid_argument(
+                            "Cannot move " + toUtf8(dependent.name) +
+                            " before required master " + toUtf8(master.name) + ".");
+                    }
+                    if (equalsIgnoreCase(master.orderId, movingOrderId))
+                    {
+                        throw std::invalid_argument(
+                            "Cannot move " + toUtf8(master.name) +
+                            " after dependent plugin " + toUtf8(dependent.name) + ".");
+                    }
+                }
+            }
         }
 
         int clampExistingPluginOrderTarget(
@@ -1858,7 +2131,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "listPlugins");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,
@@ -1947,7 +2228,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         const std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "syncPluginsForInstalledMods");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,
@@ -1996,7 +2285,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "movePlugin");
         const PluginEntry* movingEntry = findPluginOrderEntry(entries, orderItemId);
         if (movingEntry == nullptr)
         {
@@ -2013,6 +2310,19 @@ namespace fluxora
         {
             return entries;
         }
+
+        std::vector<PluginEntry> candidateEntries = entries;
+        PluginEntry candidateMovingEntry =
+            std::move(candidateEntries[static_cast<std::size_t>(movingEntry->order)]);
+        candidateEntries.erase(candidateEntries.begin() + movingEntry->order);
+        candidateEntries.insert(
+            candidateEntries.begin() + clampedTarget,
+            std::move(candidateMovingEntry));
+        for (int index = 0; index < static_cast<int>(candidateEntries.size()); ++index)
+        {
+            candidateEntries[static_cast<std::size_t>(index)].order = index;
+        }
+        ensurePluginDependencyOrderForMove(candidateEntries, movingEntry->orderId);
 
         orderRecords = InstanceMetadataStore::moveProfilePluginOrderItem(
             projectDirectory,
@@ -2071,7 +2381,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "createPluginSeparator");
         const int clampedTarget = clampPluginSeparatorInsertionTarget(entries, targetIndex);
 
         orderRecords = InstanceMetadataStore::createProfilePluginOrderSeparator(
@@ -2132,7 +2450,15 @@ namespace fluxora
                 storedPluginNames(stored),
                 separatorId);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "deletePluginSeparator");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,
@@ -2209,7 +2535,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "setPluginEnabled");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,
@@ -2280,7 +2614,15 @@ namespace fluxora
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);
         std::vector<PluginEntry> entries =
-            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+            buildEntriesWithRepairedDependencyOrder(
+                projectDirectory,
+                rules,
+                profileName,
+                stored,
+                orderRecords,
+                detected,
+                logger_,
+                "setAllPluginsEnabled");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,

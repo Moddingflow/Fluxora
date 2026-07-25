@@ -45,6 +45,11 @@ namespace fluxora::test_hooks
     void setInstallStagingCacheProducerHook(
         std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook);
 
+    void setExternalFomodMetadataProbeHook(
+        std::function<std::optional<bool>(
+            const std::filesystem::path&,
+            const std::filesystem::path&)> hook);
+
     void alignInstallStagingCacheMetadataDigestForTest(
         const std::filesystem::path& entryDirectory);
 }
@@ -70,6 +75,26 @@ namespace fluxora::tests
             ~InstallStagingCacheProducerHookGuard()
             {
                 test_hooks::setInstallStagingCacheProducerHook({});
+            }
+        };
+
+        class ExternalFomodMetadataProbeHookGuard
+        {
+        public:
+            explicit ExternalFomodMetadataProbeHookGuard(
+                std::function<std::optional<bool>(
+                    const std::filesystem::path&,
+                    const std::filesystem::path&)> hook)
+            {
+                test_hooks::setExternalFomodMetadataProbeHook(std::move(hook));
+            }
+
+            ExternalFomodMetadataProbeHookGuard(const ExternalFomodMetadataProbeHookGuard&) = delete;
+            ExternalFomodMetadataProbeHookGuard& operator=(const ExternalFomodMetadataProbeHookGuard&) = delete;
+
+            ~ExternalFomodMetadataProbeHookGuard()
+            {
+                test_hooks::setExternalFomodMetadataProbeHook({});
             }
         };
 #endif
@@ -1235,6 +1260,19 @@ namespace fluxora::tests
         }
         ASSERT_TRUE(plan.matchedTarget.has_value());
         EXPECT_EQ(plan.matchedTarget->modUuid, existing.uuid);
+
+        const std::uint64_t plannedCatalogRevision =
+            InstanceMetadataStore::modCatalogRevision(project_);
+        const std::filesystem::path transientLayout =
+            modsDirectory() / L"SPID.installing.layout";
+        writeTextFile(
+            transientLayout / L"SKSE" / L"Plugins" / L"SPID.dll",
+            "staging");
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project_, modsDirectory());
+        EXPECT_EQ(
+            InstanceMetadataStore::modCatalogRevision(project_),
+            plannedCatalogRevision);
+        std::filesystem::remove_all(transientLayout);
 
         const ModIdentityInstallSelection selection{
             plan.resolutionId,
@@ -2761,6 +2799,12 @@ namespace fluxora::tests
         const InstalledModRecord* record = findInstalledMod(records, L"Replace Mod");
         ASSERT_NE(record, nullptr);
         EXPECT_EQ(record->version, L"2.0");
+
+        const std::vector<InstalledModArchiveSourceRecord> archiveSources =
+            InstanceMetadataStore::listInstalledModArchiveSources(project_);
+        ASSERT_EQ(archiveSources.size(), 1U);
+        EXPECT_EQ(archiveSources.front().archiveFileName, L"Replace Mod 2.0.zip");
+        EXPECT_EQ(archiveSources.front().linkMode, ArchiveModLinkMode::Replace);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, InstallDownloadMergeExistingModPreservesOldOnlyFiles)
@@ -2827,6 +2871,16 @@ namespace fluxora::tests
         ASSERT_NE(mergedArchive, archives.end());
         EXPECT_EQ(originalArchive->buildStatus, L"Installed");
         EXPECT_EQ(mergedArchive->buildStatus, L"Installed");
+
+        const std::vector<InstalledModArchiveSourceRecord> archiveSources =
+            InstanceMetadataStore::listInstalledModArchiveSources(project_);
+        ASSERT_EQ(archiveSources.size(), 2U);
+        EXPECT_EQ(archiveSources[0].archiveFileName, L"Merge Mod 1.0.zip");
+        EXPECT_EQ(archiveSources[0].version, L"1.0");
+        EXPECT_EQ(archiveSources[0].linkMode, ArchiveModLinkMode::Replace);
+        EXPECT_EQ(archiveSources[1].archiveFileName, L"Merge Mod 2.0.zip");
+        EXPECT_EQ(archiveSources[1].version, L"2.0");
+        EXPECT_EQ(archiveSources[1].linkMode, ArchiveModLinkMode::Merge);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ProfileModOrderReturnsLiveConflictSummary)
@@ -3494,6 +3548,45 @@ namespace fluxora::tests
         EXPECT_EQ(producerCalls.load(), 0);
     }
 
+    TEST_F(
+        ModFileOperationsIntegrationTests,
+        AnalyzeOrdinarySevenZipCachesNegativeFomodProbeWithoutMaterializingArchive)
+    {
+        const std::filesystem::path archivePath =
+            temp_.path() / L"Локальные архивы Ä" / L"Large Plain Archive.7z";
+        writeTextFile(archivePath, "external archive payload");
+        const DownloadEntry download = downloads_.importLocalFile(project_, archivePath);
+
+        std::atomic_int metadataBuilds{0};
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
+            {
+                if (kind == L"fomod-metadata")
+                {
+                    metadataBuilds.fetch_add(1);
+                }
+            }};
+        ExternalFomodMetadataProbeHookGuard probeHook{
+            [](const std::filesystem::path&, const std::filesystem::path&)
+            {
+                return std::optional<bool>{false};
+            }};
+
+        const FomodInstallerDescriptor descriptor =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+
+        EXPECT_FALSE(descriptor.isFomod);
+        const std::vector<std::filesystem::path> payloads =
+            installStagingCachePayloads(downloadsDirectory(), L"fomod-metadata-");
+        ASSERT_EQ(payloads.size(), 1U);
+        EXPECT_TRUE(std::filesystem::is_empty(payloads.front()));
+
+        const FomodInstallerDescriptor replayed =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+        EXPECT_FALSE(replayed.isFomod);
+        EXPECT_EQ(metadataBuilds.load(), 1);
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodZipRejectsTraversalBeforeMetadataExtraction)
     {
         const DownloadEntry download = importArchive(
@@ -3787,7 +3880,7 @@ namespace fluxora::tests
         EXPECT_NE(descriptor.steps[0].groups[0].options[0].imagePath.find(L".fomod-previews"), std::wstring::npos);
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, RefreshInstalledModsFromDiskIgnoresLegacyFomodPackageDirectories)
+    TEST_F(ModFileOperationsIntegrationTests, RefreshInstalledModsFromDiskIgnoresTransientInstallDirectories)
     {
         writeTextFile(modsDirectory() / L"Real Mod" / L"textures" / L"real.dds", "real");
         writeTextFile(
@@ -3796,6 +3889,12 @@ namespace fluxora::tests
         writeTextFile(
             modsDirectory() / L"Interrupted Install.installing" / L"textures" / L"partial.dds",
             "partial");
+        writeTextFile(
+            modsDirectory() /
+                L"Faultier's PBR Armors and Clothes.installing.layout" /
+                L"textures" /
+                L"layout.dds",
+            "layout");
 
         InstanceMetadataStore::refreshInstalledModsFromDisk(project_, modsDirectory());
         const std::vector<InstalledModRecord> records =
@@ -3804,6 +3903,9 @@ namespace fluxora::tests
         ASSERT_NE(findInstalledMod(records, L"Real Mod"), nullptr);
         EXPECT_EQ(findInstalledMod(records, L"Northern Roads - Patches Compendium.fomod-package"), nullptr);
         EXPECT_EQ(findInstalledMod(records, L"Interrupted Install.installing"), nullptr);
+        EXPECT_EQ(
+            findInstalledMod(records, L"Faultier's PBR Armors and Clothes.installing.layout"),
+            nullptr);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModClearsReadonlyFiles)

@@ -1149,6 +1149,19 @@ namespace fluxora
                 L"|content=" + std::wstring(digest.begin(), digest.end());
         }
 
+        [[nodiscard]] std::wstring fileCacheFingerprintForKnownSha256(
+            const std::filesystem::path& path,
+            std::wstring_view sha256)
+        {
+            if (path.empty() || sha256.empty())
+            {
+                return {};
+            }
+
+            return L"v=2|path=" + hashText(toLower(path.lexically_normal().wstring())) +
+                L"|content=" + toLower(std::wstring(sha256));
+        }
+
         [[nodiscard]] std::wstring fomodContextArchiveFingerprint(
             const std::filesystem::path& path)
         {
@@ -1159,6 +1172,14 @@ namespace fluxora
 
             const std::string digest = cachedRegularFileContentHash(path);
             return L"v=1|content=" + std::wstring(digest.begin(), digest.end());
+        }
+
+        [[nodiscard]] std::wstring fomodContextArchiveFingerprintForKnownSha256(
+            std::wstring_view sha256)
+        {
+            return sha256.empty()
+                ? std::wstring{}
+                : L"v=1|content=" + toLower(std::wstring(sha256));
         }
 
         [[nodiscard]] std::wstring fastFileCacheFingerprint(const std::filesystem::path& path)
@@ -5961,6 +5982,27 @@ namespace fluxora
             }
         }
 
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        using ExternalFomodMetadataProbeHook = std::function<std::optional<bool>(
+            const std::filesystem::path&,
+            const std::filesystem::path&)>;
+
+        std::mutex externalFomodMetadataProbeHookMutex;
+        ExternalFomodMetadataProbeHook externalFomodMetadataProbeHook;
+
+        [[nodiscard]] std::optional<bool> runExternalFomodMetadataProbeHook(
+            const std::filesystem::path& archivePath,
+            const std::filesystem::path& destinationDirectory)
+        {
+            ExternalFomodMetadataProbeHook hook;
+            {
+                std::lock_guard<std::mutex> hookLock(externalFomodMetadataProbeHookMutex);
+                hook = externalFomodMetadataProbeHook;
+            }
+            return hook ? hook(archivePath, destinationDirectory) : std::nullopt;
+        }
+#endif
+
         std::wstring directoryWithTrailingSlash(const std::filesystem::path& directory)
         {
             std::wstring value = directory.wstring();
@@ -5970,6 +6012,71 @@ namespace fluxora
             }
 
             return value;
+        }
+
+        [[nodiscard]] std::optional<bool> tryProbeFomodMetadataWith7Zip(
+            const std::filesystem::path& archivePath,
+            const std::filesystem::path& destinationDirectory,
+            const Logger& logger)
+        {
+#ifndef _WIN32
+            (void)archivePath;
+            (void)destinationDirectory;
+            (void)logger;
+            return std::nullopt;
+#else
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            if (const std::optional<bool> hooked =
+                    runExternalFomodMetadataProbeHook(archivePath, destinationDirectory);
+                hooked.has_value())
+            {
+                if (!hooked.value())
+                {
+                    clearDirectoryContents(destinationDirectory);
+                }
+                return hooked;
+            }
+#endif
+
+            const std::filesystem::path cancellationMarker =
+                operationCancellationMarkerPathForDownloadService(Logger::operationId());
+            for (std::wstring_view executableName : {L"7z.exe", L"7za.exe", L"7zz.exe"})
+            {
+                const std::filesystem::path executable = findExtractorExecutable(executableName);
+                if (executable.empty())
+                {
+                    continue;
+                }
+
+                const std::wstring command =
+                    quoteCommandArgument(executable.wstring()) +
+                    L" x -y -bd -bb0 -ssc- -o" +
+                    quoteCommandArgument(destinationDirectory.wstring()) +
+                    L" -ir!fomod/ModuleConfig.xml -ir!*/fomod/ModuleConfig.xml " +
+                    quoteCommandArgument(archivePath.wstring());
+                if (!runHiddenAndWait(
+                        command,
+                        archivePath,
+                        executableName,
+                        cancellationMarker,
+                        logger))
+                {
+                    clearDirectoryContents(destinationDirectory);
+                    continue;
+                }
+
+                validateExtractedDirectoryTree(destinationDirectory);
+                const bool hasInstaller = hasFomodModuleConfig(
+                    fomodPreviewPackageRoot(destinationDirectory));
+                if (!hasInstaller)
+                {
+                    clearDirectoryContents(destinationDirectory);
+                }
+                return hasInstaller;
+            }
+
+            return std::nullopt;
+#endif
         }
 
         bool tryExtractWith7Zip(
@@ -7058,7 +7165,7 @@ namespace fluxora
         [[nodiscard]] std::wstring fomodMetadataStagingCacheKey(
             const std::filesystem::path& archivePath)
         {
-            return L"v=1|kind=fomod-metadata|archive=" + fastFileCacheFingerprint(archivePath);
+            return L"v=2|kind=fomod-metadata|archive=" + fastFileCacheFingerprint(archivePath);
         }
 
         [[nodiscard]] ContentLayoutInstallMode contentLayoutInstallMode(ExistingModInstallMode mode)
@@ -8284,6 +8391,10 @@ namespace fluxora
             finalizationMetadata.archiveSha256 = std::wstring(archiveSha256);
             finalizationMetadata.mergeArchiveLink =
                 effectiveInstallMode == ExistingModInstallMode::Merge && targetExists;
+            finalizationMetadata.archiveSource = ArchiveInstallSourceMetadata{
+                archivePath.filename().wstring(),
+                detectedVersion,
+                source};
             if (identity.has_value())
             {
                 finalizationMetadata.identity = installIdentityUpdate(*identity, installName);
@@ -8703,6 +8814,10 @@ namespace fluxora
             finalizationMetadata.archiveSha256 = std::wstring(archiveSha256);
             finalizationMetadata.mergeArchiveLink =
                 effectiveInstallMode == ExistingModInstallMode::Merge && targetExists;
+            finalizationMetadata.archiveSource = ArchiveInstallSourceMetadata{
+                archivePath.filename().wstring(),
+                detectedVersion,
+                source};
             if (identity.has_value())
             {
                 finalizationMetadata.identity = installIdentityUpdate(*identity, installName);
@@ -10041,6 +10156,15 @@ namespace fluxora
         {
             std::lock_guard<std::mutex> hookLock(installStagingCacheProducerHookMutex);
             installStagingCacheProducerHook = std::move(hook);
+        }
+
+        void setExternalFomodMetadataProbeHook(
+            std::function<std::optional<bool>(
+                const std::filesystem::path&,
+                const std::filesystem::path&)> hook)
+        {
+            std::lock_guard<std::mutex> hookLock(externalFomodMetadataProbeHookMutex);
+            externalFomodMetadataProbeHook = std::move(hook);
         }
 
         void alignInstallStagingCacheMetadataDigestForTest(
@@ -11475,11 +11599,15 @@ namespace fluxora
         {
             throw std::invalid_argument("Download is still in progress.");
         }
-
         FomodInstallerDescriptor fomodInstaller = analyzeFomodDownload(
             projectDirectory,
             downloadPath,
             profileName);
+        const ArchiveCatalogEntry archive = archiveCatalog_.identifyArchive(
+            projectDirectory,
+            downloadPath);
+        const std::wstring knownArchiveFingerprint =
+            fileCacheFingerprintForKnownSha256(downloadPath, archive.sha256);
         const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
         const std::wstring finalRequestedName = trim(std::wstring(requestedModName));
         const auto buildPlan = [&](const NexusMd5Identity* onlineIdentity)
@@ -11498,7 +11626,7 @@ namespace fluxora
             ModIdentityPlanRequest request;
             request.projectDirectory = projectDirectory;
             request.archivePath = downloadPath;
-            request.archiveFingerprint = fileCacheFingerprint(downloadPath);
+            request.archiveFingerprint = knownArchiveFingerprint;
             request.requestedInstallName = finalRequestedName;
             request.input.displayName = ModIdentityResolver::canonicalSuggestedName(sourceName);
             request.input.folderName = sanitizeFileName(request.input.displayName);
@@ -11920,7 +12048,6 @@ namespace fluxora
             metadata.source.empty() ? downloadPath.wstring() : metadata.source,
             fallbackName
         };
-        const std::wstring archiveFingerprint = fomodContextArchiveFingerprint(downloadPath);
         const std::vector<std::wstring> gameDataFolders =
             fomodGameDataFoldersForProject(projectDirectory);
         const auto analyzeDescriptor = [&](const std::filesystem::path& packageDirectory)
@@ -11937,6 +12064,8 @@ namespace fluxora
         const std::wstring metadataCacheKey = fomodMetadataStagingCacheKey(downloadPath);
         bool metadataCacheHit = false;
         bool selectiveExtractionUsed = false;
+        bool externalMetadataProbeUsed = false;
+        bool externalNegativeProbe = false;
         std::size_t indexedEntryCount = 0;
         std::size_t indexedPreviewCount = 0;
         std::chrono::milliseconds indexDuration{0};
@@ -12007,6 +12136,22 @@ namespace fluxora
                         clearDirectoryContents(payloadDirectory);
                     }
 
+                    const auto externalProbeStartedAt = std::chrono::steady_clock::now();
+                    const std::optional<bool> externalProbe =
+                        tryProbeFomodMetadataWith7Zip(downloadPath, payloadDirectory, logger_);
+                    indexDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - externalProbeStartedAt);
+                    externalMetadataProbeUsed = externalProbe.has_value();
+                    if (externalProbe.has_value())
+                    {
+                        externalNegativeProbe = !externalProbe.value();
+                        if (externalNegativeProbe)
+                        {
+                            return;
+                        }
+                        clearDirectoryContents(payloadDirectory);
+                    }
+
                     if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
                     {
                         throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
@@ -12029,9 +12174,32 @@ namespace fluxora
         }
         if (!descriptor.isFomod)
         {
-            discardInstallStagingCachePayload(packagePayload.value(), logger_);
+            std::error_code emptyError;
+            const bool cacheableNegative =
+                externalNegativeProbe ||
+                (std::filesystem::is_empty(packageDirectory, emptyError) && !emptyError);
+            const auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - analysisStartedAt);
+            logger_.write(
+                LogLevel::Info,
+                "FomodPerformance",
+                "FOMOD archive index found no installer. cacheHit=" +
+                    std::string(metadataCacheHit ? "true" : "false") +
+                    ", externalProbe=" + std::string(externalMetadataProbeUsed ? "true" : "false") +
+                    ", indexMs=" + std::to_string(indexDuration.count()) +
+                    ", totalMs=" + std::to_string(totalDuration.count()) +
+                    ", archive=\"" + toUtf8(downloadPath.wstring()) + "\"");
+            if (!cacheableNegative)
+            {
+                discardInstallStagingCachePayload(packagePayload.value(), logger_);
+            }
             return {};
         }
+        const ArchiveCatalogEntry archive = archiveCatalog_.identifyArchive(
+            projectDirectory,
+            downloadPath);
+        const std::wstring archiveFingerprint =
+            fomodContextArchiveFingerprintForKnownSha256(archive.sha256);
         descriptor = analyzeFomodForProfile(
             logger_,
             projectDirectory,

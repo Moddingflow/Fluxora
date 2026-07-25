@@ -858,7 +858,7 @@ describe('mod workspace state', () => {
   it('formats table columns and separator group counts for the redesigned mods pane', () => {
     expect(modSeparatorChildCount(items, 'sep_visuals')).toBe(2);
     expect(modVersionText(items[1])).toBe('1.0.0');
-    expect(modLatestVersionText(items[1])).toBe('available');
+    expect(modLatestVersionText(items[1])).toBe('1.0.0');
     expect(modTableStatusView(items[1])).toMatchObject({
       label: 'No overwrite',
       overwrite: { state: 'none' },

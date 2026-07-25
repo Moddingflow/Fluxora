@@ -68,6 +68,36 @@ describe('persisted plugin workspace bridge contract', () => {
     });
   });
 
+  it('forwards an explicit fresh-discovery request to the native plugin list', async () => {
+    const request = {
+      operationId: 'op_plugins_fresh',
+      forceDiscoveryRefresh: true
+    };
+    invokeMock.mockResolvedValue([]);
+
+    const api = createTauriFluxoraApi();
+    await api.plugins.list(
+      'E:\\Fluxora Builds\\Foundation Edition',
+      'skyrimse',
+      'Default',
+      request
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'plugins.list',
+      params: {
+        forceDiscoveryRefresh: true,
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        templateId: 'skyrimse',
+        profileName: 'Default'
+      },
+      request: {
+        operationId: 'op_plugins_fresh'
+      },
+      timeoutMs: undefined
+    });
+  });
+
   it('uses persisted plugins for T3 and exact plugins after T4 mod reconciliation', () => {
     const app = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'renderer', 'App.tsx'), 'utf8');
     const pluginLoader =

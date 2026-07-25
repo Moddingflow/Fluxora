@@ -27,6 +27,29 @@ namespace fluxora
         std::wstring lastAttemptedAt;
     };
 
+    enum class ArchiveModLinkMode
+    {
+        Replace,
+        Merge
+    };
+
+    struct ArchiveInstallSourceMetadata
+    {
+        std::wstring archiveFileName;
+        std::wstring version;
+        ModSourceRecord source;
+    };
+
+    struct InstalledModArchiveSourceRecord
+    {
+        std::wstring modUuid;
+        std::wstring archiveSha256;
+        std::wstring archiveFileName;
+        std::wstring version;
+        ModSourceRecord source;
+        ArchiveModLinkMode linkMode{ArchiveModLinkMode::Replace};
+    };
+
     struct InstalledModRecord
     {
         std::int64_t id{0};
@@ -116,6 +139,7 @@ namespace fluxora
         std::optional<ModIdentityPersistenceUpdate> identity;
         std::wstring archiveSha256;
         bool mergeArchiveLink{false};
+        ArchiveInstallSourceMetadata archiveSource;
     };
 
     struct ModIdentityContentCacheRecord
@@ -221,12 +245,6 @@ namespace fluxora
         Deleted
     };
 
-    enum class ArchiveModLinkMode
-    {
-        Replace,
-        Merge
-    };
-
     struct ModFileTreeEntry
     {
         std::wstring name;
@@ -330,11 +348,16 @@ namespace fluxora
             std::wstring_view archiveSha256,
             std::wstring_view modUuid,
             std::wstring_view operationId,
-            ArchiveModLinkMode linkMode);
+            ArchiveModLinkMode linkMode,
+            const ArchiveInstallSourceMetadata& source = {});
 
         static void failArchiveInstallAttempt(
             const std::filesystem::path& projectDirectory,
             std::wstring_view operationId);
+
+        [[nodiscard]] static std::vector<InstalledModArchiveSourceRecord>
+            listInstalledModArchiveSources(
+                const std::filesystem::path& projectDirectory);
 
         static void beginPendingInstallSession(
             const std::filesystem::path& projectDirectory,
@@ -535,6 +558,12 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
             const std::vector<std::wstring>& pluginNames);
+
+        [[nodiscard]] static std::vector<ProfilePluginOrderItemRecord> reorderProfilePluginOrderItems(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::vector<std::wstring>& pluginNames,
+            const std::vector<std::wstring>& orderedItemIds);
 
         static void replaceProfilePluginOrderItems(
             const std::filesystem::path& projectDirectory,

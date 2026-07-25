@@ -1,6 +1,6 @@
 # Fluxora Tauri performance budget
 
-Дата обновления: 2026-07-19
+Дата обновления: 2026-07-24
 
 Статус: Phase 13 budget and automated smoke gates are in place. After Phase 17, WPF baseline capture is historical/superseded; ongoing acceptance uses Tauri screenshots, performance budgets and release smoke evidence.
 
@@ -34,6 +34,8 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Nexus resolved filename | real file name within one Nexus file-info round trip plus at most one `500 ms` renderer poll | pre-transfer-permit GTest, download-state Vitest and concurrent Playwright smoke |
 | Nexus duplicate decision wait | `awaiting-decision` holds none of the five transfer permits and does not block unrelated Download/Install work; same-lineage replace finalization remains serialized | transfer-limiter/restart GTest, Rust Download-lane isolation test and Replace/Keep both/Cancel Playwright smoke |
 | Cached conflict summary | exact counts and directed relations in `<= 500 ms` after fixture/cache preparation at the current 10k-conflict scale | covering-index SQLite GTest with bounded SQL prepare count |
+| Large ordinary archive install open | non-FOMOD classification and identity plan each `<= 500 ms` on a warmed active project when the catalog sidecar matches, independent of compressed payload size; no full extraction and no repeated content hash | negative external-probe/cache GTest plus correlated `FomodPerformance` logs and a real multi-gigabyte archive smoke |
+| FOMOD preflight reuse | index before extraction; positive metadata materialized at most once and reused by plan, while full package staging remains deferred to the path that needs content/layout/install | large indexed FOMOD, preview, Smart Select, content-layout and cache-integrity integration tests |
 | Install metadata finalization | commit-side metadata finalization `<= 2 s` at the current production scale | correlated `InstallFinalization durationMs` operation log and install integration tests |
 | NIF preview geometry | first neutral geometry frame `< 1 s` cold / `< 500 ms` warm | Playwright progressive-preview smoke plus `NifPreview.Performance firstFrame` log |
 | NIF preview textures | all resolvable textures applied `< 3 s` cold / `< 1.5 s` warm | batched resolver/cache tests plus `texturesReady` log |
@@ -61,6 +63,12 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
   `ConflictSummary`, `NxmIntake`, `NxmPreflight` and `InstallFinalization`
   durations with counts only; those new entries do not include URLs or absolute
   paths.
+- Large archive install preflight never answers “is this FOMOD?” by unpacking an
+  ordinary 7z/RAR payload. Native ZIP indexing or the bounded 7-Zip include probe
+  establishes the answer first, and an empty fingerprinted metadata entry records
+  a negative result. Identity planning reuses the catalog SHA-256 only while its
+  durable Windows file identity still matches, preserving stale-plan protection
+  without rereading multi-gigabyte content.
 - Tauri main records `bridgeQueue lane=main|interactive|background|connection|download|install method=... queueWaitUs=...` for every request. Connection, download and install are separate lazy host processes; a high wait in one lane must not appear as a wait in another.
 - The main renderer publishes the cached/local generic connection snapshot before restore, migrates the former Nexus-only localStorage cache without treating stale data as `ready`, and delays only catalog/workspace. Secondary window entrypoints skip connection restoration. API-limit probes remain independent background reads.
 - The text editor is routed by `main.tsx` into a dedicated secondary-window chunk, receives the known project directory directly from the typed window contract, and preloads Monaco in parallel with the first file read. It does not execute the main `App.tsx` bridge/Nexus/catalog startup, reuses lazy mod directory reads and disposes models when tabs close. Search is intentionally bounded to open in-memory documents until a native indexed-search contract exists.

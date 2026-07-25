@@ -79,6 +79,12 @@ import {
   buildProjectLibraryStats,
   type ProjectRuntimeSummary
 } from './features/library/projectLibraryStats';
+import {
+  applyModUpdateCheckProgress,
+  createModUpdateCheckSplashState,
+  ModUpdateCheckSplash,
+  type ModUpdateCheckSplashState
+} from './features/mods/ModUpdateCheckSplash';
 import { AiChatPanel } from './features/ai/AiChatPanel';
 import { resolveAiManagedFileLocation } from './features/ai/ai-managed-file-location';
 import {
@@ -245,6 +251,7 @@ import {
   saveCollapsedSeparatorOrderIds
 } from './separator-collapse-persistence';
 import {
+  assessPluginOrderItemSelectionReorder,
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   enabledPluginNameKeys,
@@ -374,6 +381,7 @@ import {
   type ModUpdateResultsByProject
 } from './services/mod-update-status';
 import { installRendererRefreshShortcut } from './services/renderer-refresh-shortcut-service';
+import { createPluginWorkspaceSnapshotGate } from './services/plugin-workspace-snapshot-gate';
 import {
   createPendingPathAccumulator,
   createScopedSequenceTracker,
@@ -585,6 +593,7 @@ interface EffectiveFileTreeRow {
 interface RowDropTargetState {
   orderId: string;
   placement: RowDropPlacement;
+  blockedReason?: string;
 }
 
 interface RowReorderSession {
@@ -601,11 +610,13 @@ interface RowReorderSession {
   lastFrameTime: number | null;
   targetOrderId: string | null;
   placement: RowDropPlacement | null;
+  blockedReason: string | null;
   scrollContainer: HTMLElement | null;
 }
 
 interface WorkspaceLoadOptions {
   coordinatedSequence?: number;
+  forcePluginDiscoveryRefresh?: boolean;
   persistedSnapshot?: boolean;
   showBusy?: boolean;
   showLoading?: boolean;
@@ -1351,6 +1362,8 @@ export const App = () => {
   const coordinatedWorkspaceLoadRef = useRef<{ projectId: string; sequence: number } | null>(null);
   const coordinatedWorkspaceLoadSequenceRef = useRef(0);
   const buildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
+  const pluginBuildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
+  const pluginWorkspaceSnapshotGate = useMemo(createPluginWorkspaceSnapshotGate, []);
   const pendingBuildContentModPaths = useMemo(createPendingPathAccumulator, []);
   const installCommitOperationsRef = useRef(new Set<string>());
   const deferredBuildContentRefreshRef = useRef<(() => Promise<void>) | null>(null);
@@ -1477,6 +1490,8 @@ export const App = () => {
   const [modUpdateResultsByProject, setModUpdateResultsByProject] =
     useState<ModUpdateResultsByProject>({});
   const [manualModUpdateNotice, setManualModUpdateNotice] = useState<string | null>(null);
+  const [manualModUpdateSplash, setManualModUpdateSplash] =
+    useState<ModUpdateCheckSplashState | null>(null);
   const manualModUpdateNoticeTimerRef = useRef<number | null>(null);
   const modUpdateApplyRef = useRef<(
     projectDirectory: string,
@@ -2487,6 +2502,16 @@ export const App = () => {
           exactCoverage.watchGeneration === watchGeneration &&
           exactCoverage.contentRevision === contentRevision &&
           invalidationsSettled;
+        if (
+          !exactWorkspacePreparedDuringOpen &&
+          !exactWorkspaceCoveredByWatcher &&
+          buildContentRefreshCoordinator.isRunning()
+        ) {
+          // The watcher owns this exact revision. Let its fast plugin refresh
+          // and single mod reconciliation finish instead of starting another
+          // expensive workspace scan from the open-background path.
+          return;
+        }
         if (exactWorkspacePreparedDuringOpen) {
           projectOpenExactWorkspaceRef.current = null;
         }
@@ -2559,7 +2584,7 @@ export const App = () => {
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [loadedWorkspaceProjectId, projectOpenCommitSequence]);
+  }, [buildContentRefreshCoordinator, loadedWorkspaceProjectId, projectOpenCommitSequence]);
 
   const buildProfileOptions = useMemo(() => {
     if (profilesWorkspace.items.length > 0) {
@@ -3312,6 +3337,9 @@ export const App = () => {
       await window.fluxora.mods.setEnabled(project.projectDirectory, item.id, isEnabled, {
         operationId
       });
+      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
       await pendingInstallOrchestrator.rebase(
         project.projectDirectory,
         optimisticItems,
@@ -3319,9 +3347,6 @@ export const App = () => {
       );
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
         await loadModsWorkspace(project, backgroundReorderLoadOptions);
-      }
-      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
     } catch (error) {
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
@@ -3361,6 +3386,13 @@ export const App = () => {
       await window.fluxora.mods.setAllEnabled(project.projectDirectory, isEnabled, {
         operationId
       });
+      if (
+        modBulkEnableSequenceRef.current === sequence &&
+        pluginCapabilities.bridgeAvailable &&
+        pluginCapabilities.projectSupported
+      ) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
       await pendingInstallOrchestrator.rebase(
         project.projectDirectory,
         optimisticItems,
@@ -3368,13 +3400,6 @@ export const App = () => {
       );
       if (modBulkEnableSequenceRef.current === sequence) {
         await loadModsWorkspace(project, backgroundReorderLoadOptions);
-      }
-      if (
-        modBulkEnableSequenceRef.current === sequence &&
-        pluginCapabilities.bridgeAvailable &&
-        pluginCapabilities.projectSupported
-      ) {
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
     } catch (error) {
       if (modBulkEnableSequenceRef.current === sequence) {
@@ -3852,10 +3877,10 @@ export const App = () => {
   };
 
   const refreshAfterModDeletion = async (project: FluxoraProject) => {
-    await loadModsWorkspace(project, backgroundReorderLoadOptions);
     if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
       await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
     }
+    await loadModsWorkspace(project, backgroundReorderLoadOptions);
   };
 
   const createEmptyMod = async (modName: string) => {
@@ -4238,9 +4263,14 @@ export const App = () => {
       return;
     }
 
-    await runModMutation('Checking updates', async (operationId) => {
+    const project = selectedProject;
+    const operationId = createRendererOperationId('mods_check_updates_manual');
+    setMessage(null);
+    setManualModUpdateSplash(createModUpdateCheckSplashState(operationId));
+
+    try {
       const result = await modUpdateCoordinator.checkManual(
-        selectedProject.projectDirectory,
+        project.projectDirectory,
         operationId
       );
       const transientMessage = modUpdateTransientMessage(result);
@@ -4254,7 +4284,14 @@ export const App = () => {
           manualModUpdateNoticeTimerRef.current = null;
         }, 5_000);
       }
-    });
+      await loadModsWorkspace(project);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setManualModUpdateSplash((current) =>
+        current?.operationId === operationId ? null : current
+      );
+    }
   };
 
   const toggleFileTreeDirectory = async (entry: FluxoraModFileTreeEntry) => {
@@ -4433,11 +4470,18 @@ export const App = () => {
       const listPlugins = options.persistedSnapshot
         ? window.fluxora.plugins.listPersisted
         : window.fluxora.plugins.list;
-      const nextPlugins = await listPlugins(
-        project.projectDirectory,
-        project.templateId,
-        profileName,
-        { operationId }
+      const nextPlugins = await pluginWorkspaceSnapshotGate.readStable(() =>
+        listPlugins(
+          project.projectDirectory,
+          project.templateId,
+          profileName,
+          {
+            operationId,
+            ...(options.forcePluginDiscoveryRefresh
+              ? { forceDiscoveryRefresh: true }
+              : {})
+          }
+        )
       );
       if (!isCurrentWorkspaceStoreLoad('plugins', loadSequence)) {
         return false;
@@ -4589,9 +4633,9 @@ export const App = () => {
       targetIndex
     });
 
-    const save = (async () => {
-      const operationId = createRendererOperationId('plugins_reorder');
-      try {
+    const save = pluginWorkspaceSnapshotGate
+      .enqueue(async () => {
+        const operationId = createRendererOperationId('plugins_reorder');
         const confirmedOrder = await window.fluxora.plugins.move(
           project.projectDirectory,
           project.templateId,
@@ -4607,7 +4651,8 @@ export const App = () => {
             items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
           });
         }
-      } catch (error) {
+      })
+      .catch(async (error) => {
         const message = errorMessage(error);
         setMessage(`Could not save plugin order: ${message}`);
         if (pluginOrderSaveSequenceRef.current === sequence) {
@@ -4618,8 +4663,7 @@ export const App = () => {
           await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
         throw error;
-      }
-    })();
+      });
 
     trackPluginOrderSave(save);
   };
@@ -4652,9 +4696,9 @@ export const App = () => {
     setMessage(null);
     dispatchPluginsWorkspace({ type: 'items-loaded', items: optimisticItems });
 
-    const save = (async () => {
-      const operationId = createRendererOperationId('plugins_reorder');
-      try {
+    const save = pluginWorkspaceSnapshotGate
+      .enqueue(async () => {
+        const operationId = createRendererOperationId('plugins_reorder');
         let confirmedOrder = previousItems;
         for (const move of movePlan) {
           confirmedOrder = await window.fluxora.plugins.move(
@@ -4673,7 +4717,8 @@ export const App = () => {
             items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
           });
         }
-      } catch (error) {
+      })
+      .catch(async (error) => {
         const message = errorMessage(error);
         setMessage(`Could not save plugin order: ${message}`);
         if (pluginOrderSaveSequenceRef.current === sequence) {
@@ -4684,8 +4729,7 @@ export const App = () => {
           await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
         throw error;
-      }
-    })();
+      });
 
     trackPluginOrderSave(save);
   };
@@ -4723,6 +4767,7 @@ export const App = () => {
     setDraggedDownloadInstallId(null);
     setDownloadInstallDropTarget(null);
     document.body.classList.remove('row-reorder-active');
+    document.body.classList.remove('row-reorder-blocked');
   };
 
   const waitForActiveModOrderDragToSettle = async () => {
@@ -4875,30 +4920,56 @@ export const App = () => {
             )
           : rowDropPlacementFromPointer(row, session.currentY)
         : null;
-    const reorderedItems =
-      session.kind !== 'download-install' && targetOrderId && placement && placement !== 'inside'
-        ? reorderedItemsForRowDrop(
-            session.kind,
-            session.sourceOrderId,
-            session.sourceOrderIds,
-            targetOrderId,
-            placement
-          )
-        : null;
+    let reorderedItems: FluxoraModOrderItem[] | FluxoraPluginOrderItem[] | null = null;
+    let blockedReason: string | null = null;
+    if (
+      session.kind !== 'download-install' &&
+      targetOrderId &&
+      placement &&
+      placement !== 'inside'
+    ) {
+      if (session.kind === 'plugin') {
+        const assessment = assessPluginOrderItemSelectionReorder(
+          pluginsWorkspace.items,
+          session.sourceOrderId,
+          new Set(session.sourceOrderIds),
+          targetOrderId,
+          placement,
+          pluginsWorkspace.collapsedSeparatorOrderIds
+        );
+        reorderedItems = assessment.items;
+        blockedReason = assessment.blockedReason;
+      } else {
+        reorderedItems = reorderedItemsForRowDrop(
+          session.kind,
+          session.sourceOrderId,
+          session.sourceOrderIds,
+          targetOrderId,
+          placement
+        );
+      }
+    }
     const nextTarget =
       targetOrderId &&
       placement &&
-      (session.kind === 'download-install' || reorderedItems !== null)
-        ? { orderId: targetOrderId, placement }
+      (session.kind === 'download-install' || reorderedItems !== null || blockedReason)
+        ? {
+            orderId: targetOrderId,
+            placement,
+            ...(blockedReason ? { blockedReason } : {})
+          }
         : null;
 
     const targetChanged = !(
       session.targetOrderId === (nextTarget?.orderId ?? null) &&
-      session.placement === (nextTarget?.placement ?? null)
+      session.placement === (nextTarget?.placement ?? null) &&
+      session.blockedReason === (nextTarget?.blockedReason ?? null)
     );
     if (targetChanged) {
       session.targetOrderId = nextTarget?.orderId ?? null;
       session.placement = nextTarget?.placement ?? null;
+      session.blockedReason = nextTarget?.blockedReason ?? null;
+      document.body.classList.toggle('row-reorder-blocked', Boolean(nextTarget?.blockedReason));
       setRowDropTarget(session.kind, nextTarget);
     }
 
@@ -4981,6 +5052,7 @@ export const App = () => {
       lastFrameTime: null,
       targetOrderId: null,
       placement: null,
+      blockedReason: null,
       scrollContainer
     };
 
@@ -5041,6 +5113,7 @@ export const App = () => {
     const sourceOrderIds = session.sourceOrderIds;
     const kind = session.kind;
     const wasActive = session.active;
+    const blockedReason = session.blockedReason;
     clearRowReorderSession();
 
     if (!wasActive) {
@@ -5049,6 +5122,9 @@ export const App = () => {
 
     suppressNextRowClickRef.current = true;
     event.preventDefault();
+    if (blockedReason) {
+      return;
+    }
     if (kind === 'download-install') {
       const entry = downloadsWorkspace.items.find((item) => item.id === sourceOrderId) ?? null;
       if (entry && targetOrderId && placement) {
@@ -8421,16 +8497,22 @@ export const App = () => {
         // invalidation succeeds. Starting here would allow a stale cache read.
         return;
       }
+      if (buildContentRefreshCoordinator.isRunning()) {
+        // An observed watcher event already owns this revision. Avoid a second
+        // exact scan while the event reconciliation is publishing plugins and
+        // rebuilding the mod workspace.
+        return;
+      }
       const watchGeneration = buildContentWatchGenerationRef.current;
-      const modsReconciled = await loadModsWorkspace(project, {
-        operationId: createRendererOperationId('build_content_watch_reconciled_mods'),
+      const pluginsReconciled = await loadPluginsWorkspace(project, {
+        operationId: createRendererOperationId('build_content_watch_reconciled_plugins'),
         profileName,
         resetScroll: false,
         showBusy: false,
         showLoading: false
       });
       if (
-        !modsReconciled ||
+        !pluginsReconciled ||
         cancelled ||
         selectedWorkspaceScopeRef.current.project?.projectDirectory !== project.projectDirectory ||
         selectedWorkspaceScopeRef.current.profileName !== profileName ||
@@ -8442,15 +8524,15 @@ export const App = () => {
       ) {
         return;
       }
-      const pluginsReconciled = await loadPluginsWorkspace(project, {
-        operationId: createRendererOperationId('build_content_watch_reconciled_plugins'),
+      const modsReconciled = await loadModsWorkspace(project, {
+        operationId: createRendererOperationId('build_content_watch_reconciled_mods'),
         profileName,
         resetScroll: false,
         showBusy: false,
         showLoading: false
       });
       if (
-        !pluginsReconciled ||
+        !modsReconciled ||
         cancelled ||
         selectedWorkspaceScopeRef.current.project?.projectDirectory !== project.projectDirectory ||
         selectedWorkspaceScopeRef.current.profileName !== profileName ||
@@ -8509,6 +8591,7 @@ export const App = () => {
     };
   }, [
     bridgeStatus?.ready,
+    buildContentRefreshCoordinator,
     ensureBuildContentWatch,
     isSecondaryWindow,
     loadedWorkspaceProjectId,
@@ -8519,11 +8602,14 @@ export const App = () => {
   useEffect(() => {
     if (isSecondaryWindow) {
       buildContentRefreshCoordinator.stop();
+      pluginBuildContentRefreshCoordinator.stop();
       return undefined;
     }
     buildContentRefreshCoordinator.resume();
+    pluginBuildContentRefreshCoordinator.resume();
     return () => {
       buildContentRefreshCoordinator.stop();
+      pluginBuildContentRefreshCoordinator.stop();
       buildContentWatchKeyRef.current = null;
       buildContentWatchPromiseRef.current = null;
       buildContentWatchGenerationRef.current += 1;
@@ -8532,7 +8618,11 @@ export const App = () => {
         .unwatch({ operationId: createRendererOperationId('build_content_unwatch') })
         .catch(() => undefined);
     };
-  }, [buildContentRefreshCoordinator, isSecondaryWindow]);
+  }, [
+    buildContentRefreshCoordinator,
+    isSecondaryWindow,
+    pluginBuildContentRefreshCoordinator
+  ]);
 
   useEffect(() => {
     if (isSecondaryWindow) {
@@ -8596,6 +8686,27 @@ export const App = () => {
               .map((change) => change.path)
           );
       pendingBuildContentModPaths.add(event.projectDirectory, changedModPaths, eventRevision);
+      const fastPluginRefreshTask = async () => {
+        const liveScope = selectedWorkspaceScopeRef.current;
+        const project =
+          liveScope.project?.projectDirectory === event.projectDirectory
+            ? liveScope.project
+            : null;
+        if (
+          !project ||
+          selectedProjectDirectoryRef.current !== event.projectDirectory
+        ) {
+          return;
+        }
+        await loadPluginsWorkspace(project, {
+          forcePluginDiscoveryRefresh: true,
+          operationId: createRendererOperationId('build_content_plugins_changed'),
+          profileName: liveScope.profileName,
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        });
+      };
       const refreshTask = async () => {
           // The native route also clears plugin discovery caches. Failed and
           // unprocessed batches are restored so a transient bridge error cannot
@@ -8684,8 +8795,8 @@ export const App = () => {
           if (invalidatedRevision < reconciliationRevision) {
             throw new Error('Build content invalidation has not reached the active project revision.');
           }
-          // Rebuild mod_files/conflict state before any consumer (especially the
-          // effective tree) can observe the deliberately invalidated cache.
+          // Rebuild mod_files/conflict state before the effective tree can
+          // observe the deliberately invalidated cache.
           const modsReconciled = await loadModsWorkspace(reconciliationProject, {
             operationId: createRendererOperationId('build_content_mods_changed'),
             resetScroll: false,
@@ -8712,24 +8823,25 @@ export const App = () => {
           if (!modsReconciled) {
             throw new Error('Exact mod reconciliation failed for the active project.');
           }
-          const refreshes: Promise<unknown>[] = [
-            loadPluginsWorkspace(reconciliationProject, {
-              operationId: createRendererOperationId('build_content_plugins_changed'),
-              resetScroll: false,
-              showBusy: false,
-              showLoading: false,
-              profileName: reconciliationProfileName
-            })
-          ];
-          if (refreshEffectiveFileTree) {
-            refreshes.push(
-              loadEffectiveFileTree(reconciliationProject, reconciliationProfileName, {
-                force: true,
-                requestKey: effectiveFileTreeRequestKey
-              })
-            );
+          // Repeat plugin discovery after the mod inventory reconciliation so
+          // a newly created mod folder is visible even when the fast Plugin-lane
+          // read ran before that mod was registered.
+          const pluginsReconciled = await loadPluginsWorkspace(reconciliationProject, {
+            operationId: createRendererOperationId('build_content_plugins_reconciled'),
+            resetScroll: false,
+            showBusy: false,
+            showLoading: false,
+            profileName: reconciliationProfileName
+          });
+          if (!pluginsReconciled) {
+            throw new Error('Exact plugin reconciliation failed for the active project.');
           }
-          const [pluginsReconciled] = await Promise.all(refreshes);
+          if (refreshEffectiveFileTree) {
+            await loadEffectiveFileTree(reconciliationProject, reconciliationProfileName, {
+              force: true,
+              requestKey: effectiveFileTreeRequestKey
+            });
+          }
           if (
             selectedProjectDirectoryRef.current !== event.projectDirectory ||
             selectedWorkspaceScopeRef.current.profileName !== reconciliationProfileName ||
@@ -8746,9 +8858,6 @@ export const App = () => {
             }
             return;
           }
-          if (!pluginsReconciled) {
-            throw new Error('Exact plugin reconciliation failed for the active project.');
-          }
           exactWorkspaceWatchCoverageRef.current = {
             contentRevision: reconciliationRevision,
             watchGeneration: reconciliationWatchGeneration,
@@ -8760,7 +8869,10 @@ export const App = () => {
           }
       };
       if (installCommitOperationsRef.current.size > 0) {
-        deferredBuildContentRefreshRef.current = refreshTask;
+        deferredBuildContentRefreshRef.current = async () => {
+          await pluginBuildContentRefreshCoordinator.schedule(fastPluginRefreshTask);
+          await refreshTask();
+        };
         void window.fluxora.ui.log({
           level: 'info',
           category: 'ModInstall',
@@ -8769,6 +8881,9 @@ export const App = () => {
         });
         return;
       }
+      void pluginBuildContentRefreshCoordinator
+        .schedule(fastPluginRefreshTask)
+        .catch(() => undefined);
       void buildContentRefreshCoordinator.schedule(refreshTask).catch(() => undefined);
     });
     return unsubscribe;
@@ -8780,6 +8895,7 @@ export const App = () => {
     effectiveFileTreeRequestKey,
     isSecondaryWindow,
     pendingBuildContentModPaths,
+    pluginBuildContentRefreshCoordinator,
     selectedProject,
     selectedProjectProfileName
   ]);
@@ -9023,6 +9139,9 @@ export const App = () => {
 
   useEffect(() => {
     return window.fluxora.operations.onProgress((progress) => {
+      setManualModUpdateSplash((current) =>
+        current ? applyModUpdateCheckProgress(current, progress) : current
+      );
       setOperationOverlay((current) =>
         current && current.isRunning && current.operationId === progress.operationId
           ? {
@@ -12960,6 +13079,8 @@ export const App = () => {
             const isDragging = draggedPluginOrderIds.has(item.orderId);
             const isDropTarget =
               pluginDropTarget?.orderId === item.orderId && !draggedPluginOrderIds.has(item.orderId);
+            const blockedDropReason =
+              isDropTarget ? pluginDropTarget?.blockedReason ?? null : null;
             const canDragPluginRow =
               pluginCapabilities.loadOrderSupported &&
               !pluginsBusyLabel &&
@@ -13004,13 +13125,14 @@ export const App = () => {
                 data-missing-masters={hasMissingMasters}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
+                data-drop-blocked={Boolean(blockedDropReason)}
                 data-drop-placement={isDropTarget ? pluginDropTarget?.placement : undefined}
                 data-reorder-disabled={!canDragPluginRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
                 aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}${
                   hasMissingMasters ? ' missing masters' : ''
-                }`}
+                }${blockedDropReason ? ` ${blockedDropReason}` : ''}`}
                 aria-expanded={item.isSeparator ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
@@ -13049,8 +13171,15 @@ export const App = () => {
                 }}
               >
                 {isDropTarget ? (
-                  <span className="row-drop-target-chip" aria-hidden="true">
-                    Сюда
+                  <span
+                    className={`row-drop-target-chip${
+                      blockedDropReason ? ' row-drop-target-chip--blocked' : ''
+                    }`}
+                    aria-hidden={blockedDropReason ? undefined : true}
+                    role={blockedDropReason ? 'status' : undefined}
+                    title={blockedDropReason ?? undefined}
+                  >
+                    {blockedDropReason ? 'Нельзя' : 'Сюда'}
                   </span>
                 ) : null}
                 <span className="plugin-hex-index" role="cell">
@@ -15837,6 +15966,7 @@ export const App = () => {
   return (
     <main className="desktop-shell">
       {renderTitlebar(true)}
+      <ModUpdateCheckSplash state={manualModUpdateSplash} />
       {manualModUpdateNotice ? (
         <div className="transient-notice" role="status" aria-live="polite">
           {manualModUpdateNotice}

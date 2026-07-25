@@ -84,6 +84,44 @@ describe('mod update coordinator', () => {
     coordinator.stop();
   });
 
+  it('cancels an in-flight automatic check before starting an explicit manual check', async () => {
+    const automatic = deferred<FluxoraModUpdateCheckResult>();
+    const manual = deferred<FluxoraModUpdateCheckResult>();
+    const checkUpdates = vi
+      .fn()
+      .mockImplementationOnce(() => automatic.promise)
+      .mockImplementationOnce(() => manual.promise);
+    const cancel = vi.fn(async () => undefined);
+    const coordinator = createModUpdateCoordinator({
+      api: { checkUpdates, cancel },
+      createOperationId: (scope) => `op-${scope}`,
+      onApplied: vi.fn()
+    });
+
+    coordinator.activate('C:\\Builds\\A');
+    const manualResult = coordinator.checkManual('C:\\Builds\\A', 'op-manual');
+
+    expect(cancel).toHaveBeenCalledWith('op-mods_check_updates_automatic', {
+      operationId: 'op-mods_check_updates_cancel'
+    });
+    expect(checkUpdates).toHaveBeenCalledTimes(1);
+
+    automatic.resolve(result('201'));
+    await automatic.promise;
+
+    await vi.waitFor(() => expect(checkUpdates).toHaveBeenCalledTimes(2));
+    expect(checkUpdates).toHaveBeenLastCalledWith(
+      { projectDirectory: 'C:\\Builds\\A', mode: 'manual' },
+      { operationId: 'op-manual' }
+    );
+
+    manual.resolve(result('202'));
+    await expect(manualResult).resolves.toMatchObject({
+      mods: [expect.objectContaining({ latestFileId: '202' })]
+    });
+    coordinator.stop();
+  });
+
   it('cancels on build switch and never applies the stale result', async () => {
     const first = deferred<FluxoraModUpdateCheckResult>();
     const second = deferred<FluxoraModUpdateCheckResult>();
@@ -207,7 +245,7 @@ describe('mod update coordinator', () => {
     coordinator.stop();
   });
 
-  it('hands authenticationUnavailable to connection recovery without scheduling an update timer', async () => {
+  it('hands authenticationUnavailable to connection recovery and keeps the daily retry alive', async () => {
     vi.useFakeTimers();
     const partial = {
       ...result(),
@@ -229,7 +267,7 @@ describe('mod update coordinator', () => {
 
     expect(onAuthenticationUnavailable).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1_000);
-    expect(checkUpdates).toHaveBeenCalledTimes(1);
+    expect(checkUpdates).toHaveBeenCalledTimes(2);
     coordinator.stop();
   });
 });

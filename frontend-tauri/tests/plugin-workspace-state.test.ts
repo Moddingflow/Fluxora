@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assessPluginOrderItemSelectionReorder,
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   enabledPluginNameKeys,
@@ -207,6 +208,115 @@ describe('plugin workspace state', () => {
     ).toEqual([
       { orderId: 'plugin_skyui', targetIndex: 1 },
       { orderId: 'plugin_light', targetIndex: 2 }
+    ]);
+  });
+
+  it('rejects a plugin drop that would place it before a present required master', () => {
+    const dependencyItems = [
+      items[0],
+      pluginItem('plugin_master', 'Required.esm', 1, { isMaster: true }),
+      pluginItem('plugin_dependent', 'Dependent.esp', 2, {
+        masterFiles: ['Required.esm']
+      }),
+      pluginItem('plugin_unrelated', 'Unrelated.esp', 3)
+    ];
+    const assessment = assessPluginOrderItemSelectionReorder(
+      dependencyItems,
+      'plugin_dependent',
+      new Set(['plugin_dependent']),
+      'plugin_master',
+      'before'
+    );
+
+    expect(assessment.items).toBeNull();
+    expect(assessment.blockedReason).toBe(
+      'Dependent.esp должен загружаться после Required.esm.'
+    );
+    expect(
+      targetIndexForPluginDrop(
+        dependencyItems,
+        'plugin_dependent',
+        'plugin_master',
+        'before'
+      )
+    ).toBeNull();
+  });
+
+  it('rejects moving a present master below one of its dependent plugins', () => {
+    const dependencyItems = [
+      items[0],
+      pluginItem('plugin_master', 'Required.esm', 1, { isMaster: true }),
+      pluginItem('plugin_dependent', 'Dependent.esp', 2, {
+        masterFiles: ['Required.esm']
+      }),
+      pluginItem('plugin_unrelated', 'Unrelated.esp', 3)
+    ];
+
+    const assessment = assessPluginOrderItemSelectionReorder(
+      dependencyItems,
+      'plugin_master',
+      new Set(['plugin_master']),
+      'plugin_dependent',
+      'after'
+    );
+    expect(assessment.items).toBeNull();
+    expect(assessment.blockedReason).toBe(
+      'Dependent.esp должен загружаться после Required.esm.'
+    );
+    expect(
+      targetIndexForPluginDrop(
+        dependencyItems,
+        'plugin_master',
+        'plugin_dependent',
+        'after'
+      )
+    ).toBeNull();
+  });
+
+  it('reports the dependency reason when the required master is also a locked plugin', () => {
+    const dependencyItems = [
+      items[0],
+      pluginItem('plugin_dependent', 'Dependent.esp', 1, {
+        masterFiles: ['Skyrim.esm']
+      })
+    ];
+
+    const assessment = assessPluginOrderItemSelectionReorder(
+      dependencyItems,
+      'plugin_dependent',
+      new Set(['plugin_dependent']),
+      'plugin_skyrim',
+      'before'
+    );
+    expect(assessment.items).toBeNull();
+    expect(assessment.blockedReason).toBe(
+      'Dependent.esp должен загружаться после Skyrim.esm.'
+    );
+  });
+
+  it('allows a selected master and dependent plugin to move together in dependency order', () => {
+    const dependencyItems = [
+      items[0],
+      pluginItem('plugin_master', 'Required.esm', 1, { isMaster: true }),
+      pluginItem('plugin_dependent', 'Dependent.esp', 2, {
+        masterFiles: ['Required.esm']
+      }),
+      pluginItem('plugin_unrelated', 'Unrelated.esp', 3)
+    ];
+
+    const assessment = assessPluginOrderItemSelectionReorder(
+      dependencyItems,
+      'plugin_master',
+      new Set(['plugin_master', 'plugin_dependent']),
+      'plugin_unrelated',
+      'after'
+    );
+    expect(assessment.blockedReason).toBeNull();
+    expect(assessment.items?.map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'plugin_unrelated',
+      'plugin_master',
+      'plugin_dependent'
     ]);
   });
 

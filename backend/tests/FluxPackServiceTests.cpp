@@ -681,6 +681,225 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(FluxPackServiceTests, RecipeReplaysAllMergedArchiveSourcesIntoOneMod)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "FluxPack export and install use Windows instance metadata in this build.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
+
+        const std::filesystem::path sourceInstallRoot = temp.path() / L"Source Builds";
+        const std::filesystem::path sourceProject = sourceInstallRoot / L"Merged Recipe Build";
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path config = temp.path() / L"configs" / L"Merged Recipe Build.json";
+        const std::filesystem::path mods = sourceProject / L"mods";
+        const std::filesystem::path profiles = sourceProject / L"profiles";
+        const std::filesystem::path downloads = fluxoraApp.downloads();
+        const std::filesystem::path overwrite = sourceProject / L"overwrite";
+        const std::filesystem::path mergedMod = mods / L"Merged Target";
+        const std::filesystem::path baseArchive = downloads / L"Base Source.bsa";
+        const std::filesystem::path patchArchive = downloads / L"Patch Source.bsa";
+
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            config,
+            std::string("{")
+            + "\"schemaVersion\":\"1\","
+            + "\"name\":\"Merged Recipe Build\","
+            + "\"templateId\":\"skyrimse\","
+            + "\"gameName\":\"Skyrim Special Edition\","
+            + "\"gamePath\":\"" + toUtf8(game.generic_wstring()) + "\","
+            + "\"installRoot\":\"" + toUtf8(sourceInstallRoot.generic_wstring()) + "\","
+            + "\"projectDirectory\":\"" + toUtf8(sourceProject.generic_wstring()) + "\","
+            + "\"dataDirectory\":\"Data\","
+            + "\"nexusDomain\":\"skyrimspecialedition\","
+            + "\"defaultProfile\":\"Default\""
+            + "}");
+        writeTextFile(mergedMod / L"Base Source.bsa", "base archive");
+        writeTextFile(mergedMod / L"Patch Source.bsa", "patch archive");
+        writeTextFile(baseArchive, "base archive");
+        writeTextFile(patchArchive, "patch archive");
+        writeTextFile(
+            baseArchive.wstring() + L".fluxora.json",
+            "{"
+            "\"source\":\"nxm://skyrimspecialedition/mods/100/files/1000\","
+            "\"gameDomain\":\"skyrimspecialedition\","
+            "\"modId\":\"100\","
+            "\"fileId\":\"1000\","
+            "\"nexusModName\":\"Base Source\","
+            "\"version\":\"1.0\""
+            "}");
+        writeTextFile(
+            patchArchive.wstring() + L".fluxora.json",
+            "{"
+            "\"source\":\"nxm://skyrimspecialedition/mods/200/files/2000\","
+            "\"gameDomain\":\"skyrimspecialedition\","
+            "\"modId\":\"200\","
+            "\"fileId\":\"2000\","
+            "\"nexusModName\":\"Patch Source\","
+            "\"version\":\"2.0\""
+            "}");
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
+        downloadService.initialize();
+        static_cast<void>(pathSettings.saveForConfig(
+            config,
+            BuildPathSettings{game, mods, profiles, downloads, overwrite}));
+
+        InstanceMetadataStore::ensureInstance(sourceProject, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            sourceProject,
+            mergedMod,
+            L"Merged Target",
+            L"2.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"100",
+                L"1000",
+                L"nxm://skyrimspecialedition/mods/100/files/1000"});
+        const std::wstring baseHash = computeFluxPackFileSha256(baseArchive);
+        const std::wstring patchHash = computeFluxPackFileSha256(patchArchive);
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            sourceProject,
+            baseHash,
+            L"base-source",
+            L"Merged Target");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            sourceProject,
+            baseHash,
+            installed.uuid,
+            L"base-source",
+            ArchiveModLinkMode::Replace,
+            ArchiveInstallSourceMetadata{
+                baseArchive.filename().wstring(),
+                L"1.0",
+                ModSourceRecord{
+                    L"nexus",
+                    L"skyrimspecialedition",
+                    L"100",
+                    L"1000",
+                    L"nxm://skyrimspecialedition/mods/100/files/1000"}});
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            sourceProject,
+            patchHash,
+            L"patch-source",
+            L"Merged Target");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            sourceProject,
+            patchHash,
+            installed.uuid,
+            L"patch-source",
+            ArchiveModLinkMode::Merge,
+            ArchiveInstallSourceMetadata{
+                patchArchive.filename().wstring(),
+                L"2.0",
+                ModSourceRecord{
+                    L"nexus",
+                    L"skyrimspecialedition",
+                    L"200",
+                    L"2000",
+                    L"nxm://skyrimspecialedition/mods/200/files/2000"}});
+
+        FluxPackService service(logger, projects, downloadService, pathSettings);
+        service.initialize();
+        const std::filesystem::path output = temp.path() / L"Merged Recipe.fluxpack";
+        const FluxPackSummary exported = service.exportProject(FluxPackExportRequest{
+            config,
+            output,
+            false,
+            {},
+            FluxPackPackageType::Recipe
+        });
+
+        EXPECT_EQ(exported.sourceArchiveCount, 2U);
+        const std::string manifest = FluxPackPackageReader(output).readManifest();
+        EXPECT_NE(manifest.find("\"installMode\":\"replace\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"installMode\":\"merge\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"remoteModId\":\"100\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"remoteModId\":\"200\""), std::string::npos);
+
+        const FluxPackInstallResult restored = service.installFluxPack(FluxPackInstallRequest{
+            output,
+            temp.path() / L"Restored Builds"
+        });
+        EXPECT_EQ(restored.totalSourceCount, 2U);
+        EXPECT_EQ(restored.installedSourceCount, 2U);
+        EXPECT_EQ(restored.failedSourceCount, 0U);
+        EXPECT_FALSE(restored.hasWarnings);
+        const std::filesystem::path restoredMod =
+            restored.projectDirectory / L"mods" / L"Merged Target";
+        EXPECT_EQ(readTextFile(restoredMod / L"Base Source.bsa"), "base archive");
+        EXPECT_EQ(readTextFile(restoredMod / L"Patch Source.bsa"), "patch archive");
+
+        const std::vector<InstalledModArchiveSourceRecord> restoredSources =
+            InstanceMetadataStore::listInstalledModArchiveSources(restored.projectDirectory);
+        ASSERT_EQ(restoredSources.size(), 2U);
+        EXPECT_EQ(restoredSources[0].source.remoteModId, L"100");
+        EXPECT_EQ(restoredSources[0].linkMode, ArchiveModLinkMode::Replace);
+        EXPECT_EQ(restoredSources[1].source.remoteModId, L"200");
+        EXPECT_EQ(restoredSources[1].linkMode, ArchiveModLinkMode::Merge);
+
+        const FluxPackInstallPlan updatePlan = service.planInstall(
+            FluxPackInstallPlanRequest{output, restored.configPath});
+        ASSERT_EQ(updatePlan.sources.size(), 2U);
+        EXPECT_EQ(updatePlan.reusableSourceCount, 2U);
+        EXPECT_TRUE(std::all_of(
+            updatePlan.sources.begin(),
+            updatePlan.sources.end(),
+            [](const FluxPackSourceInstallPlan& source)
+            {
+                return source.acquisitionMode == L"installed";
+            }));
+
+        const FluxPackInstallResult updated = service.installFluxPack(FluxPackInstallRequest{
+            output,
+            temp.path() / L"Restored Builds",
+            {},
+            restored.configPath
+        });
+        EXPECT_TRUE(updated.updatedExistingProject);
+        EXPECT_EQ(updated.reusedSourceCount, 2U);
+        EXPECT_EQ(updated.installedSourceCount, 0U);
+        EXPECT_EQ(updated.failedSourceCount, 0U);
+        EXPECT_EQ(readTextFile(restoredMod / L"Base Source.bsa"), "base archive");
+        EXPECT_EQ(readTextFile(restoredMod / L"Patch Source.bsa"), "patch archive");
+
+        ASSERT_TRUE(std::filesystem::remove(baseArchive));
+        const FluxPackInstallResult incomplete = service.installFluxPack(FluxPackInstallRequest{
+            output,
+            temp.path() / L"Incomplete Builds"
+        });
+        EXPECT_EQ(incomplete.installedSourceCount, 0U);
+        EXPECT_EQ(incomplete.failedSourceCount, 2U);
+        EXPECT_TRUE(incomplete.hasWarnings);
+        EXPECT_FALSE(std::filesystem::exists(
+            incomplete.projectDirectory / L"mods" / L"Merged Target"));
+
+        service.shutdown();
+        downloadService.shutdown();
+        projects.shutdown();
+        templates.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
     TEST(FluxPackServiceTests, ExportProjectEmbedsLocalModsWithoutDirectLinksAndInstallRestoresThem)
     {
 #ifndef _WIN32

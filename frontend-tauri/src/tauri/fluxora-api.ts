@@ -115,6 +115,7 @@ import type {
   NativeBridgeThemeResult,
   NativeBridgeStatus,
   OperationRequest,
+  PluginListRequest,
   FluxoraSecurityState,
   FluxoraThemeMode,
   OpenExternalResult,
@@ -865,7 +866,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       projectDirectory: string,
       templateId: string,
       profileName?: string,
-      request?: OperationRequest
+      request?: PluginListRequest
     ) =>
       invokeTyped<FluxoraPluginOrderItem[]>(
         ipc,
@@ -3467,8 +3468,23 @@ const createTauriInvoker = (): IpcInvoker => ({
         return withOperationId(data, request, mutation[3] as string);
       }
 
-      case FluxoraIpcChannels.pluginsList:
-        return bridgeRequest('plugins.list', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]) }, requestWithOperationId(args[3], 'plugins_list'));
+      case FluxoraIpcChannels.pluginsList: {
+        const pluginRequest =
+          args[3] && typeof args[3] === 'object' ? (args[3] as PluginListRequest) : {};
+        const params: Record<string, unknown> = {
+          projectDirectory: args[0],
+          templateId: args[1],
+          profileName: optionalString(args[2])
+        };
+        if (pluginRequest.forceDiscoveryRefresh === true) {
+          params.forceDiscoveryRefresh = true;
+        }
+        return bridgeRequest(
+          'plugins.list',
+          params,
+          requestWithOperationId(pluginRequest, 'plugins_list')
+        );
+      }
       case FluxoraIpcChannels.pluginsListPersisted:
         return bridgeRequest('plugins.listPersisted', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]) }, requestWithOperationId(args[3], 'plugins_list_persisted'));
       case FluxoraIpcChannels.pluginsCreateSeparator:

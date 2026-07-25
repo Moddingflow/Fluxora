@@ -400,6 +400,114 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(InstanceMetadataStoreTests, ArchiveSourceCompositionPreservesMergeOrderAndReplaceResetsIt)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"Merged Mod";
+        writeTextFile(modPath / L"base.bsa", "base");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Merged Mod",
+            L"1.0",
+            {});
+
+        const ArchiveInstallSourceMetadata baseSource{
+            L"Base Mod.7z",
+            L"1.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"100",
+                L"1000",
+                L"nxm://skyrimspecialedition/mods/100/files/1000"}};
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"base-sha",
+            L"base-operation",
+            L"Merged Mod");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"base-sha",
+            installed.uuid,
+            L"base-operation",
+            ArchiveModLinkMode::Replace,
+            baseSource);
+
+        const ArchiveInstallSourceMetadata patchSource{
+            L"Patch.7z",
+            L"2.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"200",
+                L"2000",
+                L"nxm://skyrimspecialedition/mods/200/files/2000"}};
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"patch-sha",
+            L"patch-operation",
+            L"Merged Mod");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"patch-sha",
+            installed.uuid,
+            L"patch-operation",
+            ArchiveModLinkMode::Merge,
+            patchSource);
+
+        const std::vector<InstalledModArchiveSourceRecord> mergedSources =
+            InstanceMetadataStore::listInstalledModArchiveSources(project);
+        ASSERT_EQ(mergedSources.size(), 2U);
+        EXPECT_EQ(mergedSources[0].modUuid, installed.uuid);
+        EXPECT_EQ(mergedSources[0].archiveSha256, L"base-sha");
+        EXPECT_EQ(mergedSources[0].archiveFileName, L"Base Mod.7z");
+        EXPECT_EQ(mergedSources[0].version, L"1.0");
+        EXPECT_EQ(mergedSources[0].source.remoteModId, L"100");
+        EXPECT_EQ(mergedSources[0].linkMode, ArchiveModLinkMode::Replace);
+        EXPECT_EQ(mergedSources[1].archiveSha256, L"patch-sha");
+        EXPECT_EQ(mergedSources[1].archiveFileName, L"Patch.7z");
+        EXPECT_EQ(mergedSources[1].version, L"2.0");
+        EXPECT_EQ(mergedSources[1].source.remoteModId, L"200");
+        EXPECT_EQ(mergedSources[1].linkMode, ArchiveModLinkMode::Merge);
+
+        const ArchiveInstallSourceMetadata replacementSource{
+            L"Replacement.7z",
+            L"3.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"300",
+                L"3000",
+                L"nxm://skyrimspecialedition/mods/300/files/3000"}};
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"replacement-sha",
+            L"replacement-operation",
+            L"Merged Mod");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"replacement-sha",
+            installed.uuid,
+            L"replacement-operation",
+            ArchiveModLinkMode::Replace,
+            replacementSource);
+
+        const std::vector<InstalledModArchiveSourceRecord> replacedSources =
+            InstanceMetadataStore::listInstalledModArchiveSources(project);
+        ASSERT_EQ(replacedSources.size(), 1U);
+        EXPECT_EQ(replacedSources.front().archiveSha256, L"replacement-sha");
+        EXPECT_EQ(replacedSources.front().archiveFileName, L"Replacement.7z");
+        EXPECT_EQ(replacedSources.front().linkMode, ArchiveModLinkMode::Replace);
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, IdentityCandidateQueryUsesDatabaseIndexAndLimitsFuzzyResults)
     {
 #ifndef _WIN32
@@ -438,7 +546,7 @@ namespace fluxora::tests
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_aliases"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_exclusions"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_cache"));
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
 #endif
     }
 
@@ -806,7 +914,7 @@ namespace fluxora::tests
         {
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,
@@ -1696,7 +1804,7 @@ namespace fluxora::tests
         const std::filesystem::path project = temp.path() / L"project";
         const std::filesystem::path database = project / L"instance.db";
         std::filesystem::create_directories(project);
-        sqliteExec(database, "PRAGMA user_version = 13;");
+        sqliteExec(database, "PRAGMA user_version = 14;");
         ASSERT_FALSE(sqliteTableExists(database, "instance_metadata"));
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
         InstanceMetadataStore::resetSqlExecCountForTesting();
@@ -1706,7 +1814,7 @@ namespace fluxora::tests
             std::runtime_error);
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 14);
         EXPECT_FALSE(sqliteTableExists(database, "instance_metadata"));
 #endif
     }
@@ -1764,7 +1872,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
         EXPECT_TRUE(sqliteTableExists(database, "mod_file_cache_state"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_mod_links"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_install_attempts"));
@@ -1773,6 +1881,82 @@ namespace fluxora::tests
         EXPECT_TRUE(sqliteTableExists(database, "install_operations"));
         EXPECT_GT(InstanceMetadataStore::sqlPrepareCountForTesting(), 2U);
         EXPECT_GT(InstanceMetadataStore::sqlExecCountForTesting(), 3U);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, VersionTwelveMigrationAddsArchiveLinkMetadataColumns)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"Legacy Archive Mod";
+        const std::filesystem::path database = project / L"instance.db";
+        writeTextFile(modPath / L"Data" / L"legacy.bin", "legacy");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Legacy Archive Mod",
+            L"1.0",
+            {});
+        for (const char* column : {
+                 "archive_file_name",
+                 "archive_version",
+                 "source_provider",
+                 "source_game_domain",
+                 "source_remote_mod_id",
+                 "source_remote_file_id",
+                 "source_url",
+                 "source_latest_version"
+             })
+        {
+            const std::string dropColumn =
+                std::string("ALTER TABLE archive_mod_links DROP COLUMN ") + column + ";";
+            sqliteExec(database, dropColumn.c_str());
+        }
+        sqliteExec(database, "PRAGMA user_version = 12;");
+
+        const ArchiveInstallSourceMetadata source{
+            L"Legacy Archive Mod 2.0.7z",
+            L"2.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"100",
+                L"200",
+                L"nxm://skyrimspecialedition/mods/100/files/200"}};
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"legacy-upgrade-sha",
+            L"legacy-upgrade-operation",
+            L"Legacy Archive Mod");
+        EXPECT_NO_THROW(
+            InstanceMetadataStore::completeArchiveInstallAttempt(
+                project,
+                L"legacy-upgrade-sha",
+                installed.uuid,
+                L"legacy-upgrade-operation",
+                ArchiveModLinkMode::Replace,
+                source));
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM pragma_table_info('archive_mod_links') "
+                "WHERE name IN ("
+                "'archive_file_name', 'archive_version', 'source_provider', "
+                "'source_game_domain', 'source_remote_mod_id', 'source_remote_file_id', "
+                "'source_url', 'source_latest_version');"),
+            8);
+        const std::vector<InstalledModArchiveSourceRecord> sources =
+            InstanceMetadataStore::listInstalledModArchiveSources(project);
+        ASSERT_EQ(sources.size(), 1U);
+        EXPECT_EQ(sources.front().archiveSha256, L"legacy-upgrade-sha");
+        EXPECT_EQ(sources.front().archiveFileName, source.archiveFileName);
+        EXPECT_EQ(sources.front().version, source.version);
+        EXPECT_EQ(sources.front().source.remoteFileId, source.source.remoteFileId);
 #endif
     }
 
@@ -1876,7 +2060,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
         EXPECT_TRUE(sqliteTableExists(database, "mod_update_sweeps"));
         EXPECT_EQ(
             sqliteIntScalar(
@@ -1912,7 +2096,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,

@@ -31,6 +31,7 @@
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -83,11 +84,20 @@ namespace fluxora
             std::optional<FluxPackPayloadReference> payload;
         };
 
+        enum class FluxPackSourceInstallMode
+        {
+            Replace,
+            Merge
+        };
+
         struct PackModReference
         {
             InstalledModRecord mod;
             std::optional<DownloadSourceFile> sourceArchive;
             std::vector<FileManifestEntry> files;
+            std::wstring archiveSha256;
+            std::wstring archiveFileName;
+            FluxPackSourceInstallMode installMode{FluxPackSourceInstallMode::Replace};
         };
 
         struct FluxPackSourceReference
@@ -101,6 +111,7 @@ namespace fluxora
             bool enabled{true};
             bool requiresDownload{true};
             ModSourceRecord source;
+            FluxPackSourceInstallMode installMode{FluxPackSourceInstallMode::Replace};
         };
 
         struct FluxPackConfigReference
@@ -883,15 +894,11 @@ namespace fluxora
                     url.find(L"/files/") != std::wstring::npos;
             }
 
-            const bool hasProvider = provider == L"github" ||
-                provider == L"mega" ||
-                provider == L"moddingflow" ||
-                provider == L"modding-flow" ||
-                provider == L"modernflow" ||
-                provider == L"modern-flow";
+            const bool hasRemoteUrl =
+                url.rfind(L"https://", 0) == 0 ||
+                url.rfind(L"http://", 0) == 0;
 
-            return (hasProvider && !source.url.empty()) ||
-                (!source.url.empty() && !hasNxmUrl) ||
+            return hasRemoteUrl ||
                 (!source.remoteModId.empty() && !source.remoteFileId.empty());
         }
 
@@ -1004,6 +1011,92 @@ namespace fluxora
             }
 
             return *match;
+        }
+
+        std::optional<DownloadSourceFile> matchSourceArchiveBySha256(
+            std::wstring_view archiveSha256,
+            std::wstring_view archiveFileName,
+            std::vector<DownloadSourceFile>& downloads)
+        {
+            if (archiveSha256.empty())
+            {
+                return std::nullopt;
+            }
+
+            if (!archiveFileName.empty())
+            {
+                const auto named = std::find_if(
+                    downloads.begin(),
+                    downloads.end(),
+                    [archiveFileName](const DownloadSourceFile& file)
+                    {
+                        return equalsIgnoreCase(
+                            file.path.filename().wstring(),
+                            archiveFileName);
+                    });
+                if (named != downloads.end())
+                {
+                    if (named->sha256.empty())
+                    {
+                        named->sha256 = sha256File(named->path);
+                    }
+                    if (equalsIgnoreCase(named->sha256, archiveSha256))
+                    {
+                        return *named;
+                    }
+                }
+            }
+
+            for (DownloadSourceFile& file : downloads)
+            {
+                if (file.sha256.empty())
+                {
+                    file.sha256 = sha256File(file.path);
+                }
+                if (equalsIgnoreCase(file.sha256, archiveSha256))
+                {
+                    return file;
+                }
+            }
+            return std::nullopt;
+        }
+
+        ModSourceRecord sourceRecordFromDownload(
+            const DownloadMetadata& metadata,
+            const ModSourceRecord& fallback = {})
+        {
+            ModSourceRecord source = fallback;
+            if (!metadata.gameDomain.empty())
+            {
+                source.provider = L"nexus";
+                source.gameDomain = metadata.gameDomain;
+            }
+            if (!metadata.modId.empty())
+            {
+                source.remoteModId = metadata.modId;
+            }
+            if (!metadata.fileId.empty())
+            {
+                source.remoteFileId = metadata.fileId;
+            }
+            if (!metadata.source.empty())
+            {
+                source.url = metadata.source;
+            }
+            if (!metadata.latestVersion.empty())
+            {
+                source.latestVersion = metadata.latestVersion;
+            }
+            else if (!metadata.version.empty())
+            {
+                source.latestVersion = metadata.version;
+            }
+            return source;
+        }
+
+        std::wstring_view sourceInstallModeId(FluxPackSourceInstallMode mode) noexcept
+        {
+            return mode == FluxPackSourceInstallMode::Merge ? L"merge" : L"replace";
         }
 
         bool isGeneratedAssetMod(const InstalledModRecord& mod)
@@ -1292,6 +1385,10 @@ namespace fluxora
             writer.field(L"displayName", mod.displayName.empty() ? mod.folderName : mod.displayName);
             writer.field(L"version", mod.version);
             writer.field(L"enabled", !equalsIgnoreCase(mod.state, L"disabled"));
+            if (requiresDownload)
+            {
+                writer.field(L"installMode", sourceInstallModeId(reference.installMode));
+            }
             writer.field(L"contentFingerprint", mod.contentFingerprint);
             writer.field(L"installedAt", mod.installedAt);
             writer.field(L"updatedAt", mod.updatedAt);
@@ -1301,6 +1398,10 @@ namespace fluxora
             if (reference.sourceArchive.has_value())
             {
                 writeHash(writer, reference.sourceArchive->sha256, L"matched-local-download");
+            }
+            else if (!reference.archiveSha256.empty())
+            {
+                writeHash(writer, reference.archiveSha256, L"known-install-source");
             }
             else
             {
@@ -1313,7 +1414,7 @@ namespace fluxora
             }
             else
             {
-                writer.field(L"archiveFileName", L"");
+                writer.field(L"archiveFileName", reference.archiveFileName);
                 writer.field(L"archiveSize", static_cast<std::uintmax_t>(0));
             }
             writer.field(L"requiresDownload", requiresDownload);
@@ -1720,6 +1821,13 @@ namespace fluxora
             return L"Мод";
         }
 
+        std::wstring sourceInstallTargetName(const FluxPackSourceReference& reference)
+        {
+            return reference.folderName.empty()
+                ? sourceInstallName(reference)
+                : reference.folderName;
+        }
+
         std::wstring sourceInstallId(
             const FluxPackSourceReference& reference,
             std::size_t index)
@@ -1808,6 +1916,91 @@ namespace fluxora
             return match == installedMods.end() ? nullptr : &*match;
         }
 
+        std::vector<bool> reusableInstalledSourceFlags(
+            const std::vector<InstalledModRecord>& installedMods,
+            const std::vector<InstalledModArchiveSourceRecord>& installedArchiveSources,
+            const std::vector<FluxPackSourceReference>& requestedSources)
+        {
+            std::vector<bool> reusable(requestedSources.size(), false);
+            std::unordered_map<std::wstring, std::vector<std::size_t>> requestedByTarget;
+            for (std::size_t index = 0; index < requestedSources.size(); ++index)
+            {
+                requestedByTarget[toLower(sourceInstallTargetName(requestedSources[index]))]
+                    .push_back(index);
+            }
+
+            std::unordered_map<std::wstring, std::vector<std::wstring>> hashesByModUuid;
+            for (const InstalledModArchiveSourceRecord& source : installedArchiveSources)
+            {
+                hashesByModUuid[source.modUuid].push_back(source.archiveSha256);
+            }
+
+            for (const auto& [targetKey, sourceIndices] : requestedByTarget)
+            {
+                const bool isComposition =
+                    sourceIndices.size() > 1 ||
+                    std::any_of(
+                        sourceIndices.begin(),
+                        sourceIndices.end(),
+                        [&requestedSources](std::size_t index)
+                        {
+                            return requestedSources[index].installMode ==
+                                FluxPackSourceInstallMode::Merge;
+                        });
+                if (!isComposition)
+                {
+                    const std::size_t index = sourceIndices.front();
+                    reusable[index] =
+                        findReusableInstalledSource(
+                            installedMods,
+                            requestedSources[index]) != nullptr;
+                    continue;
+                }
+
+                const auto installed = std::find_if(
+                    installedMods.begin(),
+                    installedMods.end(),
+                    [&targetKey](const InstalledModRecord& mod)
+                    {
+                        return toLower(mod.folderName) == targetKey;
+                    });
+                if (installed == installedMods.end())
+                {
+                    continue;
+                }
+
+                const auto installedHashes = hashesByModUuid.find(installed->uuid);
+                if (installedHashes == hashesByModUuid.end())
+                {
+                    continue;
+                }
+                const bool compositionMatches = std::all_of(
+                    sourceIndices.begin(),
+                    sourceIndices.end(),
+                    [&](std::size_t index)
+                    {
+                        const std::wstring& requestedHash =
+                            requestedSources[index].archiveSha256;
+                        return !requestedHash.empty() &&
+                            std::any_of(
+                                installedHashes->second.begin(),
+                                installedHashes->second.end(),
+                                [&requestedHash](const std::wstring& installedHash)
+                                {
+                                    return equalsIgnoreCase(installedHash, requestedHash);
+                                });
+                    });
+                if (compositionMatches)
+                {
+                    for (const std::size_t index : sourceIndices)
+                    {
+                        reusable[index] = true;
+                    }
+                }
+            }
+            return reusable;
+        }
+
         std::wstring nxmLinkForSource(const FluxPackSourceReference& reference)
         {
             if (startsWithIgnoreCase(reference.source.url, L"nxm://"))
@@ -1825,6 +2018,20 @@ namespace fluxora
             }
 
             return {};
+        }
+
+        FluxPackSourceInstallMode readSourceInstallMode(const JsonValue& item)
+        {
+            const std::wstring mode = toLower(readStringOrDefault(item, L"installMode", L"replace"));
+            if (mode == L"replace")
+            {
+                return FluxPackSourceInstallMode::Replace;
+            }
+            if (mode == L"merge")
+            {
+                return FluxPackSourceInstallMode::Merge;
+            }
+            throw std::invalid_argument("FluxPack source install mode must be replace or merge.");
         }
 
         std::vector<FluxPackSourceReference> readSourceReferences(const JsonValue& root)
@@ -1852,6 +2059,7 @@ namespace fluxora
                 reference.archiveSize = readUnsignedOrDefault(item, L"archiveSize");
                 reference.enabled = readBoolOrDefault(item, L"enabled", true);
                 reference.requiresDownload = readBoolOrDefault(item, L"requiresDownload", true);
+                reference.installMode = readSourceInstallMode(item);
                 if (const JsonValue* source = item.find(L"source"); source != nullptr)
                 {
                     reference.source = readModSourceRecord(*source);
@@ -3150,6 +3358,17 @@ namespace fluxora
             project.project.projectDirectory,
             paths.modsDirectory,
             logger_);
+        std::unordered_map<std::wstring, std::vector<InstalledModArchiveSourceRecord>>
+            archiveSourcesByMod;
+        if (!fullPackage)
+        {
+            for (InstalledModArchiveSourceRecord& source :
+                 InstanceMetadataStore::listInstalledModArchiveSources(
+                     project.project.projectDirectory))
+            {
+                archiveSourcesByMod[source.modUuid].push_back(std::move(source));
+            }
+        }
 
         for (std::size_t index = 0; index < installedMods.size(); ++index)
         {
@@ -3162,6 +3381,96 @@ namespace fluxora
                 progressPercent(5, 14, index, installedMods.size()),
                 index,
                 installedMods.size());
+
+            const auto composedSources = archiveSourcesByMod.find(mod.uuid);
+            if (!fullPackage &&
+                composedSources != archiveSourcesByMod.end() &&
+                composedSources->second.size() > 1)
+            {
+                std::vector<PackModReference> mergedReferences;
+                mergedReferences.reserve(composedSources->second.size());
+                bool canReplayComposition = true;
+                for (const InstalledModArchiveSourceRecord& archived :
+                     composedSources->second)
+                {
+                    std::optional<DownloadSourceFile> sourceArchive =
+                        matchSourceArchiveBySha256(
+                            archived.archiveSha256,
+                            archived.archiveFileName,
+                            downloads);
+                    ModSourceRecord source = archived.source;
+                    if (sourceArchive.has_value())
+                    {
+                        source = sourceRecordFromDownload(
+                            sourceArchive->metadata,
+                            source);
+                    }
+                    if (!sourceHasRemoteIdentity(source))
+                    {
+                        canReplayComposition = false;
+                        break;
+                    }
+
+                    InstalledModRecord sourceMod = mod;
+                    sourceMod.source = std::move(source);
+                    if (!archived.version.empty())
+                    {
+                        sourceMod.version = archived.version;
+                    }
+                    else if (sourceArchive.has_value() &&
+                             !sourceArchive->metadata.version.empty())
+                    {
+                        sourceMod.version = sourceArchive->metadata.version;
+                    }
+                    if (sourceArchive.has_value() &&
+                        !sourceArchive->metadata.nexusModName.empty())
+                    {
+                        sourceMod.displayName = sourceArchive->metadata.nexusModName;
+                    }
+
+                    PackModReference sourceReference{
+                        std::move(sourceMod),
+                        std::move(sourceArchive)
+                    };
+                    sourceReference.archiveSha256 = archived.archiveSha256;
+                    sourceReference.archiveFileName = archived.archiveFileName;
+                    sourceReference.installMode =
+                        archived.linkMode == ArchiveModLinkMode::Merge
+                        ? FluxPackSourceInstallMode::Merge
+                        : FluxPackSourceInstallMode::Replace;
+                    mergedReferences.push_back(std::move(sourceReference));
+                }
+
+                if (canReplayComposition)
+                {
+                    for (PackModReference& mergedReference : mergedReferences)
+                    {
+                        sourceArchives.push_back(std::move(mergedReference));
+                    }
+                    continue;
+                }
+
+                logger_.writeOperation(
+                    LogLevel::Warning,
+                    "FluxPack",
+                    "FluxPack could not replay every merged archive source; embedding the final merged mod instead. mod=\"" +
+                        toUtf8(mod.displayName.empty() ? mod.folderName : mod.displayName) + "\"");
+                PackModReference embeddedReference{mod, std::nullopt};
+                const std::optional<std::filesystem::path> logicalFolder =
+                    safeArchiveFileName(mod.folderName);
+                if (!logicalFolder.has_value())
+                {
+                    throw std::invalid_argument("FluxPack mod folder name is unsafe.");
+                }
+                embeddedReference.files = scanPayloadFiles(
+                    mod.path,
+                    project.project.projectDirectory / L"mods" / logicalFolder.value(),
+                    project.project.projectDirectory,
+                    false);
+                customPatches.push_back(std::move(embeddedReference));
+                continue;
+            }
+
             PackModReference reference{
                 mod,
                 sourceHasRemoteIdentity(mod.source)
@@ -3747,6 +4056,7 @@ namespace fluxora
 
         std::optional<BuildPathSettings> existingPaths;
         std::vector<InstalledModRecord> installedMods;
+        std::vector<InstalledModArchiveSourceRecord> installedArchiveSources;
         if (plan.updatesExistingProject)
         {
             const ProjectOpenResult existing = projects_.openProjectConfig(
@@ -3761,8 +4071,16 @@ namespace fluxora
                 existing.project.projectDirectory,
                 existingPaths->modsDirectory,
                 logger_);
+            installedArchiveSources =
+                InstanceMetadataStore::listInstalledModArchiveSources(
+                    existing.project.projectDirectory);
         }
 
+        const std::vector<bool> reusableInstalledSources =
+            reusableInstalledSourceFlags(
+                installedMods,
+                installedArchiveSources,
+                manifest.sourceArchives);
         plan.sources.reserve(manifest.sourceArchives.size());
         for (std::size_t index = 0; index < manifest.sourceArchives.size(); ++index)
         {
@@ -3776,7 +4094,7 @@ namespace fluxora
             sourcePlan.archiveFileName = source.archiveFileName;
             sourcePlan.manualDownloadUrl = manualDownloadUrlForSource(source);
 
-            if (findReusableInstalledSource(installedMods, source) != nullptr)
+            if (reusableInstalledSources[index])
             {
                 sourcePlan.acquisitionMode = L"installed";
                 ++plan.reusableSourceCount;
@@ -4071,6 +4389,16 @@ namespace fluxora
                   savedInstallPaths.modsDirectory,
                   logger_)
             : std::vector<InstalledModRecord>{};
+        const std::vector<InstalledModArchiveSourceRecord> installedArchiveSources =
+            updateExistingProject
+            ? InstanceMetadataStore::listInstalledModArchiveSources(
+                  project.projectDirectory)
+            : std::vector<InstalledModArchiveSourceRecord>{};
+        const std::vector<bool> reusableInstalledSources =
+            reusableInstalledSourceFlags(
+                installedMods,
+                installedArchiveSources,
+                manifest.sourceArchives);
 
         publishInstallProgress(
             request.progress,
@@ -4081,14 +4409,39 @@ namespace fluxora
             L"Подключаем источники из FluxPack",
             manifest.sourceArchives.empty() ? 68 : 24);
 
+        std::unordered_set<std::wstring> failedSourceTargets;
         for (std::size_t sourceIndex = 0; sourceIndex < manifest.sourceArchives.size(); ++sourceIndex)
         {
             const FluxPackSourceReference& source = manifest.sourceArchives[sourceIndex];
             ProviderInstallState& provider = providerStateFor(providers, providerIdForSource(source));
-            const std::wstring installName = sourceInstallName(source);
+            const std::wstring installName = sourceInstallTargetName(source);
+            const std::wstring sourceDisplayName = sourceInstallName(source);
             const std::wstring sourceId = sourceInstallId(source, sourceIndex);
-            provider.currentItem = installName;
+            const std::wstring targetKey = toLower(installName);
+            provider.currentItem = sourceDisplayName;
             provider.statusText = updateExistingProject ? L"Проверяем Delta" : L"Скачиваем";
+            if (source.installMode == FluxPackSourceInstallMode::Merge &&
+                failedSourceTargets.contains(targetKey))
+            {
+                ++provider.failed;
+                ++result.failedSourceCount;
+                provider.statusText = L"Основной источник не установлен";
+                logger_.writeOperation(
+                    LogLevel::Warning,
+                    "FluxPack",
+                    "FluxPack skipped a merged source because an earlier source for the same target failed. mod=\"" +
+                        toUtf8(installName) + "\", source=\"" +
+                        toUtf8(sourceDisplayName) + "\"");
+                publishInstallProgress(
+                    request.progress,
+                    providers,
+                    L"sources",
+                    L"Источник пропущен",
+                    sourceDisplayName,
+                    provider.statusText,
+                    sourceInstallOverallPercent(providers));
+                continue;
+            }
             publishInstallProgress(
                 request.progress,
                 providers,
@@ -4098,16 +4451,33 @@ namespace fluxora
                 L"Источник: " + provider.displayName,
                 sourceInstallOverallPercent(providers));
 
-            if (const InstalledModRecord* reusable =
-                    findReusableInstalledSource(installedMods, source);
-                reusable != nullptr)
+            if (reusableInstalledSources[sourceIndex])
             {
-                const bool currentlyEnabled = !equalsIgnoreCase(reusable->state, L"disabled");
+                const auto reusable = std::find_if(
+                    installedMods.begin(),
+                    installedMods.end(),
+                    [&source](const InstalledModRecord& mod)
+                    {
+                        return equalsIgnoreCase(
+                            mod.folderName,
+                            sourceInstallTargetName(source));
+                    });
+                const InstalledModRecord* reusableRecord =
+                    reusable == installedMods.end()
+                    ? findReusableInstalledSource(installedMods, source)
+                    : &*reusable;
+                if (reusableRecord == nullptr)
+                {
+                    throw std::runtime_error(
+                        "FluxPack reusable source target disappeared during install.");
+                }
+                const bool currentlyEnabled =
+                    !equalsIgnoreCase(reusableRecord->state, L"disabled");
                 if (currentlyEnabled != source.enabled)
                 {
                     InstanceMetadataStore::setInstalledModEnabled(
                         project.projectDirectory,
-                        reusable->path,
+                        reusableRecord->path,
                         source.enabled);
                 }
 
@@ -4120,7 +4490,7 @@ namespace fluxora
                     "FluxPack delta reused installed source mod. provider=\"" +
                         toUtf8(provider.id) +
                         "\", mod=\"" + toUtf8(installName) +
-                        "\", folder=\"" + toUtf8(reusable->folderName) + "\"");
+                        "\", folder=\"" + toUtf8(reusableRecord->folderName) + "\"");
                 publishInstallProgress(
                     request.progress,
                     providers,
@@ -4264,6 +4634,7 @@ namespace fluxora
                     {
                         ++provider.failed;
                         ++result.failedSourceCount;
+                        failedSourceTargets.insert(targetKey);
                         provider.statusText = L"Скачайте вручную и выберите архив";
                         logger_.writeOperation(
                             LogLevel::Info,
@@ -4284,6 +4655,7 @@ namespace fluxora
                     {
                         ++provider.failed;
                         ++result.failedSourceCount;
+                        failedSourceTargets.insert(targetKey);
                         provider.statusText = L"Автозагрузка недоступна";
                         logger_.writeOperation(
                             LogLevel::Warning,
@@ -4312,9 +4684,12 @@ namespace fluxora
                     sourceInstallOverallPercent(providers));
 
                 InstalledMod installed;
-                const ExistingModInstallMode existingModMode = updateExistingProject
-                    ? ExistingModInstallMode::Replace
-                    : ExistingModInstallMode::FailIfExists;
+                const ExistingModInstallMode existingModMode =
+                    source.installMode == FluxPackSourceInstallMode::Merge
+                    ? ExistingModInstallMode::Merge
+                    : (updateExistingProject
+                        ? ExistingModInstallMode::Replace
+                        : ExistingModInstallMode::FailIfExists);
                 const FomodInstallerDescriptor fomod = downloads_.analyzeFomodDownload(
                     project.projectDirectory,
                     entry.localPath);
@@ -4361,6 +4736,7 @@ namespace fluxora
             {
                 ++provider.failed;
                 ++result.failedSourceCount;
+                failedSourceTargets.insert(targetKey);
                 provider.statusText = L"Ошибка";
                 logger_.writeOperation(
                     LogLevel::Error,

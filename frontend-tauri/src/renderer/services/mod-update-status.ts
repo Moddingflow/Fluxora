@@ -50,26 +50,16 @@ const reasonText = (reason: FluxoraModUpdateCheckReason): string => {
   }
 };
 
-const partialReasonSuffix = (result?: FluxoraModUpdateCheckResult): string =>
-  result?.state === 'partial' ? ` Последний partial-результат: ${reasonText(result.reason)}.` : '';
-
 export const modUpdateFreshnessView = (
   item: FluxoraModOrderItem,
-  lastResult?: FluxoraModUpdateCheckResult
+  _lastResult?: FluxoraModUpdateCheckResult
 ): ModUpdateFreshnessView => {
   const state = (item.updateCheckState ?? '').trim().toLocaleLowerCase('en-US');
-  if (state === 'baseline_pending') {
+  if (state === 'baseline_pending' || state === 'recheck_required') {
     return {
-      label: 'Не проверено',
-      title: `Показана импортированная версия; Nexus ещё не подтвердил её.${partialReasonSuffix(lastResult)}`,
-      tone: 'warning'
-    };
-  }
-  if (state === 'recheck_required') {
-    return {
-      label: 'Требуется проверка',
-      title: `Сохранено последнее известное значение, но его нужно проверить повторно.${partialReasonSuffix(lastResult)}`,
-      tone: 'warning'
+      label: null,
+      title: 'Показана последняя известная версия.',
+      tone: 'confirmed'
     };
   }
   return {

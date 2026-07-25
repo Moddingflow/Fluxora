@@ -464,11 +464,7 @@ export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
     return item.latestVersion;
   }
 
-  if (item.hasUpdate) {
-    return 'available';
-  }
-
-  return item.canCheckUpdates ? 'not checked' : 'local';
+  return item.canCheckUpdates ? item.version.trim() || '—' : 'local';
 };
 
 export const modLatestVersionDiffers = (item: FluxoraModOrderItem): boolean => {

@@ -226,6 +226,10 @@ export interface OperationRequest {
   operationId?: string;
 }
 
+export interface PluginListRequest extends OperationRequest {
+  forceDiscoveryRefresh?: boolean;
+}
+
 export interface NativeBridgeError {
   code: string;
   message: string;
@@ -2080,6 +2084,8 @@ export interface FluxoraModOrganizerImportProgress {
 
 export interface FluxoraOperationProgress extends FluxoraModOrganizerImportProgress {
   statusMessage?: string;
+  completed?: number;
+  total?: number;
   totalSourceCount?: number;
   installedSourceCount?: number;
   pendingSourceCount?: number;
@@ -2580,7 +2586,7 @@ export interface FluxoraApi {
       projectDirectory: string,
       templateId: string,
       profileName?: string,
-      request?: OperationRequest
+      request?: PluginListRequest
     ) => Promise<FluxoraPluginOrderItem[]>;
     listPersisted: (
       projectDirectory: string,

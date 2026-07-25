@@ -2301,6 +2301,17 @@ namespace
         const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
         const std::wstring templateId = requiredStringField(params, L"templateId");
         const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const bool forceDiscoveryRefresh =
+            optionalBoolField(params, L"forceDiscoveryRefresh", false);
+        if (forceDiscoveryRefresh)
+        {
+            (void)payloadFromCoreJson(
+                L"core.pluginDiscoveryInvalidationFailed",
+                [](wchar_t* buffer, int length)
+                {
+                    return fluxora_invalidate_plugin_discovery_caches(buffer, length);
+                });
+        }
         return payloadFromCoreJson(
             L"core.pluginsListFailed",
             [&projectDirectory, &templateId, &profileName](wchar_t* buffer, int length)

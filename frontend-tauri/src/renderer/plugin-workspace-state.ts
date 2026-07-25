@@ -355,6 +355,75 @@ export const isPluginNestedUnderSeparator = (
   orderId: string
 ): boolean => orderItemNestedUnderSeparator(items, orderId);
 
+export interface PluginOrderDependencyViolation {
+  dependentName: string;
+  dependentOrderId: string;
+  masterName: string;
+  masterOrderId: string;
+}
+
+export interface PluginOrderReorderAssessment {
+  items: FluxoraPluginOrderItem[] | null;
+  blockedReason: string | null;
+}
+
+export const pluginOrderDependencyViolation = (
+  items: readonly FluxoraPluginOrderItem[],
+  affectedOrderIds?: ReadonlySet<string>
+): PluginOrderDependencyViolation | null => {
+  const pluginByName = new Map<
+    string,
+    { item: FluxoraPluginOrderItem; index: number }
+  >();
+  items.forEach((item, index) => {
+    if (item.isPlugin) {
+      const key = pluginNameKey(item.name);
+      if (key && !pluginByName.has(key)) {
+        pluginByName.set(key, { item, index });
+      }
+    }
+  });
+
+  for (let dependentIndex = 0; dependentIndex < items.length; dependentIndex += 1) {
+    const dependent = items[dependentIndex];
+    if (!dependent?.isPlugin) {
+      continue;
+    }
+
+    for (const masterName of dependent.masterFiles ?? []) {
+      const master = pluginByName.get(pluginNameKey(masterName));
+      if (
+        !master ||
+        master.index < dependentIndex ||
+        master.item.orderId === dependent.orderId
+      ) {
+        continue;
+      }
+      if (
+        affectedOrderIds &&
+        !affectedOrderIds.has(dependent.orderId) &&
+        !affectedOrderIds.has(master.item.orderId)
+      ) {
+        continue;
+      }
+
+      return {
+        dependentName: dependent.name,
+        dependentOrderId: dependent.orderId,
+        masterName: master.item.name,
+        masterOrderId: master.item.orderId
+      };
+    }
+  }
+
+  return null;
+};
+
+export const pluginOrderDependencyBlockedReason = (
+  violation: PluginOrderDependencyViolation
+): string =>
+  `${violation.dependentName} должен загружаться после ${violation.masterName}.`;
+
 export const targetIndexForPluginMove = (
   items: FluxoraPluginOrderItem[],
   orderId: string,
@@ -379,7 +448,17 @@ export const targetIndexForPluginMove = (
   }
 
   const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
-  return targetIndex >= minTargetIndex ? targetIndex : null;
+  if (targetIndex < minTargetIndex) {
+    return null;
+  }
+
+  const candidate = reorderOrderItems(items, orderId, targetIndex, {
+    separatorMoveMode: 'single'
+  });
+  return candidate &&
+    !pluginOrderDependencyViolation(candidate, new Set([orderId]))
+    ? targetIndex
+    : null;
 };
 
 export const canDragPluginOrderItem = (
@@ -431,7 +510,17 @@ export const targetIndexForPluginDrop = (
 
   const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
 
-  return requestedTargetIndex >= minTargetIndex ? requestedTargetIndex : null;
+  if (requestedTargetIndex < minTargetIndex) {
+    return null;
+  }
+
+  const candidate = reorderOrderItems(items, sourceOrderId, requestedTargetIndex, {
+    separatorMoveMode: 'single'
+  });
+  return candidate &&
+    !pluginOrderDependencyViolation(candidate, new Set([sourceOrderId]))
+    ? requestedTargetIndex
+    : null;
 };
 
 export const reorderPluginOrderItems = (
@@ -450,17 +539,23 @@ export const reorderPluginOrderItems = (
     return null;
   }
 
-  return reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
+  const reordered = reorderOrderItems(items, orderId, targetIndex, {
+    separatorMoveMode: 'single'
+  });
+  return reordered &&
+    !pluginOrderDependencyViolation(reordered, new Set([orderId]))
+    ? reordered
+    : null;
 };
 
-export const reorderPluginOrderItemSelection = (
+export const assessPluginOrderItemSelectionReorder = (
   items: FluxoraPluginOrderItem[],
   sourceOrderId: string,
   selectedOrderIds: ReadonlySet<string>,
   targetOrderId: string,
   placement: OrderDropPlacement = 'after',
   collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
-): FluxoraPluginOrderItem[] | null => {
+): PluginOrderReorderAssessment => {
   const source = items.find((item) => item.orderId === sourceOrderId);
   const movingItems = selectedOrderIds.has(sourceOrderId)
     ? items.filter((item) => selectedOrderIds.has(item.orderId))
@@ -468,13 +563,14 @@ export const reorderPluginOrderItemSelection = (
       ? [source]
       : [];
   if (movingItems.length === 0 || movingItems.some((item) => !canDragPluginOrderItem(items, item.orderId))) {
-    return null;
+    return { items: null, blockedReason: null };
   }
+  const movingOrderIds = new Set(movingItems.map((item) => item.orderId));
 
   const reordered = reorderOrderItemSelection(
     items,
     sourceOrderId,
-    new Set(movingItems.map((item) => item.orderId)),
+    movingOrderIds,
     targetOrderId,
     placement,
     {
@@ -485,7 +581,15 @@ export const reorderPluginOrderItemSelection = (
     }
   );
   if (!reordered) {
-    return null;
+    return { items: null, blockedReason: null };
+  }
+
+  const violation = pluginOrderDependencyViolation(reordered, movingOrderIds);
+  if (violation) {
+    return {
+      items: null,
+      blockedReason: pluginOrderDependencyBlockedReason(violation)
+    };
   }
 
   const firstUnlockedTargetIndex = pluginOrderFirstUnlockedTargetIndex(items);
@@ -494,8 +598,29 @@ export const reorderPluginOrderItemSelection = (
       item.isPlugin &&
       reordered.findIndex((candidate) => candidate.orderId === item.orderId) < firstUnlockedTargetIndex
   );
-  return movesPluginAboveLockedRows ? null : reordered;
+  if (movesPluginAboveLockedRows) {
+    return { items: null, blockedReason: null };
+  }
+
+  return { items: reordered, blockedReason: null };
 };
+
+export const reorderPluginOrderItemSelection = (
+  items: FluxoraPluginOrderItem[],
+  sourceOrderId: string,
+  selectedOrderIds: ReadonlySet<string>,
+  targetOrderId: string,
+  placement: OrderDropPlacement = 'after',
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): FluxoraPluginOrderItem[] | null =>
+  assessPluginOrderItemSelectionReorder(
+    items,
+    sourceOrderId,
+    selectedOrderIds,
+    targetOrderId,
+    placement,
+    collapsedSeparatorOrderIds
+  ).items;
 
 export const pluginOrderItemMovePlan = (
   items: FluxoraPluginOrderItem[],
