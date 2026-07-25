@@ -217,7 +217,7 @@ test.beforeEach(async ({ page }) => {
         modUuid: 'mod_ussep',
         separatorTitle: '',
         name: 'Unofficial Patch',
-        version: '4.3.8',
+        version: '4.3.8.0',
         latestVersion: '4.3.8',
         lastCheckedAt: '',
         updateStatus: '',
@@ -6706,9 +6706,11 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   const outdatedLatest = page.getByRole('row', { name: /SkyUI mod/ }).locator('.mod-list-row__latest');
   await expect(outdatedLatest).toHaveAttribute('data-version-mismatch', 'true');
   await expect(outdatedLatest).toHaveCSS('color', 'rgb(248, 113, 113)');
-  await expect(
-    page.getByRole('row', { name: /Unofficial Patch mod/ }).locator('.mod-list-row__latest')
-  ).toHaveAttribute('data-version-mismatch', 'false');
+  const currentVersionRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await expect(currentVersionRow.locator('.mod-list-row__version')).toHaveText('4.3.8');
+  await expect(currentVersionRow.locator('.mod-list-row__latest-value')).toHaveText('4.3.8');
+  await expect(currentVersionRow.locator('.mod-list-row__latest'))
+    .toHaveAttribute('data-version-mismatch', 'false');
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
   await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();

@@ -447,12 +447,48 @@ export const modConflictMarkerStatesForHighlight = (
   return [];
 };
 
+const comparableModVersion = (value: string): string | null => {
+  const match = /^v?(\d+(?:\.\d+)*)([-+][0-9A-Za-z][0-9A-Za-z._-]*)?$/i.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  const segments = match[1]
+    .split('.')
+    .map((segment) => segment.replace(/^0+(?=\d)/, ''));
+  while (segments.length > 1 && segments.at(-1) === '0') {
+    segments.pop();
+  }
+
+  return `${segments.join('.')}${match[2] ?? ''}`;
+};
+
+const equivalentModVersionText = (left: string, right: string): string | null => {
+  const trimmedLeft = left.trim();
+  const trimmedRight = right.trim();
+  if (!trimmedLeft || !trimmedRight) {
+    return null;
+  }
+  if (trimmedLeft === trimmedRight) {
+    return trimmedLeft;
+  }
+
+  const comparableLeft = comparableModVersion(trimmedLeft);
+  const comparableRight = comparableModVersion(trimmedRight);
+  if (comparableLeft === null || comparableRight === null || comparableLeft !== comparableRight) {
+    return null;
+  }
+
+  return trimmedLeft.length < trimmedRight.length ? trimmedLeft : trimmedRight;
+};
+
 export const modVersionText = (item: FluxoraModOrderItem): string => {
   if (!item.isMod) {
     return '';
   }
 
-  return item.version.trim() || 'local';
+  const installedVersion = item.version.trim();
+  return (equivalentModVersionText(installedVersion, item.latestVersion) ?? installedVersion) || 'local';
 };
 
 export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
@@ -460,8 +496,9 @@ export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
     return '';
   }
 
-  if (item.latestVersion.trim()) {
-    return item.latestVersion;
+  const latestVersion = item.latestVersion.trim();
+  if (latestVersion) {
+    return equivalentModVersionText(item.version, latestVersion) ?? latestVersion;
   }
 
   return item.canCheckUpdates ? item.version.trim() || '—' : 'local';
@@ -472,7 +509,7 @@ export const modLatestVersionDiffers = (item: FluxoraModOrderItem): boolean => {
   const latestVersion = item.latestVersion.trim();
 
   return item.isMod && installedVersion.length > 0 && latestVersion.length > 0 &&
-    installedVersion !== latestVersion;
+    equivalentModVersionText(installedVersion, latestVersion) === null;
 };
 
 export type ModTableStatusTone = 'disabled' | 'update' | 'conflict' | 'local' | 'ready';

@@ -1110,8 +1110,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/mod-workspace-state.ts": {
-    "mtime": 1784993542.317921,
-    "ast_hash": "f4cb2a6179a47e1ecbd7b5d992f2da47",
+    "mtime": 1785010955.4664235,
+    "ast_hash": "f5a0d2cd72a395fc7c176926fca3a1ed",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/plugin-workspace-state.ts": {
@@ -1175,7 +1175,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1784994727.896626,
+    "mtime": 1785011122.248382,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1200,8 +1200,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mod-workspace-state.test.ts": {
-    "mtime": 1784993534.6144502,
-    "ast_hash": "5d51c709ea43c4abd67af060e29f17a6",
+    "mtime": 1785011032.415188,
+    "ast_hash": "bb185894b95d901df7100a0b9cd3d130",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/parity-gate.test.ts": {
@@ -1625,8 +1625,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1784993915.6216521,
-    "ast_hash": "83a9fd9a0726e955ab0a4ea4beea05d9",
+    "mtime": 1785011045.7032454,
+    "ast_hash": "80369ab5297f621e42a51e4d2bf95f08",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {

@@ -886,11 +886,36 @@ describe('mod workspace state', () => {
     });
   });
 
-  it('marks Latest as different only when both displayed versions are present and unequal', () => {
+  it.each([
+    ['11.0.0.0', '11', '11'],
+    ['1.0.0.0', '1.0.0', '1.0.0'],
+    ['v02.03.0.0', '2.3', '2.3'],
+    ['1.2.0-beta', '1.2-beta', '1.2-beta'],
+    ['0.0.0.0', '0', '0']
+  ])('normalizes equivalent numeric versions %s and %s to %s', (version, latestVersion, expected) => {
+    const item = modItem('mod_equivalent_numeric', 'Equivalent Numeric', 8, {
+      version,
+      latestVersion
+    });
+
+    expect(modVersionText(item)).toBe(expected);
+    expect(modLatestVersionText(item)).toBe(expected);
+    expect(modLatestVersionDiffers(item)).toBe(false);
+  });
+
+  it('marks Latest as different only when both displayed versions are present and meaningfully unequal', () => {
     expect(modLatestVersionDiffers(modItem('mod_outdated', 'Outdated', 8, {
       version: '1.1.2.0',
       latestVersion: '1.2',
       hasUpdate: false
+    }))).toBe(true);
+    expect(modLatestVersionDiffers(modItem('mod_prerelease', 'Prerelease', 9, {
+      version: '1.2.0-beta',
+      latestVersion: '1.2.0'
+    }))).toBe(true);
+    expect(modLatestVersionDiffers(modItem('mod_opaque', 'Opaque', 10, {
+      version: 'release-candidate',
+      latestVersion: 'release'
     }))).toBe(true);
     expect(modLatestVersionDiffers(modItem('mod_current', 'Current', 9, {
       version: '1.2',
