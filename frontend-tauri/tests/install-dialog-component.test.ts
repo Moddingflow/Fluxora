@@ -59,6 +59,8 @@ describe('InstallDialog', () => {
     );
 
     expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain('aria-label="Установка мода"');
+    expect(markup).not.toContain('Install Pending');
     expect(markup).toContain('<strong>Установка мода</strong>');
     expect(markup).toContain('install-simple install-detecting-skeleton');
     expect(markup).toContain('install-detecting-skeleton__label');

@@ -165,6 +165,7 @@ export const hasActiveDownload = (items: FluxoraDownloadEntry[]): boolean =>
   items.some(
     (entry) =>
       !entry.hasResolvedFileName ||
+      entry.transferState === 'queued' ||
       entry.transferState === 'downloading' ||
       entry.transferState === 'indexing'
   );

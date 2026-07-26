@@ -278,6 +278,14 @@ describe('download workspace state', () => {
         })
       ])
     ).toBe(true);
+    expect(
+      hasActiveDownload([
+        downloadEntry('queued', 'Queued Archive.7z', {
+          hasResolvedFileName: true,
+          transferState: 'queued'
+        })
+      ])
+    ).toBe(true);
   });
 
   it('keeps rows visible during silent refreshes', () => {

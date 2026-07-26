@@ -2998,7 +2998,7 @@ namespace fluxora::tests
         ASSERT_NE(findInstalledMod(records, L"Second Mod"), nullptr);
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModWaitsForInstallProjectCommitGate)
+    TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModRejectsBusyInstallProjectCommitGate)
     {
         std::string installError;
         const std::optional<InstalledMod> installed = tryInstallArchive(
@@ -3012,24 +3012,58 @@ namespace fluxora::tests
         }
         ASSERT_TRUE(installed.has_value()) << installError;
 
-        std::future<void> deletion;
+        std::mutex gateMutex;
+        std::condition_variable gateChanged;
+        bool gateEntered = false;
+        bool releaseGate = false;
+        std::future<void> gateHolder = std::async(std::launch::async, [&]()
         {
             InstallProjectGate commitGate(project_);
-            deletion = std::async(std::launch::async, [&]()
             {
-                mods_.deleteInstalledMod(project_, installed->id);
-            });
-
-            EXPECT_EQ(
-                deletion.wait_for(std::chrono::milliseconds(100)),
-                std::future_status::timeout);
-            EXPECT_TRUE(std::filesystem::exists(installed->id));
+                std::lock_guard lock(gateMutex);
+                gateEntered = true;
+            }
+            gateChanged.notify_all();
+            std::unique_lock lock(gateMutex);
+            gateChanged.wait(lock, [&] { return releaseGate; });
+        });
+        {
+            std::unique_lock lock(gateMutex);
+            ASSERT_TRUE(gateChanged.wait_for(
+                lock,
+                std::chrono::seconds(1),
+                [&] { return gateEntered; }));
         }
 
-        ASSERT_EQ(
-            deletion.wait_for(std::chrono::seconds(5)),
-            std::future_status::ready);
-        EXPECT_NO_THROW(deletion.get());
+        std::future<std::string> deletion = std::async(std::launch::async, [&]()
+        {
+            try
+            {
+                mods_.deleteInstalledMod(project_, installed->id);
+                return std::string{};
+            }
+            catch (const std::exception& exception)
+            {
+                return std::string(exception.what());
+            }
+        });
+        const bool rejectedWhileBusy =
+            deletion.wait_for(std::chrono::milliseconds(250)) == std::future_status::ready;
+        {
+            std::lock_guard lock(gateMutex);
+            releaseGate = true;
+        }
+        gateChanged.notify_all();
+        gateHolder.get();
+        const std::string deletionError = deletion.get();
+
+        EXPECT_TRUE(rejectedWhileBusy);
+        EXPECT_FALSE(deletionError.empty());
+        EXPECT_TRUE(std::filesystem::exists(installed->id));
+        if (std::filesystem::exists(installed->id))
+        {
+            EXPECT_NO_THROW(mods_.deleteInstalledMod(project_, installed->id));
+        }
         EXPECT_FALSE(std::filesystem::exists(installed->id));
     }
 

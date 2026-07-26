@@ -447,6 +447,14 @@ namespace fluxora
             return false;
         }
 
+        [[nodiscard]] bool isRecognizedModPayload(ContentLayoutClassification classification)
+        {
+            return classification == ContentLayoutClassification::GameData ||
+                classification == ContentLayoutClassification::Plugin ||
+                classification == ContentLayoutClassification::Archive ||
+                classification == ContentLayoutClassification::ScriptExtender;
+        }
+
         [[nodiscard]] bool isWarningClassification(ContentLayoutClassification classification)
         {
             return classification == ContentLayoutClassification::Unknown ||
@@ -1235,6 +1243,20 @@ namespace fluxora
                 return hasLeadingSegment(entry.analysisPath, rules.dataFolder) &&
                     segmentCount(entry.analysisPath) > 1;
             });
+        const bool hasRecognizedModPayload = std::any_of(
+            files.begin(),
+            files.end(),
+            [&rules, hasDataWrapper](const SafeEntry& entry)
+            {
+                std::filesystem::path path = entry.analysisPath;
+                if (hasDataWrapper &&
+                    hasLeadingSegment(path, rules.dataFolder) &&
+                    segmentCount(path) > 1)
+                {
+                    path = stripFirstSegment(path);
+                }
+                return isRecognizedModPayload(classifyDataRelativePath(path, rules));
+            });
 
         std::size_t recognizedContent = 0;
         for (const SafeEntry& file : files)
@@ -1344,18 +1366,41 @@ namespace fluxora
                 classification = ContentLayoutClassification::ToolExecutable;
             }
 
-            if (target == PlacementTarget::Data &&
+            const bool isIsolatedModToolExecutable =
+                target == PlacementTarget::Data &&
                 classification == ContentLayoutClassification::ToolExecutable &&
-                !isScriptExtenderDataPath(sourceForClassification, rules))
+                hasExtension(sourceForClassification, L".exe") &&
+                hasRecognizedModPayload;
+            const bool blocksToolExecutable =
+                classification == ContentLayoutClassification::ToolExecutable &&
+                (target == PlacementTarget::GameRoot ||
+                 (target == PlacementTarget::Data &&
+                  !isScriptExtenderDataPath(sourceForClassification, rules) &&
+                  !isIsolatedModToolExecutable));
+            if (blocksToolExecutable)
             {
+                const bool targetsGameRoot = target == PlacementTarget::GameRoot;
                 target = PlacementTarget::Blocked;
                 addFinding(
                     plan,
                     HealthSeverity::Blocker,
                     std::optional<GameRelativePath>{file.sourcePath},
                     classification,
-                    L"Archive contains an unexpected executable or DLL outside a known script-extender data folder.",
+                    targetsGameRoot
+                        ? L"Archive contains an unexpected executable, DLL, or script targeting the game root."
+                        : L"Archive contains an unexpected executable or DLL outside a known script-extender data folder.",
                     true);
+            }
+            else if (isIsolatedModToolExecutable)
+            {
+                reason = L"Fluxora kept this tool executable inside the installed mod directory.";
+                addFinding(
+                    plan,
+                    HealthSeverity::Warning,
+                    std::optional<GameRelativePath>{file.sourcePath},
+                    classification,
+                    L"Archive contains a mod tool executable; it remains isolated from game-root placement.",
+                    false);
             }
             else if (isWarningClassification(classification))
             {

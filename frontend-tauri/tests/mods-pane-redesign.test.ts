@@ -26,7 +26,7 @@ describe('mods pane redesign', () => {
     expect(app).toContain('isCollapsed ? conflictMarkerStates : []');
     expect(app).toContain('const visibleConflictMarkerStates = conflictSnapshotReady');
     expect(app).toContain('data-conflict-status={visibleConflictMarkerStates.join');
-    expect(app).toContain('modConflictScrollbarMarkers.map');
+    expect(app).toContain('markers={modConflictScrollbarMarkers}');
     expect(app).toContain('modConflictMarkerStatesForHighlight(highlight)');
     expect(app).toContain('modConflictMarkerStatesForHighlight(conflictHighlight)');
     expect(app).toContain('className="mod-list-row__status mod-separator-status"');

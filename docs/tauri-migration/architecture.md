@@ -482,6 +482,7 @@ Tauri renderer owns:
 - UI routes, visual components, table/tree/dialog state and selections.
 - Form state and display validation.
 - Search text, expanded/collapsed rows, local sorting/filtering where it does not mutate domain truth.
+- Aggregation of core-provided download states into the primary window's taskbar progress view.
 - Install/FOMOD/archive wizard screen flow, using evaluated DTOs from the bridge.
 
 Tauri facade owns:
@@ -495,6 +496,7 @@ Tauri Rust shell owns:
 - Tauri webview window lifecycle, app startup/shutdown and single-instance behavior.
 - Secure command allowlist.
 - Native dialogs, external link handling, shell-open/show-in-folder behavior.
+- Native taskbar/dock progress application through the Tauri window API.
 - NXM/deep-link app activation capture and forwarding into bridge calls.
 - Bridge host lifecycle: spawn, handshake, restart, crash reporting and shutdown.
 
@@ -976,6 +978,17 @@ metadata before the text plugin state is refreshed.
 - `downloads.installFomod`
 - `archives.installFomod`
 
+The primary renderer window derives one taskbar progress state from the
+authoritative `downloads.list` rows and sends it through the typed
+`window.fluxora.windowControls.setTaskbarProgress` facade. Concurrent known
+transfers use one aggregate percentage; any pending transfer with unknown
+progress uses the native indeterminate state. Paused/decision and retryable
+failure rows map to the native paused/error states, and terminal or empty
+queues clear the indicator. Active downloads continue their bounded background
+refresh when the Downloads surface is hidden or the main window is minimized.
+The Rust shell validates the DTO and applies it with Tauri's native window API;
+it does not duplicate download-domain state or transfer rules.
+
 All four install request DTOs carry `profileName` and optional
 `modOrderTargetIndex`. Successful `downloads.install*` and `archives.install*`
 responses include stable `modUuid` / `orderId`, exact file/conflict counts and
@@ -1065,6 +1078,7 @@ The host may wrap several low-level C ABI functions into one bridge method when 
 | NXM protocol registration | Current implementation available on Windows | Needs xdg/open desktop adapter | Needs URL scheme/signing adapter | Main + C++ core/platform adapter |
 | Shell open/show item | `shell.openPath` / show in folder | `shell.openPath` / xdg behavior | `shell.openPath` / Finder behavior | Tauri main |
 | Native file/folder dialogs | Available | Available | Available | Tauri main |
+| Taskbar/dock download progress | Native Windows taskbar state | Desktop-environment support through Tauri/libunity | Native dock progress | Renderer aggregation + Tauri main |
 | Nexus OAuth browser/callback | Available target | Available target after callback binding review | Available target after callback/signing review | C++ core/platform adapter |
 
 Renderer displays this matrix as capability state. It must not hardcode "Windows only" assumptions except as display of a bridge-provided capability.

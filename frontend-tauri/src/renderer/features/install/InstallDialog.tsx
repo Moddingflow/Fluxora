@@ -933,7 +933,10 @@ export function InstallDialog({
     installDialog.source.displayName ||
     installDialog.source.fileName ||
     'Install mod';
-  const dialogAriaLabel = `Install ${dialogTitle}`;
+  const dialogAriaLabel =
+    installDialog.phase === 'detecting'
+      ? 'Установка мода'
+      : `Install ${dialogTitle}`;
 
   return (
     <div className="install-modal-backdrop" role="presentation">

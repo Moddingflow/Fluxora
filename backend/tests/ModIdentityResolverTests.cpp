@@ -236,6 +236,209 @@ namespace fluxora
         EXPECT_EQ(resolution.score, 90);
     }
 
+    TEST(ModIdentityResolverTests, ParenthesizedVersionChangesKeepTheSameSafeIdentity)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Audio Overhaul for Skyrim (4.1.3)";
+        incoming.folderName = incoming.displayName;
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"audio-overhaul",
+            L"Audio Overhaul for Skyrim (4.1.2)",
+            L"Audio Overhaul for Skyrim (4.1.2)"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"audio-overhaul");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"name.safe-normalized"),
+            resolution.evidenceCodes.end());
+    }
+
+    TEST(ModIdentityResolverTests, DottedAndPlainAcronymsShareOneNormalizedIdentity)
+    {
+        EXPECT_EQ(
+            ModIdentityResolver::normalizedName(L"B.O.O.B.I.E.S (2.1.3)"),
+            ModIdentityResolver::normalizedName(L"BOOBIES 2.1.4"));
+        EXPECT_NE(
+            ModIdentityResolver::normalizedName(L"BOOBIES (2)"),
+            ModIdentityResolver::normalizedName(L"BOOBIES"));
+    }
+
+    TEST(ModIdentityResolverTests, DottedAcronymArchiveMatchesLegacySameSourceModWithOneNameTypo)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"B.O.O.B.I.E.S (Immsersive Icons) 2.1.3";
+        incoming.folderName = incoming.displayName;
+        incoming.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"89241",
+            L"557732"
+        };
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"legacy-boobies",
+            L"B.O.O.B.I.E.S (aka Immersive Icons)",
+            L"B.O.O.B.I.E.S (aka Immersive Icons)"
+        };
+        installed.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"89241",
+            L""
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"legacy-boobies");
+        EXPECT_EQ(
+            resolution.suggestedModName,
+            L"B.O.O.B.I.E.S (aka Immersive Icons)");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"name.meaningful-tokens-typo"),
+            resolution.evidenceCodes.end());
+    }
+
+    TEST(ModIdentityResolverTests, OneTransposedCharacterStillMatchesTheUniqueExistingMod)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Pandora Behaviour Engine v4.3.1-beta";
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"pandora-engine",
+            L"Pandora Behaivour Engine Plus",
+            L"Pandora Behaivour Engine Plus"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"pandora-engine");
+        EXPECT_EQ(resolution.suggestedModName, L"Pandora Behaivour Engine Plus");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"name.meaningful-tokens-typo"),
+            resolution.evidenceCodes.end());
+    }
+
+    TEST(ModIdentityResolverTests, ThreeTokenIncomingNameMatchesOneQualifiedExistingVariant)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Pandora Behaviour Engine v4.3.1-beta";
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"pandora-engine",
+            L"Pandora Behaviour Engine Plus",
+            L"Pandora Behaviour Engine Plus"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"pandora-engine");
+        EXPECT_EQ(resolution.suggestedModName, L"Pandora Behaviour Engine Plus");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"name.meaningful-tokens-qualified"),
+            resolution.evidenceCodes.end());
+    }
+
+    TEST(ModIdentityResolverTests, QualifiedNameMatchStaysUnresolvedWhenVariantsAreAmbiguous)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Aurora Behaviour Engine v4.3.1-beta";
+
+        ModIdentityCandidate plusVariant;
+        plusVariant.target = {
+            L"aurora-engine-plus",
+            L"Aurora Behaviour Engine Plus",
+            L"Aurora Behaviour Engine Plus"
+        };
+        ModIdentityCandidate nextGenerationVariant;
+        nextGenerationVariant.target = {
+            L"aurora-engine-ng",
+            L"Aurora Behaviour Engine NG",
+            L"Aurora Behaviour Engine NG"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {plusVariant, nextGenerationVariant});
+
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
+    }
+
+    TEST(ModIdentityResolverTests, TypoToleranceRequiresTwoExactIdentityTokens)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Dragon Behaviour";
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"dragon-patch",
+            L"Dragon Behaivour Patch",
+            L"Dragon Behaivour Patch"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
+    }
+
+    TEST(ModIdentityResolverTests, TwoTokenNameDoesNotCollapseIntoAQualifiedVariant)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Amazing Weather v2.0";
+
+        ModIdentityCandidate installed;
+        installed.target = {
+            L"amazing-weather-patch",
+            L"Amazing Weather Patch",
+            L"Amazing Weather Patch"
+        };
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
+    }
+
     TEST(ModIdentityResolverTests, SignificantParentheticalTextRemainsPartOfIdentity)
     {
         ModIdentityInput incoming;
@@ -279,7 +482,7 @@ namespace fluxora
         EXPECT_GE(resolution.score, 86);
     }
 
-    TEST(ModIdentityResolverTests, DifferentNexusPagesDoNotMatchByNameAlone)
+    TEST(ModIdentityResolverTests, ExactNameAcrossNexusPagesRequiresUserConfirmation)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Unofficial Skyrim Modders Patch";
@@ -298,14 +501,21 @@ namespace fluxora
             incoming,
             {installed});
 
-        EXPECT_FALSE(resolution.matchedTarget.has_value());
-        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"installed-usmp");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"source.stable-mod-id-conflict"),
+            resolution.evidenceCodes.end());
     }
 
     TEST(ModIdentityResolverTests, DifferentNexusPagesDoNotMatchByContentAnchors)
     {
         ModIdentityInput incoming;
-        incoming.displayName = L"Unofficial Skyrim Modder'S Patch   USMP SE";
+        incoming.displayName = L"USMP Compatibility Resources";
         incoming.source = {L"nexus", L"skyrimspecialedition", L"49616", L"773384"};
         incoming.content.pluginFiles = {L"Unofficial Skyrim Modders Patch.esp"};
         incoming.content.archiveFiles = {
@@ -363,7 +573,7 @@ namespace fluxora
         EXPECT_FALSE(excluded.matchedTarget.has_value());
     }
 
-    TEST(ModIdentityResolverTests, DuplicateNexusSourceRejectsNamesWithoutLineageEvidence)
+    TEST(ModIdentityResolverTests, SamePageFileNeedsLineageUnlessItsExactNameCollides)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Downloaded Archive";
@@ -380,10 +590,12 @@ namespace fluxora
 
         incoming.displayName = L"Spell Perks Item Distributor";
         const ModIdentityResolution named = ModIdentityResolver::resolve(incoming, {first, second});
-        EXPECT_FALSE(named.matchedTarget.has_value());
+        ASSERT_TRUE(named.matchedTarget.has_value());
+        EXPECT_EQ(named.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(named.matchedTarget->modUuid, L"first");
     }
 
-    TEST(ModIdentityResolverTests, ExclusionDoesNotMakeDuplicateStableSourceUniqueAgain)
+    TEST(ModIdentityResolverTests, ExclusionStillAllowsAnExactCollisionWithAnotherCandidate)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Downloaded Archive";
@@ -411,7 +623,252 @@ namespace fluxora
         const ModIdentityResolution named = ModIdentityResolver::resolve(
             incoming,
             {rejected, separateCopy});
-        EXPECT_FALSE(named.matchedTarget.has_value());
+        ASSERT_TRUE(named.matchedTarget.has_value());
+        EXPECT_EQ(named.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(named.matchedTarget->modUuid, L"separate");
+    }
+
+    TEST(ModIdentityResolverTests, ExplicitRequestedNameSelectsTheExactInstalledTarget)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        const std::filesystem::path archiveIdentityPath = mods / L"Archive Identity";
+        tests::writeTextFile(archiveIdentityPath / L"ArchiveIdentity.esp", "plugin");
+        (void)InstanceMetadataStore::registerInstalledMod(
+            project,
+            archiveIdentityPath,
+            L"Archive Identity",
+            L"1.0",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"100", L"200"});
+
+        const std::filesystem::path requestedTargetPath =
+            mods / L"Pandora Behaviour Engine Plus";
+        tests::writeTextFile(
+            requestedTargetPath / L"Pandora Behaviour Engine+.exe",
+            "tool");
+        const InstalledModRecord requestedTarget =
+            InstanceMetadataStore::registerInstalledMod(
+                project,
+                requestedTargetPath,
+                L"Pandora Behaviour Engine Plus",
+                L"4.2",
+                ModSourceRecord{L"manual"});
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"explicit-requested-name";
+        request.requestedInstallName = L"  pandora behaviour engine plus  ";
+        request.input.displayName = L"Archive Identity v2.0";
+        request.input.folderName = request.input.displayName;
+        request.input.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"100",
+            L"200"
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
+            std::move(request));
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Exact);
+        EXPECT_EQ(plan.matchedTarget->modUuid, requestedTarget.uuid);
+        EXPECT_EQ(plan.suggestedModName, L"Pandora Behaviour Engine Plus");
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, ExactInstallNameIsNotStarvedBySameSourceCandidates)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        const std::wstring installedName = L"Audio Overhaul for Skyrim (4.1.2)";
+        const std::wstring incomingName = L"Audio Overhaul for Skyrim (4.1.3)";
+        const std::filesystem::path installedPath = mods / installedName;
+        tests::writeTextFile(installedPath / L"Audio Overhaul Skyrim.esp", "plugin");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            installedPath,
+            installedName,
+            L"4.1.2",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"126580",
+                L""
+            });
+
+        for (int index = 1; index <= 5; ++index)
+        {
+            const std::wstring name = L"Unrelated Audio File " + std::to_wstring(index);
+            const std::filesystem::path path = mods / name;
+            tests::writeTextFile(path / (L"Unrelated" + std::to_wstring(index) + L".esp"), "plugin");
+            (void)InstanceMetadataStore::registerInstalledMod(
+                project,
+                path,
+                name,
+                L"1.0",
+                ModSourceRecord{
+                    L"nexus",
+                    L"skyrimspecialedition",
+                    L"12466",
+                    std::to_wstring(380000 + index)
+                });
+        }
+
+        ModIdentityCatalogQuery catalogQuery;
+        catalogQuery.provider = L"nexus";
+        catalogQuery.gameDomain = L"skyrimspecialedition";
+        catalogQuery.remoteModId = L"12466";
+        catalogQuery.normalizedName = ModIdentityResolver::normalizedName(incomingName);
+        catalogQuery.tokens = ModIdentityResolver::meaningfulTokens(incomingName);
+        const ModIdentityCatalogSnapshot catalog =
+            InstanceMetadataStore::queryModIdentityCandidates(project, catalogQuery);
+        ASSERT_NE(
+            std::find_if(
+                catalog.candidates.begin(),
+                catalog.candidates.end(),
+                [&](const ModIdentityCatalogCandidate& candidate)
+                {
+                    return candidate.mod.uuid == installed.uuid;
+                }),
+            catalog.candidates.end());
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"audio-overhaul-4.1.3";
+        request.input.displayName = incomingName;
+        request.input.folderName = incomingName;
+        request.input.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"12466",
+            L"387525"
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
+            std::move(request));
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_EQ(plan.suggestedModName, installedName);
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanAutofillsAUniqueQualifiedExistingName)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path installedPath =
+            project / L"mods" / L"Pandora Behaviour Engine Plus";
+        tests::writeTextFile(
+            installedPath / L"Pandora Behaviour Engine+.exe",
+            "tool");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            installedPath,
+            L"Pandora Behaviour Engine Plus",
+            L"4.2",
+            ModSourceRecord{L"manual"});
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"qualified-name-update";
+        request.input.displayName = L"Pandora Behaviour Engine v4.3.1-beta";
+        request.input.folderName = request.input.displayName;
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
+            std::move(request));
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_EQ(plan.suggestedModName, L"Pandora Behaviour Engine Plus");
+        EXPECT_NE(
+            std::find(
+                plan.evidenceCodes.begin(),
+                plan.evidenceCodes.end(),
+                L"name.meaningful-tokens-qualified"),
+            plan.evidenceCodes.end());
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanOffersExistingModActionsForLegacyDottedAcronymUpdate)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path installedPath =
+            project / L"mods" / L"B.O.O.B.I.E.S (aka Immersive Icons)";
+        tests::writeTextFile(installedPath / L"Data" / L"ImmersiveIcons.esp", "plugin");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            installedPath,
+            L"B.O.O.B.I.E.S (aka Immersive Icons)",
+            L"2.1.3.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"89241",
+                L""
+            });
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archivePath =
+            temp.path() / L"B.O.O.B.I.E.S (Immsersive Icons) 2.1.3.zip";
+        request.archiveFingerprint = L"boobies-2.1.3";
+        request.input.displayName = L"B.O.O.B.I.E.S (Immsersive Icons) 2.1.3";
+        request.input.folderName = request.input.displayName;
+        request.input.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"89241",
+            L"557732"
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
+            std::move(request));
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_EQ(
+            plan.suggestedModName,
+            L"B.O.O.B.I.E.S (aka Immersive Icons)");
+
+        const ValidatedModIdentityInstall validated =
+            ModIdentityResolver::validateInstallPlan(
+                project,
+                L"boobies-2.1.3",
+                ModIdentityInstallSelection{
+                    plan.resolutionId,
+                    InstallIdentityDecision::UseMatch,
+                    installed.uuid,
+                    NewNamePolicy::FirstFreeCopySuffix
+                });
+        ASSERT_TRUE(validated.matchedTarget.has_value());
+        EXPECT_EQ(validated.matchedTarget->modUuid, installed.uuid);
+#endif
     }
 
     TEST(ModIdentityResolverTests, InstallPlanResolvesAndValidatesStableSourceMatch)
@@ -572,7 +1029,7 @@ namespace fluxora
 #endif
     }
 
-    TEST(ModIdentityResolverTests, InstallPlanKeepsBranchesSeparateWhenMetadataLookupIsUnavailable)
+    TEST(ModIdentityResolverTests, InstallPlanPromptsOnExactNameWithoutLineageLookup)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -615,13 +1072,14 @@ namespace fluxora
 
         const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
 
-        EXPECT_EQ(networkRequests, 1);
-        EXPECT_FALSE(plan.matchedTarget.has_value());
+        EXPECT_EQ(networkRequests, 0);
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
         EXPECT_NE(
             std::find(
                 plan.evidenceCodes.begin(),
                 plan.evidenceCodes.end(),
-                L"nexus.metadata.unavailable"),
+                L"name.normalized-exact"),
             plan.evidenceCodes.end());
         EXPECT_NE(
             std::find(
@@ -632,7 +1090,7 @@ namespace fluxora
 #endif
     }
 
-    TEST(ModIdentityResolverTests, InstallPlanUsesExactArchiveStemAsSafeSamePageFallback)
+    TEST(ModIdentityResolverTests, InstallPlanUsesExactNameBeforeArchiveFallback)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -681,12 +1139,12 @@ namespace fluxora
             std::find(
                 plan.evidenceCodes.begin(),
                 plan.evidenceCodes.end(),
-                L"archive.exact-name"),
+                L"name.normalized-exact"),
             plan.evidenceCodes.end());
 #endif
     }
 
-    TEST(ModIdentityResolverTests, InstallPlanRejectsCrossPageNexusContentMatch)
+    TEST(ModIdentityResolverTests, InstallPlanPromptsForEquivalentCrossPageName)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -736,11 +1194,12 @@ namespace fluxora
         const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
             std::move(request));
 
-        EXPECT_FALSE(plan.matchedTarget.has_value());
-        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::None);
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
         EXPECT_EQ(
             plan.suggestedModName,
-            L"Unofficial Skyrim Modder'S Patch   USMP SE");
+            L"Unofficial Skyrim Modder's Patch - USMP SE");
 #endif
     }
 

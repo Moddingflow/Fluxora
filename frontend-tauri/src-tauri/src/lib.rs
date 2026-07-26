@@ -19,6 +19,7 @@ use std::sync::{
     Arc, OnceLock,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tauri::window::{ProgressBarState, ProgressBarStatus};
 use tauri::{
     ipc::Response, AppHandle, Emitter, Manager, UserAttentionType, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
@@ -8650,6 +8651,62 @@ async fn fluxora_transfer_start_mo2_in_main(app: AppHandle, handoff: Value) -> R
         .map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskbarProgressStateDto {
+    status: TaskbarProgressStatusDto,
+    progress: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TaskbarProgressStatusDto {
+    None,
+    Normal,
+    Indeterminate,
+    Paused,
+    Error,
+}
+
+fn to_tauri_taskbar_progress(state: TaskbarProgressStateDto) -> Result<ProgressBarState, String> {
+    if state.progress.is_some_and(|progress| progress > 100) {
+        return Err("taskbar progress must be within 0..=100".to_string());
+    }
+    if matches!(state.status, TaskbarProgressStatusDto::Normal) && state.progress.is_none() {
+        return Err("normal taskbar progress requires a percentage".to_string());
+    }
+    if matches!(
+        state.status,
+        TaskbarProgressStatusDto::None | TaskbarProgressStatusDto::Indeterminate
+    ) && state.progress.is_some()
+    {
+        return Err("non-determinate taskbar progress must not include a percentage".to_string());
+    }
+
+    let status = match state.status {
+        TaskbarProgressStatusDto::None => ProgressBarStatus::None,
+        TaskbarProgressStatusDto::Normal => ProgressBarStatus::Normal,
+        TaskbarProgressStatusDto::Indeterminate => ProgressBarStatus::Indeterminate,
+        TaskbarProgressStatusDto::Paused => ProgressBarStatus::Paused,
+        TaskbarProgressStatusDto::Error => ProgressBarStatus::Error,
+    };
+    Ok(ProgressBarState {
+        status: Some(status),
+        progress: state.progress,
+    })
+}
+
+#[tauri::command]
+async fn fluxora_window_set_taskbar_progress(
+    window: tauri::WebviewWindow,
+    state: TaskbarProgressStateDto,
+) -> Result<(), String> {
+    let progress = to_tauri_taskbar_progress(state)?;
+    window
+        .set_progress_bar(progress)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn fluxora_window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
     window.minimize().map_err(|error| error.to_string())
@@ -10775,6 +10832,7 @@ pub fn run() {
             fluxora_show_main_window,
             fluxora_transfer_open_mo2_in_main,
             fluxora_transfer_start_mo2_in_main,
+            fluxora_window_set_taskbar_progress,
             fluxora_window_minimize,
             fluxora_window_toggle_maximize,
             fluxora_window_close,
@@ -10804,6 +10862,91 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn taskbar_progress_maps_normal_percentage() {
+        let state = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Normal,
+            progress: Some(42),
+        })
+        .expect("normal taskbar progress should be valid");
+
+        assert!(matches!(state.status, Some(ProgressBarStatus::Normal)));
+        assert_eq!(state.progress, Some(42));
+    }
+
+    #[test]
+    fn taskbar_progress_maps_clear_indeterminate_paused_and_error_states() {
+        let cleared = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::None,
+            progress: None,
+        })
+        .expect("cleared taskbar progress should be valid");
+        let indeterminate = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Indeterminate,
+            progress: None,
+        })
+        .expect("indeterminate taskbar progress should be valid");
+        let paused = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Paused,
+            progress: Some(55),
+        })
+        .expect("paused taskbar progress should be valid");
+        let error = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Error,
+            progress: Some(55),
+        })
+        .expect("error taskbar progress should be valid");
+
+        assert!(matches!(cleared.status, Some(ProgressBarStatus::None)));
+        assert!(matches!(
+            indeterminate.status,
+            Some(ProgressBarStatus::Indeterminate)
+        ));
+        assert!(matches!(paused.status, Some(ProgressBarStatus::Paused)));
+        assert!(matches!(error.status, Some(ProgressBarStatus::Error)));
+    }
+
+    #[test]
+    fn taskbar_progress_rejects_percentage_above_one_hundred() {
+        let error = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Normal,
+            progress: Some(101),
+        })
+        .err()
+        .expect("out-of-range taskbar progress should fail");
+
+        assert!(error.contains("0..=100"));
+    }
+
+    #[test]
+    fn taskbar_progress_requires_percentage_for_normal_state() {
+        let error = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+            status: TaskbarProgressStatusDto::Normal,
+            progress: None,
+        })
+        .err()
+        .expect("normal taskbar progress without a percentage should fail");
+
+        assert!(error.contains("requires a percentage"));
+    }
+
+    #[test]
+    fn taskbar_progress_rejects_percentage_for_non_determinate_states() {
+        for status in [
+            TaskbarProgressStatusDto::None,
+            TaskbarProgressStatusDto::Indeterminate,
+        ] {
+            let error = to_tauri_taskbar_progress(TaskbarProgressStateDto {
+                status,
+                progress: Some(10),
+            })
+            .err()
+            .expect("non-determinate taskbar progress should reject a percentage");
+
+            assert!(error.contains("must not include a percentage"));
+        }
+    }
 
     struct EnvVarGuard {
         key: &'static str,

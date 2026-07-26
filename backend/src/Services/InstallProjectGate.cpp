@@ -94,6 +94,40 @@ namespace fluxora
 #endif
         }
 
+        bool tryAcquireNativeMutex(
+            std::wstring_view prefix,
+            std::wstring_view key,
+            void*& handle)
+        {
+#ifdef _WIN32
+            const std::wstring name = L"Local\\Fluxora." + std::wstring(prefix) +
+                L"." + stableHash(key);
+            HANDLE nativeHandle = CreateMutexW(nullptr, FALSE, name.c_str());
+            if (nativeHandle == nullptr)
+            {
+                throw std::runtime_error("Failed to create a cross-process install lock.");
+            }
+            const DWORD waitResult = WaitForSingleObject(nativeHandle, 0);
+            if (waitResult == WAIT_OBJECT_0 || waitResult == WAIT_ABANDONED)
+            {
+                handle = nativeHandle;
+                return true;
+            }
+            CloseHandle(nativeHandle);
+            if (waitResult == WAIT_TIMEOUT)
+            {
+                handle = nullptr;
+                return false;
+            }
+            throw std::runtime_error("Failed to acquire a cross-process install lock.");
+#else
+            static_cast<void>(prefix);
+            static_cast<void>(key);
+            handle = nullptr;
+            return true;
+#endif
+        }
+
         void releaseNativeMutex(void* handle) noexcept
         {
 #ifdef _WIN32
@@ -120,6 +154,34 @@ namespace fluxora
         localMutex_ = localMutexFor(key);
         localLock_ = std::unique_lock<std::mutex>(*localMutex_);
         nativeHandle_ = acquireNativeMutex(L"ProjectCommit", key);
+        nativeLockAcquired_ = true;
+        waitDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startedAt);
+    }
+
+    InstallProjectGate::InstallProjectGate(
+        const std::filesystem::path& projectDirectory,
+        std::try_to_lock_t)
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required for the install commit gate.");
+        }
+        const std::wstring key = normalizedKey(projectDirectory, L"project");
+        const auto startedAt = std::chrono::steady_clock::now();
+        localMutex_ = localMutexFor(key);
+        localLock_ = std::unique_lock<std::mutex>(*localMutex_, std::try_to_lock);
+        if (localLock_.owns_lock())
+        {
+            nativeLockAcquired_ = tryAcquireNativeMutex(
+                L"ProjectCommit",
+                key,
+                nativeHandle_);
+            if (!nativeLockAcquired_)
+            {
+                localLock_.unlock();
+            }
+        }
         waitDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - startedAt);
     }
@@ -132,6 +194,11 @@ namespace fluxora
     std::chrono::milliseconds InstallProjectGate::waitDuration() const noexcept
     {
         return waitDuration_;
+    }
+
+    bool InstallProjectGate::ownsLock() const noexcept
+    {
+        return localLock_.owns_lock() && nativeLockAcquired_;
     }
 
     InstallTargetLock::InstallTargetLock(

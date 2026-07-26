@@ -9,10 +9,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1119,6 +1121,137 @@ namespace fluxora::tests
             FluxoraCoreResultOk);
         EXPECT_EQ(readTextFile(profilePlugins).find("SkyUI_SE.esp"), std::string::npos);
         EXPECT_NE(readTextFile(profilePlugins).find("*Skyrim.esm\n"), std::string::npos);
+
+        fluxora_core_shutdown();
+#endif
+    }
+
+    TEST(FluxoraCoreApiTests, DeleteInstalledModRejectsAnActiveInstallTarget)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API install target guard uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"AppRoot";
+        ScopedEnvironmentVariable fluxoraAppRoot(L"FLUXORA_APP_ROOT", appRoot.wstring());
+        std::filesystem::create_directories(appRoot);
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Active Install Build";
+        const std::filesystem::path modPath =
+            project / L"mods" / L"Pandora Behaivour Engine Plus";
+        const std::filesystem::path baselineArchive =
+            temp.path() / L"Pandora Behaviour Engine 4.2.zip";
+        const std::filesystem::path updateArchive =
+            temp.path() / L"Pandora Behaviour Engine v4.3.1-beta.zip";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeZipArchive(baselineArchive, {{L"Nemesis.esp", "baseline plugin"}});
+        writeZipArchive(updateArchive, {{L"Nemesis.esp", "updated plugin"}});
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Active Install Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const int baselineResult = fluxora_install_archive_with_layout(
+            project.c_str(),
+            baselineArchive.c_str(),
+            L"Pandora Behaivour Engine Plus",
+            0,
+            nullptr,
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (baselineResult == FluxoraCoreResultCoreError &&
+            isMissingExtractorError(lastCoreError()))
+        {
+            fluxora_core_shutdown();
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(baselineResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+
+        struct BlockingProgress
+        {
+            std::mutex mutex;
+            std::condition_variable changed;
+            bool finalizingEntered{false};
+            bool releaseFinalizing{false};
+        } progress;
+        const auto blockAtFinalizing = +[](const wchar_t* operationJson, void* userData)
+        {
+            if (operationJson == nullptr ||
+                std::wstring_view(operationJson).find(L"finalizing") == std::wstring_view::npos)
+            {
+                return;
+            }
+            auto& state = *static_cast<BlockingProgress*>(userData);
+            std::unique_lock lock(state.mutex);
+            state.finalizingEntered = true;
+            state.changed.notify_all();
+            state.changed.wait(lock, [&state] { return state.releaseFinalizing; });
+        };
+
+        std::array<wchar_t, 4096> operationBuffer{};
+        const int submitResult = fluxora_submit_install_operation(
+            project.c_str(),
+            L"active-pandora-update",
+            L"archive",
+            updateArchive.c_str(),
+            0,
+            L"Pandora Behaivour Engine Plus",
+            1,
+            L"[]",
+            L"[]",
+            nullptr,
+            1,
+            nullptr,
+            0,
+            L"Default",
+            nullptr,
+            L"[]",
+            -1,
+            nullptr,
+            nullptr,
+            blockAtFinalizing,
+            &progress,
+            operationBuffer.data(),
+            static_cast<int>(operationBuffer.size()));
+        ASSERT_EQ(submitResult, FluxoraCoreResultOk) << toUtf8(lastCoreError());
+
+        {
+            std::unique_lock lock(progress.mutex);
+            if (!progress.changed.wait_for(
+                    lock,
+                    std::chrono::seconds(10),
+                    [&progress] { return progress.finalizingEntered; }))
+            {
+                progress.releaseFinalizing = true;
+                lock.unlock();
+                progress.changed.notify_all();
+                fluxora_core_shutdown();
+                FAIL() << "Durable update did not reach finalizing.";
+            }
+        }
+
+        const int deleteResult = fluxora_delete_installed_mod(project.c_str(), modPath.c_str());
+        EXPECT_EQ(deleteResult, FluxoraCoreResultCoreError);
+        EXPECT_NE(lastCoreError().find(L"install"), std::wstring::npos);
+        EXPECT_TRUE(std::filesystem::is_regular_file(modPath / L"Nemesis.esp"));
+
+        {
+            std::lock_guard lock(progress.mutex);
+            progress.releaseFinalizing = true;
+        }
+        progress.changed.notify_all();
 
         fluxora_core_shutdown();
 #endif

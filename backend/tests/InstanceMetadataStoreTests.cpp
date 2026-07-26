@@ -546,7 +546,79 @@ namespace fluxora::tests
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_aliases"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_exclusions"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_cache"));
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, SchemaFourteenIdentityIndexRebuildsCurrentNameTokens)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"B.O.O.B.I.E.S";
+        writeTextFile(modPath / L"Data" / L"Icons.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"B.O.O.B.I.E.S",
+            L"2.1.3",
+            ModSourceRecord{L"manual"});
+        const std::filesystem::path versionedModPath =
+            project / L"mods" / L"Audio Overhaul for Skyrim (4.1.2)";
+        writeTextFile(versionedModPath / L"Data" / L"Audio Overhaul Skyrim.esp", "plugin");
+        const InstalledModRecord versioned = InstanceMetadataStore::registerInstalledMod(
+            project,
+            versionedModPath,
+            L"Audio Overhaul for Skyrim (4.1.2)",
+            L"4.1.2",
+            ModSourceRecord{L"manual"});
+        const std::filesystem::path database = project / L"instance.db";
+
+        sqliteExec(database, "DELETE FROM mod_identity_tokens;");
+        sqliteExec(
+            database,
+            "UPDATE mod_identity_keys SET key_value = 'b o o b i e s' "
+            "WHERE key_kind IN ('name', 'folder');");
+        const std::string staleVersionedKey =
+            "UPDATE mod_identity_keys SET key_value = 'audio overhaul for skyrim 4 1 2' "
+            "WHERE mod_id = " + std::to_string(versioned.id) +
+            " AND key_kind IN ('name', 'folder');";
+        sqliteExec(database, staleVersionedKey.c_str());
+        sqliteExec(database, "PRAGMA user_version = 14;");
+
+        ModIdentityCatalogQuery query;
+        query.normalizedName = L"boobies";
+        query.tokens = {L"boobies"};
+        const ModIdentityCatalogSnapshot snapshot =
+            InstanceMetadataStore::queryModIdentityCandidates(project, query);
+
+        ASSERT_EQ(snapshot.candidates.size(), 1U);
+        EXPECT_EQ(snapshot.candidates.front().mod.uuid, installed.uuid);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM mod_identity_tokens WHERE token = 'boobies';"),
+            1);
+
+        ModIdentityCatalogQuery versionedQuery;
+        versionedQuery.normalizedName = L"audio overhaul for skyrim";
+        versionedQuery.tokens = {L"audio", L"overhaul", L"skyrim"};
+        const ModIdentityCatalogSnapshot versionedSnapshot =
+            InstanceMetadataStore::queryModIdentityCandidates(project, versionedQuery);
+        ASSERT_NE(
+            std::find_if(
+                versionedSnapshot.candidates.begin(),
+                versionedSnapshot.candidates.end(),
+                [&](const ModIdentityCatalogCandidate& candidate)
+                {
+                    return candidate.mod.uuid == versioned.uuid;
+                }),
+            versionedSnapshot.candidates.end());
 #endif
     }
 
@@ -580,7 +652,7 @@ namespace fluxora::tests
         ModIdentityCatalogQuery query;
         query.normalizedName = L"amazing weather overhaul";
         query.tokens = {L"amazing", L"weather", L"overhaul"};
-        query.limit = 5;
+        query.fuzzyLimit = 5;
         ASSERT_EQ(
             InstanceMetadataStore::queryModIdentityCandidates(project, query).candidates.size(),
             5U);
@@ -914,7 +986,7 @@ namespace fluxora::tests
         {
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,
@@ -1804,7 +1876,7 @@ namespace fluxora::tests
         const std::filesystem::path project = temp.path() / L"project";
         const std::filesystem::path database = project / L"instance.db";
         std::filesystem::create_directories(project);
-        sqliteExec(database, "PRAGMA user_version = 14;");
+        sqliteExec(database, "PRAGMA user_version = 16;");
         ASSERT_FALSE(sqliteTableExists(database, "instance_metadata"));
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
         InstanceMetadataStore::resetSqlExecCountForTesting();
@@ -1814,7 +1886,7 @@ namespace fluxora::tests
             std::runtime_error);
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 14);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 16);
         EXPECT_FALSE(sqliteTableExists(database, "instance_metadata"));
 #endif
     }
@@ -1872,7 +1944,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
         EXPECT_TRUE(sqliteTableExists(database, "mod_file_cache_state"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_mod_links"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_install_attempts"));
@@ -1940,7 +2012,7 @@ namespace fluxora::tests
                 L"legacy-upgrade-operation",
                 ArchiveModLinkMode::Replace,
                 source));
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,
@@ -2060,7 +2132,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
         EXPECT_TRUE(sqliteTableExists(database, "mod_update_sweeps"));
         EXPECT_EQ(
             sqliteIntScalar(
@@ -2096,7 +2168,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 15);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,

@@ -157,7 +157,7 @@ namespace fluxora::tests
 
         ContentLayoutAnalysisRequest request = skyrimRequest({
             {L"Data/SkyUI_SE.esp"},
-            {L"Data/unexpected_tool.exe"}
+            {L"Data/unexpected_tool.dll"}
         });
         request.gameDefinitionVersion = L"test-definition-version";
         request.logger = &logger;
@@ -174,7 +174,7 @@ namespace fluxora::tests
         EXPECT_NE(content.find("definitionVersion=\"test-definition-version\""), std::string::npos);
         EXPECT_NE(content.find("source=\"Data/SkyUI_SE.esp\""), std::string::npos);
         EXPECT_NE(content.find("Plugin extension matches the selected game's plugin rules."), std::string::npos);
-        EXPECT_NE(content.find("source=\"Data/unexpected_tool.exe\""), std::string::npos);
+        EXPECT_NE(content.find("source=\"Data/unexpected_tool.dll\""), std::string::npos);
         EXPECT_NE(content.find("unexpected executable or DLL"), std::string::npos);
     }
 
@@ -247,6 +247,66 @@ namespace fluxora::tests
         EXPECT_EQ(helper->classification, ContentLayoutClassification::ToolExecutable);
         EXPECT_EQ(helper->target, PlacementTarget::Blocked);
         EXPECT_EQ(helper->targetRelativePath.path().generic_wstring(), L"tools/helper.dll");
+    }
+
+    TEST_F(ContentLayoutServiceTests, TopLevelModToolExecutableStaysInsideRecognizedModPayload)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"Pandora Behaviour Engine+.exe"},
+            {L"Nemesis.esp"},
+            {L"meshes/actors/character/animations/Pandora/output.hkx"}
+        }));
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasWarnings);
+
+        const PlacementPlanEntry* tool = findEntry(plan, L"Pandora Behaviour Engine+.exe");
+        ASSERT_NE(tool, nullptr);
+        EXPECT_EQ(tool->classification, ContentLayoutClassification::ToolExecutable);
+        EXPECT_EQ(tool->target, PlacementTarget::Data);
+        EXPECT_EQ(
+            tool->targetRelativePath.path().generic_wstring(),
+            L"Pandora Behaviour Engine+.exe");
+        EXPECT_FALSE(tool->manualOverrideAllowed);
+    }
+
+    TEST_F(ContentLayoutServiceTests, NestedModToolExecutableStaysInsideRecognizedModPayload)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"CalienteTools/BodySlide/BodySlide.exe"},
+            {L"meshes/actors/character/character assets/femalebody_0.nif"}
+        }));
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasWarnings);
+
+        const PlacementPlanEntry* tool = findEntry(plan, L"CalienteTools/BodySlide/BodySlide.exe");
+        ASSERT_NE(tool, nullptr);
+        EXPECT_EQ(tool->classification, ContentLayoutClassification::ToolExecutable);
+        EXPECT_EQ(tool->target, PlacementTarget::Data);
+        EXPECT_EQ(
+            tool->targetRelativePath.path().generic_wstring(),
+            L"CalienteTools/BodySlide/BodySlide.exe");
+        EXPECT_FALSE(tool->manualOverrideAllowed);
+    }
+
+    TEST_F(ContentLayoutServiceTests, ToolExecutableTargetingGameRootRemainsBlocked)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"root/CalienteTools/BodySlide.exe"},
+            {L"meshes/actors/character/character assets/femalebody_0.nif"}
+        }));
+
+        EXPECT_FALSE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasBlockers);
+
+        const PlacementPlanEntry* tool = findEntry(plan, L"root/CalienteTools/BodySlide.exe");
+        ASSERT_NE(tool, nullptr);
+        EXPECT_EQ(tool->classification, ContentLayoutClassification::ToolExecutable);
+        EXPECT_EQ(tool->target, PlacementTarget::Blocked);
+        EXPECT_EQ(
+            tool->targetRelativePath.path().generic_wstring(),
+            L"CalienteTools/BodySlide.exe");
     }
 
     TEST_F(ContentLayoutServiceTests, UnknownRootFilesAreReportedWithoutBlockingRecognizedContent)

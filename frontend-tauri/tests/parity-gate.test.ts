@@ -161,6 +161,7 @@ describe('Tauri parity gate', () => {
       'fluxora_shell_show_item_in_folder',
       'fluxora_window_close',
       'fluxora_window_minimize',
+      'fluxora_window_set_taskbar_progress',
       'fluxora_window_toggle_maximize'
     ]) {
       expect(facade + rustShell).toContain(command);

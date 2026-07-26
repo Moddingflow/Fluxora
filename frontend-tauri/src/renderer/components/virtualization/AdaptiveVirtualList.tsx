@@ -17,6 +17,7 @@ import type {
 import { createAdaptiveVirtualWindow } from '../../ui-performance';
 
 export interface AdaptiveVirtualListHandle {
+  getScrollTop: () => number;
   scrollTo: (scrollTop: number) => void;
   synchronizeScrollPosition: (scrollTop?: number) => void;
 }
@@ -61,6 +62,7 @@ export const AdaptiveVirtualList = <T,>({
 }: AdaptiveVirtualListProps<T>): ReactElement => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const imperativeScrollTopRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(0);
   const pendingSampleTimeRef = useRef(0);
   const lastCommittedSampleRef = useRef({
@@ -132,11 +134,20 @@ export const AdaptiveVirtualList = <T,>({
   useImperativeHandle(
     virtualizerRef,
     () => ({
+      getScrollTop: () => containerRef.current?.scrollTop ?? pendingScrollTopRef.current,
       scrollTo: (scrollTop) => {
-        if (containerRef.current) {
-          containerRef.current.scrollTop = scrollTop;
+        const container = containerRef.current;
+        const normalizedScrollTop = container
+          ? Math.min(
+              Math.max(0, scrollTop),
+              Math.max(0, items.length * rowHeight - container.clientHeight)
+            )
+          : Math.max(0, scrollTop);
+        imperativeScrollTopRef.current = normalizedScrollTop;
+        if (container) {
+          container.scrollTop = normalizedScrollTop;
         }
-        synchronizeScrollPosition(scrollTop);
+        synchronizeScrollPosition(normalizedScrollTop);
       },
       synchronizeScrollPosition
     }),
@@ -235,11 +246,28 @@ export const AdaptiveVirtualList = <T,>({
     [items, rowHeight, scrollMetrics, viewportHeight]
   );
 
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const requestedScrollTop = imperativeScrollTopRef.current;
+    if (!container || requestedScrollTop === null) {
+      return;
+    }
+
+    const scrollTop = Math.min(
+      requestedScrollTop,
+      Math.max(0, items.length * rowHeight - container.clientHeight)
+    );
+    container.scrollTop = scrollTop;
+    pendingScrollTopRef.current = scrollTop;
+    imperativeScrollTopRef.current = null;
+  }, [items.length, rowHeight, viewportHeight, virtualWindow.endIndex, virtualWindow.startIndex]);
+
   return (
     <div
       {...containerProps}
       ref={setContainerRef}
       onScroll={handleScroll}
+      data-scrollable={items.length * rowHeight > viewportHeight}
       data-virtualized="adaptive"
       data-virtual-start-index={virtualWindow.startIndex}
       data-virtual-end-index={virtualWindow.endIndex}

@@ -44,7 +44,9 @@ describe('install dialog flow', () => {
     );
 
     expect(dialog).toContain('const dialogTitle =');
-    expect(dialog).toContain('const dialogAriaLabel = `Install ${dialogTitle}`;');
+    expect(dialog).toContain("installDialog.phase === 'detecting'");
+    expect(dialog).toContain("? 'Установка мода'");
+    expect(dialog).toContain(': `Install ${dialogTitle}`;');
     expect(dialog).toContain('<strong>Установка мода</strong>');
     expect(dialog).toContain('Закрыть окно установки');
     expect(dialog).toContain('Подробнее');
@@ -119,6 +121,38 @@ describe('install dialog flow', () => {
     const fomodBranch = detectionTransition.slice(fomodStart, standardStart);
 
     expect(fomodBranch).toContain('attachBackgroundInstallPlan');
+  });
+
+  it('keeps a standard install skeleton until the identity plan is ready', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const detectionTransition = sliceBetween(
+      app,
+      'const installDialogWithDetection =',
+      '  const watchInstallDetection ='
+    );
+    const planWatcher = sliceBetween(
+      app,
+      'const watchInstallPlan =',
+      '  const analyzeInstallLayout = async'
+    );
+
+    expect(detectionTransition).toContain(
+      "phase: current.installPlan ? 'options' : 'detecting'"
+    );
+    expect(planWatcher).toContain('attachInstallPlanForDisplay(current, plan)');
+  });
+
+  it('shows a preparation error when the identity plan fails', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const planWatcher = sliceBetween(
+      app,
+      'const watchInstallPlan =',
+      '  const analyzeInstallLayout = async'
+    );
+
+    expect(planWatcher).toContain('.catch((error) => {');
+    expect(planWatcher).toContain("phase: 'error'");
+    expect(planWatcher).toContain('errorMessage: message');
   });
 
   it('keeps install concurrency scoped to the same source without a global downloads busy state', () => {

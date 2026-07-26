@@ -163,9 +163,13 @@ namespace fluxora
 
         std::wstring removeRecognizedTrailingVersion(std::wstring value)
         {
-            static const std::wregex trailingVersion(
-                LR"((?:[\s_-]+(?:v(?:ersion)?[\s_-]*)?\d+(?:[._-]\d+){1,4}(?:[\s_-]*(?:alpha|beta|rc)\d*)?)\s*$)",
+            static const std::wregex bracketedTrailingVersion(
+                LR"((?:[\s_.-]*[\(\[]\s*(?:v(?:ersion)?[\s_.-]*)?\d+(?:[._-]\d+){1,4}(?:[\s_-]*(?:alpha|beta|rc)\d*)?\s*[\)\]])\s*$)",
                 std::regex_constants::icase | std::regex_constants::optimize);
+            static const std::wregex trailingVersion(
+                LR"((?:[\s_.-]+(?:v(?:ersion)?[\s_.-]*)?\d+(?:[._-]\d+){1,4}(?:[\s_-]*(?:alpha|beta|rc)\d*)?)\s*$)",
+                std::regex_constants::icase | std::regex_constants::optimize);
+            value = std::regex_replace(value, bracketedTrailingVersion, L"");
             return std::regex_replace(value, trailingVersion, L"");
         }
 
@@ -180,6 +184,61 @@ namespace fluxora
                 character != 0x2013 &&
                 character != 0x2014 &&
                 character != 0x2022;
+        }
+
+        std::wstring collapseAcronymRuns(std::wstring_view value)
+        {
+            std::vector<std::wstring_view> words;
+            std::size_t start = 0;
+            while (start < value.size())
+            {
+                const std::size_t end = value.find(L' ', start);
+                words.emplace_back(
+                    value.substr(
+                        start,
+                        end == std::wstring_view::npos
+                            ? value.size() - start
+                            : end - start));
+                if (end == std::wstring_view::npos)
+                {
+                    break;
+                }
+                start = end + 1;
+            }
+
+            std::wstring result;
+            const auto appendWord = [&](std::wstring_view word)
+            {
+                if (!result.empty())
+                {
+                    result.push_back(L' ');
+                }
+                result.append(word);
+            };
+            for (std::size_t index = 0; index < words.size();)
+            {
+                std::size_t acronymEnd = index;
+                while (acronymEnd < words.size() &&
+                    words[acronymEnd].size() == 1 &&
+                    std::iswalpha(words[acronymEnd].front()) != 0)
+                {
+                    ++acronymEnd;
+                }
+                if (acronymEnd - index >= 3)
+                {
+                    std::wstring acronym;
+                    acronym.reserve(acronymEnd - index);
+                    while (index < acronymEnd)
+                    {
+                        acronym.push_back(words[index++].front());
+                    }
+                    appendWord(acronym);
+                    continue;
+                }
+
+                appendWord(words[index++]);
+            }
+            return result;
         }
 
         std::wstring normalizedIdentityText(std::wstring_view value, bool safeCleanup)
@@ -211,7 +270,7 @@ namespace fluxora
                     pendingSeparator = true;
                 }
             }
-            return trim(std::move(result));
+            return collapseAcronymRuns(trim(std::move(result)));
         }
 
         std::vector<std::wstring> tokensFromNormalizedName(std::wstring_view normalized)
@@ -219,54 +278,205 @@ namespace fluxora
             static const std::set<std::wstring> stopWords{
                 L"a", L"an", L"and", L"for", L"mod", L"of", L"the"
             };
-            std::set<std::wstring> unique;
+            std::vector<std::wstring> rawTokens;
             std::size_t start = 0;
             while (start < normalized.size())
             {
                 const std::size_t end = normalized.find(L' ', start);
-                std::wstring token(normalized.substr(
+                rawTokens.emplace_back(normalized.substr(
                     start,
                     end == std::wstring_view::npos ? normalized.size() - start : end - start));
-                const bool numeric = !token.empty() && std::all_of(token.begin(), token.end(), [](wchar_t character)
-                {
-                    return std::iswdigit(character) != 0;
-                });
-                if (token.size() >= 2 && !numeric && !stopWords.contains(token))
-                {
-                    unique.insert(std::move(token));
-                }
                 if (end == std::wstring_view::npos)
                 {
                     break;
                 }
                 start = end + 1;
             }
+
+            std::set<std::wstring> unique;
+            for (std::size_t index = 0; index < rawTokens.size();)
+            {
+                if (rawTokens[index].size() == 1 &&
+                    std::iswalpha(rawTokens[index].front()) != 0)
+                {
+                    std::size_t acronymEnd = index;
+                    std::wstring acronym;
+                    while (acronymEnd < rawTokens.size() &&
+                        rawTokens[acronymEnd].size() == 1 &&
+                        std::iswalpha(rawTokens[acronymEnd].front()) != 0)
+                    {
+                        acronym.push_back(rawTokens[acronymEnd].front());
+                        ++acronymEnd;
+                    }
+                    if (acronym.size() >= 3)
+                    {
+                        unique.insert(std::move(acronym));
+                        index = acronymEnd;
+                        continue;
+                    }
+                }
+
+                std::wstring token = rawTokens[index++];
+                const bool numeric = !token.empty() && std::all_of(
+                    token.begin(),
+                    token.end(),
+                    [](wchar_t character)
+                    {
+                        return std::iswdigit(character) != 0;
+                    });
+                if (token.size() >= 2 && !numeric && !stopWords.contains(token))
+                {
+                    unique.insert(std::move(token));
+                }
+            }
             return {unique.begin(), unique.end()};
         }
 
-        int tokenSimilarityScore(
+        bool differsByOneEdit(
+            std::wstring_view left,
+            std::wstring_view right)
+        {
+            if ((std::min)(left.size(), right.size()) < 5 || left == right ||
+                (std::max)(left.size(), right.size()) - (std::min)(left.size(), right.size()) > 1)
+            {
+                return false;
+            }
+
+            if (left.size() == right.size())
+            {
+                std::vector<std::size_t> differences;
+                for (std::size_t index = 0; index < left.size(); ++index)
+                {
+                    if (left[index] != right[index])
+                    {
+                        differences.push_back(index);
+                        if (differences.size() > 2)
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return differences.size() == 1 ||
+                    (differences.size() == 2 &&
+                     differences[1] == differences[0] + 1 &&
+                     left[differences[0]] == right[differences[1]] &&
+                     left[differences[1]] == right[differences[0]]);
+            }
+
+            const std::wstring_view shorter = left.size() < right.size() ? left : right;
+            const std::wstring_view longer = left.size() < right.size() ? right : left;
+            std::size_t shorterIndex = 0;
+            std::size_t longerIndex = 0;
+            bool skipped = false;
+            while (shorterIndex < shorter.size() && longerIndex < longer.size())
+            {
+                if (shorter[shorterIndex] == longer[longerIndex])
+                {
+                    ++shorterIndex;
+                    ++longerIndex;
+                    continue;
+                }
+                if (skipped)
+                {
+                    return false;
+                }
+                skipped = true;
+                ++longerIndex;
+            }
+            return true;
+        }
+
+        struct TokenSimilarity
+        {
+            int score{0};
+            bool usedTypoTolerance{false};
+            bool usedQualifiedVariantTolerance{false};
+        };
+
+        TokenSimilarity tokenSimilarityScore(
             const std::vector<std::wstring>& inputTokens,
             const std::vector<std::wstring>& candidateTokens)
         {
             if (inputTokens.empty() || candidateTokens.empty())
             {
-                return 0;
+                return {};
             }
-            std::size_t intersection = 0;
-            for (const std::wstring& token : inputTokens)
+
+            std::vector<bool> candidateMatched(candidateTokens.size(), false);
+            std::vector<bool> inputMatched(inputTokens.size(), false);
+            std::size_t exactMatches = 0;
+            for (std::size_t inputIndex = 0; inputIndex < inputTokens.size(); ++inputIndex)
             {
-                if (std::find(candidateTokens.begin(), candidateTokens.end(), token) != candidateTokens.end())
+                const auto match = std::find(
+                    candidateTokens.begin(),
+                    candidateTokens.end(),
+                    inputTokens[inputIndex]);
+                if (match != candidateTokens.end())
                 {
-                    ++intersection;
+                    const std::size_t candidateIndex = static_cast<std::size_t>(
+                        std::distance(candidateTokens.begin(), match));
+                    candidateMatched[candidateIndex] = true;
+                    inputMatched[inputIndex] = true;
+                    ++exactMatches;
                 }
             }
-            if (intersection < 2)
+
+            std::size_t typoMatches = 0;
+            if (exactMatches >= 2)
             {
-                return 0;
+                for (std::size_t inputIndex = 0; inputIndex < inputTokens.size(); ++inputIndex)
+                {
+                    if (inputMatched[inputIndex])
+                    {
+                        continue;
+                    }
+                    for (std::size_t candidateIndex = 0;
+                        candidateIndex < candidateTokens.size();
+                        ++candidateIndex)
+                    {
+                        if (!candidateMatched[candidateIndex] &&
+                            differsByOneEdit(
+                                inputTokens[inputIndex],
+                                candidateTokens[candidateIndex]))
+                        {
+                            inputMatched[inputIndex] = true;
+                            candidateMatched[candidateIndex] = true;
+                            ++typoMatches;
+                            break;
+                        }
+                    }
+                }
             }
-            const double ratio = static_cast<double>(intersection) /
-                static_cast<double>((std::max)(inputTokens.size(), candidateTokens.size()));
-            return 50 + static_cast<int>(std::lround(35.0 * ratio));
+
+            const std::size_t matches = exactMatches + typoMatches;
+            if (matches < 2)
+            {
+                return {};
+            }
+            if (typoMatches == 0)
+            {
+                const double ratio = static_cast<double>(matches) /
+                    static_cast<double>((std::max)(inputTokens.size(), candidateTokens.size()));
+                int score = 50 + static_cast<int>(std::lround(35.0 * ratio));
+                const bool qualifiedVariant = matches >= 3 &&
+                    matches == inputTokens.size() &&
+                    candidateTokens.size() == matches + 1;
+                if (qualifiedVariant)
+                {
+                    score = (std::max)(score, 86);
+                }
+                return {score, false, qualifiedVariant};
+            }
+
+            const double inputCoverage = static_cast<double>(matches) /
+                static_cast<double>(inputTokens.size());
+            const double candidateCoverage = static_cast<double>(matches) /
+                static_cast<double>(candidateTokens.size());
+            return {
+                50 + static_cast<int>(std::lround(
+                    25.0 * inputCoverage + 15.0 * candidateCoverage)),
+                true
+            };
         }
 
         bool sameText(std::wstring_view left, std::wstring_view right);
@@ -362,6 +572,15 @@ namespace fluxora
         {
             if (isNexusPair(input.source, candidate.source))
             {
+                if (!sameStableSource(input.source, candidate.source))
+                {
+                    return true;
+                }
+                if (trim(input.source.remoteFileId).empty() ||
+                    trim(candidate.source.remoteFileId).empty())
+                {
+                    return false;
+                }
                 const NexusFileLineageKind lineage = nexusLineageKind(
                     input.source,
                     candidate.source,
@@ -685,11 +904,18 @@ namespace fluxora
                 continue;
             }
             const bool distinct = isDistinctFileOnSameStableSource(input, candidate, nexusFiles);
-            if (!isNexusPair(input.source, candidate.source) || !distinct)
+            const NexusFileLineageKind nexusLineage = isNexusPair(input.source, candidate.source)
+                ? nexusLineageKind(input.source, candidate.source, nexusFiles)
+                : NexusFileLineageKind::UnprovenOrDifferentBranch;
+            const bool sourceIdentityMatch = isNexusPair(input.source, candidate.source)
+                ? nexusLineage == NexusFileLineageKind::SameFile ||
+                    nexusLineage == NexusFileLineageKind::SameLineage
+                : !distinct;
+            if (sourceIdentityMatch)
             {
                 ++stableMatchCount;
             }
-            if (!candidate.excluded && !distinct)
+            if (!candidate.excluded && sourceIdentityMatch)
             {
                 stableMatch = &candidate;
             }
@@ -819,8 +1045,7 @@ namespace fluxora
             std::size_t exactNameMatchCount = 0;
             for (const ModIdentityCandidate& candidate : candidates)
             {
-                if (candidate.excluded ||
-                    isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
+                if (candidate.excluded)
                 {
                     continue;
                 }
@@ -843,16 +1068,27 @@ namespace fluxora
             {
                 const bool stableSourceConflict =
                     conflictsWithStableSource(input.source, exactNameMatch->source);
-                resolution.kind = stableSourceConflict
+                const NexusFileLineageKind exactNameLineage =
+                    isNexusPair(input.source, exactNameMatch->source)
+                        ? nexusLineageKind(input.source, exactNameMatch->source, nexusFiles)
+                        : NexusFileLineageKind::SameFile;
+                const bool lineageNeedsConfirmation =
+                    exactNameLineage == NexusFileLineageKind::UnprovenOrDifferentBranch;
+                resolution.kind = stableSourceConflict || lineageNeedsConfirmation
                     ? ModIdentityResolutionKind::Probable
                     : ModIdentityResolutionKind::Exact;
                 resolution.suggestedModName = exactNameMatch->target.displayName;
                 resolution.matchedTarget = exactNameMatch->target;
-                resolution.score = stableSourceConflict ? 90 : 94;
+                resolution.score = stableSourceConflict || lineageNeedsConfirmation ? 90 : 94;
                 resolution.evidenceCodes = {L"name.normalized-exact"};
                 if (stableSourceConflict)
                 {
                     resolution.evidenceCodes.push_back(L"source.stable-mod-id-conflict");
+                }
+                if (lineageNeedsConfirmation)
+                {
+                    resolution.evidenceCodes.push_back(
+                        L"nexus.lineage.unproven-or-different-branch");
                 }
                 return resolution;
             }
@@ -929,15 +1165,17 @@ namespace fluxora
             safeInputName.empty() ? safeInputFolder : safeInputName);
         for (const ModIdentityCandidate& candidate : candidates)
         {
-            if (candidate.excluded ||
-                conflictsWithStableSource(input.source, candidate.source) ||
-                isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
+            if (candidate.excluded)
             {
                 continue;
             }
 
             ScoredCandidate item;
             item.candidate = &candidate;
+            const bool stableSourceConflict =
+                conflictsWithStableSource(input.source, candidate.source);
+            const bool distinctNexusFile =
+                isDistinctFileOnSameStableSource(input, candidate, nexusFiles);
             const std::wstring candidateDisplayName = normalizedName(candidate.target.displayName);
             const std::wstring candidateFolderName = normalizedName(candidate.target.folderName);
             const bool safeNameMatch =
@@ -949,18 +1187,41 @@ namespace fluxora
             {
                 item.score = 90;
                 item.evidence.push_back(L"name.safe-normalized");
+                if (stableSourceConflict)
+                {
+                    item.evidence.push_back(L"source.stable-mod-id-conflict");
+                }
+                if (isNexusPair(input.source, candidate.source) &&
+                    nexusLineageKind(input.source, candidate.source, nexusFiles) ==
+                        NexusFileLineageKind::UnprovenOrDifferentBranch)
+                {
+                    item.evidence.push_back(
+                        L"nexus.lineage.unproven-or-different-branch");
+                }
             }
             else
             {
+                if (stableSourceConflict || distinctNexusFile)
+                {
+                    continue;
+                }
                 std::vector<std::wstring> candidateTokens = meaningfulTokens(candidate.target.displayName);
                 const std::vector<std::wstring> folderTokens = meaningfulTokens(candidate.target.folderName);
                 candidateTokens.insert(candidateTokens.end(), folderTokens.begin(), folderTokens.end());
                 std::sort(candidateTokens.begin(), candidateTokens.end());
                 candidateTokens.erase(std::unique(candidateTokens.begin(), candidateTokens.end()), candidateTokens.end());
-                item.score = tokenSimilarityScore(inputTokens, candidateTokens);
+                const TokenSimilarity similarity = tokenSimilarityScore(
+                    inputTokens,
+                    candidateTokens);
+                item.score = similarity.score;
                 if (item.score > 0)
                 {
-                    item.evidence.push_back(L"name.meaningful-tokens");
+                    item.evidence.push_back(
+                        similarity.usedTypoTolerance
+                            ? L"name.meaningful-tokens-typo"
+                            : similarity.usedQualifiedVariantTolerance
+                                ? L"name.meaningful-tokens-qualified"
+                                : L"name.meaningful-tokens");
                 }
             }
 
@@ -1092,45 +1353,93 @@ namespace fluxora
             request.input.fomodModuleId = request.fomodInstaller.moduleId;
         }
 
+        const auto materializeCandidates = [](const ModIdentityCatalogSnapshot& snapshot)
+        {
+            std::vector<ModIdentityCandidate> result;
+            result.reserve(snapshot.candidates.size());
+            for (const ModIdentityCatalogCandidate& stored : snapshot.candidates)
+            {
+                ModIdentityCandidate candidate;
+                candidate.target = {
+                    stored.mod.uuid,
+                    stored.mod.displayName,
+                    stored.mod.folderName
+                };
+                candidate.source = {
+                    stored.mod.source.provider,
+                    stored.mod.source.gameDomain,
+                    stored.mod.source.remoteModId,
+                    stored.mod.source.remoteFileId
+                };
+                candidate.fomodModuleId = stored.fomodModuleId;
+                candidate.aliases = stored.aliases;
+                candidate.excluded = stored.excluded;
+                result.push_back(std::move(candidate));
+            }
+            return result;
+        };
+
+        const auto queryCandidates = [&](const ModIdentityInput& input)
+        {
+            ModIdentityCatalogQuery query;
+            query.provider = input.source.provider;
+            query.gameDomain = input.source.game;
+            query.remoteModId = input.source.remoteModId;
+            query.fomodModuleId = input.fomodModuleId;
+            query.normalizedName = normalizedName(input.displayName);
+            query.tokens = meaningfulTokens(input.displayName);
+            query.fuzzyLimit = 5;
+            return InstanceMetadataStore::queryModIdentityCandidates(
+                request.projectDirectory,
+                query);
+        };
+
         const auto indexedStartedAt = std::chrono::steady_clock::now();
-        ModIdentityCatalogQuery query;
-        query.provider = request.input.source.provider;
-        query.gameDomain = request.input.source.game;
-        query.remoteModId = request.input.source.remoteModId;
-        query.fomodModuleId = request.input.fomodModuleId;
-        query.normalizedName = normalizedName(request.input.displayName);
-        query.tokens = meaningfulTokens(request.input.displayName);
-        query.limit = 5;
-        const ModIdentityCatalogSnapshot snapshot =
-            InstanceMetadataStore::queryModIdentityCandidates(request.projectDirectory, query);
+        ModIdentityCatalogSnapshot snapshot;
+        std::vector<ModIdentityCandidate> candidates;
+        ModIdentityResolution resolution;
+        bool exactRequestedNameMatched = false;
+        const std::wstring requestedInstallName = canonicalSuggestedName(
+            request.requestedInstallName);
+        if (!trim(requestedInstallName).empty())
+        {
+            ModIdentityInput requestedNameInput;
+            requestedNameInput.displayName = requestedInstallName;
+            requestedNameInput.folderName = requestedInstallName;
+            snapshot = queryCandidates(requestedNameInput);
+            candidates = materializeCandidates(snapshot);
+            resolution = resolve(requestedNameInput, candidates);
+            if (resolution.matchedTarget.has_value())
+            {
+                const std::wstring requestedKey = normalizedIdentityText(
+                    requestedInstallName,
+                    false);
+                exactRequestedNameMatched =
+                    requestedKey == normalizedIdentityText(
+                        resolution.matchedTarget->displayName,
+                        false) ||
+                    requestedKey == normalizedIdentityText(
+                        resolution.matchedTarget->folderName,
+                        false);
+            }
+        }
+
+        if (!exactRequestedNameMatched)
+        {
+            snapshot = queryCandidates(request.input);
+            candidates = materializeCandidates(snapshot);
+            resolution = resolve(request.input, candidates);
+        }
+        else
+        {
+            resolution.evidenceCodes.push_back(L"input.requested-install-name-exact");
+        }
         const auto indexedDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - indexedStartedAt).count();
 
-        std::vector<ModIdentityCandidate> candidates;
-        candidates.reserve(snapshot.candidates.size());
-        for (const ModIdentityCatalogCandidate& stored : snapshot.candidates)
-        {
-            ModIdentityCandidate candidate;
-            candidate.target = {
-                stored.mod.uuid,
-                stored.mod.displayName,
-                stored.mod.folderName
-            };
-            candidate.source = {
-                stored.mod.source.provider,
-                stored.mod.source.gameDomain,
-                stored.mod.source.remoteModId,
-                stored.mod.source.remoteFileId
-            };
-            candidate.fomodModuleId = stored.fomodModuleId;
-            candidate.aliases = stored.aliases;
-            candidate.excluded = stored.excluded;
-            candidates.push_back(std::move(candidate));
-        }
-
-        ModIdentityResolution resolution = resolve(request.input, candidates);
         std::optional<NexusFileMetadataLookup> metadataLookup;
         const bool hasNexusLineageCandidate =
+            !exactRequestedNameMatched &&
             isNexusSource(request.input.source) &&
             !trim(request.input.source.game).empty() &&
             !trim(request.input.source.remoteModId).empty() &&
@@ -1172,11 +1481,12 @@ namespace fluxora
                         : nullptr);
             }
         }
-        if (!resolution.matchedTarget.has_value())
+        if (!exactRequestedNameMatched && !resolution.matchedTarget.has_value())
         {
             resolution = resolveExactSameSourceArchiveName(request, candidates);
         }
-        if (!resolution.matchedTarget.has_value() &&
+        if (!exactRequestedNameMatched &&
+            !resolution.matchedTarget.has_value() &&
             !candidates.empty() &&
             request.loadIncomingContent)
         {

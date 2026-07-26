@@ -124,6 +124,7 @@ import type {
   FluxoraTextFileDocument,
   FluxoraTextFilePreview,
   FluxoraTextFileSaveResult,
+  FluxoraTaskbarProgressState,
   UiLogEntry
 } from '../shared/fluxora-api';
 import { createModdingflowPublicApiDogfoodClient } from '../shared/moddingflow-public-api-dogfood';
@@ -1742,6 +1743,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         relativePath,
         fileName
       ),
+    setTaskbarProgress: (state: FluxoraTaskbarProgressState) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.windowSetTaskbarProgress, state),
     toggleMaximize: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowToggleMaximize)
   }
 });
@@ -1822,6 +1825,46 @@ const nativeBridgeErrorCategories = new Set<NativeBridgeError['category']>([
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const taskbarProgressState = (value: unknown): FluxoraTaskbarProgressState => {
+  if (!isRecord(value)) {
+    throw new Error('Invalid taskbar progress state.');
+  }
+
+  const status = value.status;
+  if (
+    status !== 'none' &&
+    status !== 'normal' &&
+    status !== 'indeterminate' &&
+    status !== 'paused' &&
+    status !== 'error'
+  ) {
+    throw new Error('Invalid taskbar progress status.');
+  }
+
+  const progress = value.progress;
+  if (status === 'none' || status === 'indeterminate') {
+    if (progress !== undefined) {
+      throw new Error('Invalid taskbar progress value for a non-determinate state.');
+    }
+    return { status };
+  }
+
+  if (
+    progress !== undefined &&
+    (!Number.isInteger(progress) || (progress as number) < 0 || (progress as number) > 100)
+  ) {
+    throw new Error('Invalid taskbar progress percentage.');
+  }
+  if (status === 'normal' && progress === undefined) {
+    throw new Error('Normal taskbar progress requires a percentage.');
+  }
+
+  if (status === 'normal') {
+    return { status, progress: progress as number };
+  }
+  return progress === undefined ? { status } : { status, progress: progress as number };
+};
 
 export class FluxoraBridgeError extends Error implements NativeBridgeInvokeError {
   readonly schema = FLUXORA_BRIDGE_ERROR_SCHEMA;
@@ -2321,6 +2364,7 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.windowOpenModDetails:
       case FluxoraIpcChannels.windowOpenSettings:
       case FluxoraIpcChannels.windowOpenTextEditor:
+      case FluxoraIpcChannels.windowSetTaskbarProgress:
       case FluxoraIpcChannels.windowToggleMaximize:
         return undefined;
 
@@ -2913,6 +2957,11 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.windowClose:
         return invoke('fluxora_window_close');
+
+      case FluxoraIpcChannels.windowSetTaskbarProgress:
+        return invoke('fluxora_window_set_taskbar_progress', {
+          state: taskbarProgressState(args[0])
+        });
 
       case FluxoraIpcChannels.windowOpenBuildSettings:
         return invoke('fluxora_open_build_settings_window', {

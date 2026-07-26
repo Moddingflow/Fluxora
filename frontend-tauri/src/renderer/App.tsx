@@ -69,6 +69,7 @@ import {
   AdaptiveVirtualList,
   type AdaptiveVirtualListHandle
 } from './components/virtualization/AdaptiveVirtualList';
+import { useSearchScrollRestoration } from './hooks/useSearchScrollRestoration';
 import { Badge, Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
 import {
@@ -85,6 +86,7 @@ import {
   ModUpdateCheckSplash,
   type ModUpdateCheckSplashState
 } from './features/mods/ModUpdateCheckSplash';
+import { ModConflictScrollbar } from './features/mods/ModConflictScrollbar';
 import { AiChatPanel } from './features/ai/AiChatPanel';
 import { resolveAiManagedFileLocation } from './features/ai/ai-managed-file-location';
 import {
@@ -144,6 +146,7 @@ import {
   type DeletionConfirmationKind
 } from './features/deletion/DeletionConfirmationDialog';
 import { DownloadDuplicateDecisionDialog } from './features/downloads/DownloadDuplicateDecisionDialog';
+import { taskbarDownloadProgress } from './features/downloads/taskbar-download-progress';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
 import {
   PluginSeparatorDialog,
@@ -159,6 +162,7 @@ import {
 import { applyInstallNameSuggestion } from './features/install/install-name-state';
 import {
   attachBackgroundInstallPlan,
+  attachInstallPlanForDisplay,
   installPlanNeedsUserNameReplan,
   matchedInstallTargetForCurrentName
 } from './features/install/install-plan-state';
@@ -176,7 +180,6 @@ import {
 import { downloadInstallDropPlacementFromPointer } from './features/mods/download-install-drop-state';
 import { resolveModSourcePageUrl } from './features/mods/mod-source-url';
 import {
-  installedModPathAfterPendingInstallCancellation,
   pendingInstallTargetIndexForPlacement,
   type PendingInstallDropPlacement
 } from './features/mods/pending-install-orchestrator-state';
@@ -676,10 +679,6 @@ interface DeletionConfirmationRequest {
 
 type MenuIconStyle = CSSProperties & { '--menu-icon': string };
 type AssetIconStyle = CSSProperties & { '--asset-icon': string };
-type ModConflictMarkerStyle = CSSProperties & {
-  '--conflict-marker-top': string;
-  '--conflict-marker-offset': string;
-};
 
 const effectiveFileTreeCacheKey = (projectDirectory: string, profileName: string): string =>
   `${projectDirectory}\n${profileName || 'Default'}`;
@@ -986,8 +985,6 @@ const pluginLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index
 const effectiveFileTreeSkeletonRows = Array.from({ length: 14 }, (_, index) => index);
 const loadingSkeletonWidths = ['72%', '58%', '66%', '48%', '62%'] as const;
 const downloadRowHeight = 48;
-const downloadVisibleRows = 28;
-const downloadOverscanRows = 8;
 const DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS = 500;
 const downloadSkeletonRows = [
   {
@@ -1533,6 +1530,7 @@ export const App = () => {
     useState<RowContextMenuPosition | null>(null);
   const [modCreationDialog, setModCreationDialog] = useState<ModCreationDialogState | null>(null);
   const modListVirtualizerRef = useRef<AdaptiveVirtualListHandle | null>(null);
+  const modListScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [draggedModOrderIds, setDraggedModOrderIds] = useState<ReadonlySet<string>>(
     () => new Set<string>()
   );
@@ -1647,7 +1645,7 @@ export const App = () => {
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null);
   const [downloadMenuPosition, setDownloadMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
-  const [downloadListScrollTop, setDownloadListScrollTop] = useState(0);
+  const downloadListVirtualizerRef = useRef<AdaptiveVirtualListHandle | null>(null);
   const [downloadDropCue, setDownloadDropCueState] = useState<DownloadDropCue>('idle');
   const [downloadDuplicateDecisionResolving, setDownloadDuplicateDecisionResolving] = useState(false);
   const [downloadDuplicateDecisionError, setDownloadDuplicateDecisionError] = useState<string | null>(null);
@@ -2061,6 +2059,22 @@ export const App = () => {
   const deferredProfileSearchText = useDeferredValue(profilesWorkspace.searchText);
   const deferredExecutableSearchText = useDeferredValue(executablesWorkspace.searchText);
 
+  const prepareModSearchScroll = useSearchScrollRestoration({
+    renderedSearchText: deferredModSearchText,
+    readScrollTop: () => modListVirtualizerRef.current?.getScrollTop() ?? 0,
+    scrollTo: (scrollTop) => modListVirtualizerRef.current?.scrollTo(scrollTop)
+  });
+  const preparePluginSearchScroll = useSearchScrollRestoration({
+    renderedSearchText: deferredPluginSearchText,
+    readScrollTop: () => pluginListVirtualizerRef.current?.getScrollTop() ?? 0,
+    scrollTo: (scrollTop) => pluginListVirtualizerRef.current?.scrollTo(scrollTop)
+  });
+  const prepareDownloadSearchScroll = useSearchScrollRestoration({
+    renderedSearchText: deferredDownloadSearchText,
+    readScrollTop: () => downloadListVirtualizerRef.current?.getScrollTop() ?? 0,
+    scrollTo: (scrollTop) => downloadListVirtualizerRef.current?.scrollTo(scrollTop)
+  });
+
   const filteredProjects = useMemo(
     () => filterProjects(projects, deferredSearchText),
     [projects, deferredSearchText]
@@ -2120,6 +2134,10 @@ export const App = () => {
     onScrollTopChange: (scrollTop) =>
       modListVirtualizerRef.current?.synchronizeScrollPosition(scrollTop)
   });
+  const setModListScrollContainerRef = useCallback((container: HTMLDivElement | null) => {
+    modListScrollContainerRef.current = container;
+    postInstallModRevealContainerRef(container);
+  }, [postInstallModRevealContainerRef]);
 
   const selectableModOrderIds = useMemo(
     () =>
@@ -2219,6 +2237,45 @@ export const App = () => {
     () => filterDownloadEntries(downloadsWorkspace.items, deferredDownloadSearchText),
     [downloadsWorkspace.items, deferredDownloadSearchText]
   );
+
+  const taskbarProgressState = useMemo(
+    () => {
+      const downloadsFeatureState = bridgeStatus?.capabilities?.features.downloads?.state;
+      return selectedProject &&
+        bridgeStatus?.ready &&
+        (downloadsFeatureState === 'available' || downloadsFeatureState === 'limited')
+        ? taskbarDownloadProgress(downloadsWorkspace.items)
+        : ({ status: 'none' } as const);
+    },
+    [
+      bridgeStatus?.capabilities?.features.downloads?.state,
+      bridgeStatus?.ready,
+      downloadsWorkspace.items,
+      selectedProject
+    ]
+  );
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return;
+    }
+
+    void window.fluxora.windowControls
+      .setTaskbarProgress(taskbarProgressState)
+      .catch(() => undefined);
+  }, [isSecondaryWindow, taskbarProgressState]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return undefined;
+    }
+
+    return () => {
+      void window.fluxora.windowControls
+        .setTaskbarProgress({ status: 'none' })
+        .catch(() => undefined);
+    };
+  }, [isSecondaryWindow]);
 
   const downloadDuplicateDecisionQueue = useMemo(
     () => queuedDownloadDuplicateDecisions(downloadsWorkspace.items),
@@ -2718,10 +2775,10 @@ export const App = () => {
         : modConflictMarkerStatesForHighlight(highlight);
 
       return states.map((state, stateIndex) => ({
+        contentOffset: (index + 0.5) * modRowHeight,
         key: `${item.orderId}:${state}`,
         state,
-        offset: `${(stateIndex - (states.length - 1) / 2) * 4}px`,
-        top: `${((index + 0.5) / displayedModItems.length) * 100}%`
+        stackOffset: (stateIndex - (states.length - 1) / 2) * 4
       }));
     });
   }, [
@@ -2732,14 +2789,6 @@ export const App = () => {
     pendingInstallOrchestrator.session?.state,
     selectedModItem
   ]);
-
-  const visibleDownloadWindow = useMemo(() => {
-    return createVirtualWindow(filteredDownloadItems, downloadListScrollTop, {
-      rowHeight: downloadRowHeight,
-      visibleRows: downloadVisibleRows,
-      overscanRows: downloadOverscanRows
-    });
-  }, [filteredDownloadItems, downloadListScrollTop]);
 
   const effectiveFileTreeChildren = useMemo(() => {
     const children = new Map<string, FluxoraEffectiveFileTreeEntry[]>();
@@ -3943,6 +3992,19 @@ export const App = () => {
     return selectedModDeletionItems.length > 1 ? selectedModDeletionItems : [item];
   };
 
+  const rejectDeletionWhileInstallActive = (items: FluxoraModOrderItem[]) => {
+    const activeTarget = items.find((item) =>
+      Boolean(pendingInstallOrchestrator.activeSessionForItem(item))
+    );
+    if (!activeTarget) {
+      return false;
+    }
+
+    setDeletionConfirmation(null);
+    setMessage(`Нельзя удалить «${modItemTitle(activeTarget)}»: установка выполняется.`);
+    return true;
+  };
+
   const requestDeleteInstalledMod = (item: FluxoraModOrderItem) => {
     if (!selectedProject || !item.isMod) {
       return;
@@ -3950,6 +4012,9 @@ export const App = () => {
 
     const targets = modDeletionItemsFor(item);
     if (targets.length === 0) {
+      return;
+    }
+    if (rejectDeletionWhileInstallActive(targets)) {
       return;
     }
 
@@ -3966,61 +4031,36 @@ export const App = () => {
     if (!selectedProject || !item.isMod) {
       return;
     }
+    if (rejectDeletionWhileInstallActive([item])) {
+      return;
+    }
 
     const project = selectedProject;
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
     const deletedModTitle = modItemTitle(item);
-    const pendingInstall = pendingInstallOrchestrator.activeSessionForItem(item);
-    let pendingInstallCancelled = false;
 
     const operationId = createRendererOperationId('mods_delete');
     setMessage(null);
-    if (pendingInstall) {
-      pendingInstallOrchestrator.rollback(pendingInstall.operationId);
-    }
     removeDeletedModItems([item]);
 
     try {
-      let modPath: string | null = item.id;
-      if (pendingInstall) {
-        const cancelled = await window.fluxora.installs.cancel(
-          project.projectDirectory,
-          pendingInstall.operationId,
-          { operationId }
-        );
-        installOperationsRef.current.set(cancelled.operationId, cancelled);
-        pendingInstallCancelled = true;
-        modPath = installedModPathAfterPendingInstallCancellation(
-          pendingInstall,
-          item.id,
-          cancelled.result
-        );
-      }
-      if (modPath) {
-        await window.fluxora.mods.deleteInstalled(project.projectDirectory, modPath, {
-          operationId
-        });
-      }
+      await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
+        operationId
+      });
       await refreshAfterModDeletion(project);
     } catch (error) {
-      const nextMessage = errorMessage(error);
-      if (pendingInstallCancelled) {
-        try {
-          await refreshAfterModDeletion(project);
-        } catch {
-          // Keep the cancelled pending projection retired when authoritative refresh is unavailable.
-        }
-      } else {
-        restoreDeletedModItems(previousItems, previousInstalledMods);
-      }
-      setMessage(`Could not delete ${deletedModTitle}: ${nextMessage}`);
+      restoreDeletedModItems(previousItems, previousInstalledMods);
+      setMessage(`Could not delete ${deletedModTitle}: ${errorMessage(error)}`);
     }
   };
 
   const deleteInstalledMods = async (items: FluxoraModOrderItem[]) => {
     const targets = items.filter((item) => item.isMod);
     if (!selectedProject || targets.length === 0) {
+      return;
+    }
+    if (rejectDeletionWhileInstallActive(targets)) {
       return;
     }
 
@@ -4033,60 +4073,21 @@ export const App = () => {
     const operationId = createRendererOperationId('mods_delete_bulk');
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
-    const pendingInstalls = new Map(
-      targets.flatMap((item) => {
-        const pending = pendingInstallOrchestrator.activeSessionForItem(item);
-        return pending ? [[item.orderId, pending] as const] : [];
-      })
-    );
-    let hasCancelledPendingInstall = false;
     setMessage(null);
-    for (const pending of new Map(
-      [...pendingInstalls.values()].map((session) => [session.operationId, session] as const)
-    ).values()) {
-      pendingInstallOrchestrator.rollback(pending.operationId);
-    }
     removeDeletedModItems(targets);
 
     try {
       for (let index = 0; index < targets.length; index += 1) {
         const item = targets[index]!;
-        const pendingInstall = pendingInstalls.get(item.orderId);
-        let modPath: string | null = item.id;
-        if (pendingInstall) {
-          const cancelled = await window.fluxora.installs.cancel(
-            project.projectDirectory,
-            pendingInstall.operationId,
-            { operationId }
-          );
-          installOperationsRef.current.set(cancelled.operationId, cancelled);
-          hasCancelledPendingInstall = true;
-          modPath = installedModPathAfterPendingInstallCancellation(
-            pendingInstall,
-            item.id,
-            cancelled.result
-          );
-        }
-        if (modPath) {
-          await window.fluxora.mods.deleteInstalled(project.projectDirectory, modPath, {
-            operationId
-          });
-        }
+        await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
+          operationId
+        });
       }
 
       await refreshAfterModDeletion(project);
     } catch (error) {
-      const nextMessage = errorMessage(error);
-      if (hasCancelledPendingInstall) {
-        try {
-          await refreshAfterModDeletion(project);
-        } catch {
-          // Keep cancelled pending projections retired when authoritative refresh is unavailable.
-        }
-      } else {
-        restoreDeletedModItems(previousItems, previousInstalledMods);
-      }
-      setMessage(`Could not delete mods: ${nextMessage}`);
+      restoreDeletedModItems(previousItems, previousInstalledMods);
+      setMessage(`Could not delete mods: ${errorMessage(error)}`);
     }
   };
 
@@ -5304,6 +5305,9 @@ export const App = () => {
 
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
+      if (pendingInstallOrchestrator.activeSessionForItem(item)) {
+        return;
+      }
       if (!modsWorkspace.selectedOrderIds.has(item.orderId)) {
         dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
       }
@@ -6293,6 +6297,10 @@ export const App = () => {
     fallbackName: string,
     fomodInstaller: FluxoraFomodInstaller
   ): InstallDialogState => {
+    if (current.phase === 'error') {
+      return current;
+    }
+
     if (fomodInstaller.isFomod) {
       const nameState = applyInstallNameSuggestion(
         current,
@@ -6321,7 +6329,7 @@ export const App = () => {
 
     const detectedDialog: InstallDialogState = {
       ...current,
-      phase: current.phase === 'detecting' ? 'options' : current.phase,
+      phase: current.installPlan ? 'options' : 'detecting',
       installerKind: 'standard',
       fomodInstaller: null,
       validationMessage: null,
@@ -6375,11 +6383,22 @@ export const App = () => {
         }
         setInstallDialog((current) =>
           current?.operationId === operationId
-            ? attachBackgroundInstallPlan(current, plan)
+            ? attachInstallPlanForDisplay(current, plan)
             : current
         );
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (installPlanPromiseRef.current?.promise !== promise) {
+          return;
+        }
+        const message = errorMessage(error);
+        setInstallDialogPatchForOperation(operationId, {
+          phase: 'error',
+          errorMessage: message,
+          isSubmitting: false
+        });
+        setMessage(message);
+      });
   };
 
   const analyzeInstallLayout = async (
@@ -6714,7 +6733,7 @@ export const App = () => {
       }
       dispatchDownloadsWorkspace({ type: 'items-loaded', items: nextDownloads });
       if (resetScroll) {
-        setDownloadListScrollTop(0);
+        downloadListVirtualizerRef.current?.scrollTo(0);
       }
       return true;
     } catch (error) {
@@ -8943,11 +8962,8 @@ export const App = () => {
   ]);
 
   useEffect(() => {
-    const downloadsVisible =
-      activeRoute === 'downloads' || (activeRoute === 'build' && activeRightPane === 'downloads');
     if (
       isSecondaryWindow ||
-      !downloadsVisible ||
       !selectedProject ||
       !bridgeStatus?.ready ||
       !downloadCapabilities.bridgeAvailable ||
@@ -8978,8 +8994,6 @@ export const App = () => {
     );
     return () => window.clearInterval(timer);
   }, [
-    activeRightPane,
-    activeRoute,
     bridgeStatus?.ready,
     downloadCapabilities.bridgeAvailable,
     downloadsWorkspace.items,
@@ -12121,7 +12135,7 @@ export const App = () => {
           items={displayedModItems}
           rowHeight={modRowHeight}
           getItemKey={(item) => item.orderId}
-          scrollContainerRef={postInstallModRevealContainerRef}
+          scrollContainerRef={setModListScrollContainerRef}
           virtualizerRef={modListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
@@ -12211,7 +12225,7 @@ export const App = () => {
                 data-state={postInstallRevealOrderId === item.orderId ? 'post-install-reveal' : undefined}
                 key={item.orderId}
                 aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}${visibleConflictMarkerStates.length > 0 ? ` ${modConflictMarkerTitle(visibleConflictMarkerStates)}` : ''}`}
-                aria-expanded={item.isSeparator ? !isCollapsed : undefined}
+                aria-expanded={item.isSeparator && separatorModCount > 0 ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
                   if (consumeSuppressedRowClick()) {
@@ -12297,27 +12311,29 @@ export const App = () => {
                   <>
                     <span className="mod-list-row__priority" role="cell" />
                     <div className="mod-separator-cell" role="cell">
-                      <button
-                        className="separator-toggle-button mod-separator-toggle-button"
-                        type="button"
-                        title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
-                        aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${modItemTitle(item)}`}
-                        aria-expanded={!isCollapsed}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          dispatchModsWorkspace({
-                            type: 'separator-collapse-toggled',
-                            orderId: item.orderId
-                          });
-                          setModMenuOrderId(null);
-                        }}
-                      >
-                        {isCollapsed ? (
-                          <ChevronRight size={18} aria-hidden="true" />
-                        ) : (
-                          <ChevronDown size={18} aria-hidden="true" />
-                        )}
-                      </button>
+                      {separatorModCount > 0 ? (
+                        <button
+                          className="separator-toggle-button mod-separator-toggle-button"
+                          type="button"
+                          title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
+                          aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${modItemTitle(item)}`}
+                          aria-expanded={!isCollapsed}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            dispatchModsWorkspace({
+                              type: 'separator-collapse-toggled',
+                              orderId: item.orderId
+                            });
+                            setModMenuOrderId(null);
+                          }}
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight size={18} aria-hidden="true" />
+                          ) : (
+                            <ChevronDown size={18} aria-hidden="true" />
+                          )}
+                        </button>
+                      ) : null}
                       <strong className="mod-separator-title">{modItemTitle(item)}</strong>
                     </div>
                     <span className="mod-list-row__status mod-separator-status" role="cell">
@@ -12417,22 +12433,11 @@ export const App = () => {
             );
           }}
         />
-        {modConflictScrollbarMarkers.length > 0 ? (
-          <div className="mod-conflict-scrollbar" aria-hidden="true">
-            {modConflictScrollbarMarkers.map((marker) => (
-              <span
-                data-state={marker.state}
-                key={marker.key}
-                style={
-                  {
-                    '--conflict-marker-top': marker.top,
-                    '--conflict-marker-offset': marker.offset
-                  } as ModConflictMarkerStyle
-                }
-              />
-            ))}
-          </div>
-        ) : null}
+        <ModConflictScrollbar
+          contentHeight={displayedModItems.length * modRowHeight}
+          markers={modConflictScrollbarMarkers}
+          scrollContainerRef={modListScrollContainerRef}
+        />
       </div>
     );
   };
@@ -13133,7 +13138,7 @@ export const App = () => {
                 aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}${
                   hasMissingMasters ? ' missing masters' : ''
                 }${blockedDropReason ? ` ${blockedDropReason}` : ''}`}
-                aria-expanded={item.isSeparator ? !isCollapsed : undefined}
+                aria-expanded={item.isSeparator && separatorPluginCount > 0 ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
                   if (consumeSuppressedRowClick()) {
@@ -13183,7 +13188,7 @@ export const App = () => {
                   </span>
                 ) : null}
                 <span className="plugin-hex-index" role="cell">
-                  {item.isSeparator ? (
+                  {item.isSeparator && separatorPluginCount > 0 ? (
                     <button
                       className="separator-toggle-button"
                       type="button"
@@ -13589,17 +13594,16 @@ export const App = () => {
           <span role="columnheader">Size</span>
           <span role="columnheader">Source</span>
         </div>
-        <div
+        <AdaptiveVirtualList
           className="mod-table__body"
+          items={filteredDownloadItems}
+          rowHeight={downloadRowHeight}
+          getItemKey={(entry) => entry.id}
+          virtualizerRef={downloadListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
           onPointerCancel={cancelRowReorderDrag}
-          onScroll={(event) => setDownloadListScrollTop(event.currentTarget.scrollTop)}
-        >
-          {visibleDownloadWindow.topSpacer > 0 ? (
-            <div style={{ height: visibleDownloadWindow.topSpacer }} aria-hidden="true" />
-          ) : null}
-          {visibleDownloadWindow.items.map((entry) => {
+          renderItem={(entry) => {
             const isSelected = downloadsWorkspace.selectedIds.has(entry.id);
             const isMenuOpen = entry.id === downloadMenuId;
             const status = downloadStatusView(entry);
@@ -13617,7 +13621,6 @@ export const App = () => {
                 data-awaiting-decision={entry.transferState === 'awaiting-decision'}
                 data-dragging={draggedDownloadInstallId === entry.id}
                 data-menu-open={isMenuOpen}
-                key={entry.id}
                 aria-selected={isSelected}
                 onClick={(event) => {
                   if (consumeSuppressedRowClick()) {
@@ -13684,11 +13687,8 @@ export const App = () => {
                 {isMenuOpen ? renderDownloadRowMenu(entry) : null}
               </div>
             );
-          })}
-          {visibleDownloadWindow.bottomSpacer > 0 ? (
-            <div style={{ height: visibleDownloadWindow.bottomSpacer }} aria-hidden="true" />
-          ) : null}
-        </div>
+          }}
+        />
       </div>
     );
   };
@@ -14016,11 +14016,11 @@ export const App = () => {
           <input
             value={pluginsWorkspace.searchText}
             onChange={(event) => {
+              preparePluginSearchScroll(pluginsWorkspace.searchText, event.target.value);
               dispatchPluginsWorkspace({
                 type: 'search-changed',
                 searchText: event.target.value
               });
-              pluginListVirtualizerRef.current?.scrollTo(0);
             }}
             placeholder="Search plugins"
             aria-label="Search plugins"
@@ -14092,11 +14092,11 @@ export const App = () => {
         <input
           value={downloadsWorkspace.searchText}
           onChange={(event) => {
+            prepareDownloadSearchScroll(downloadsWorkspace.searchText, event.target.value);
             dispatchDownloadsWorkspace({
               type: 'search-changed',
               searchText: event.target.value
             });
-            setDownloadListScrollTop(0);
           }}
           placeholder="Search downloads"
           aria-label="Search downloads"
@@ -15406,11 +15406,11 @@ export const App = () => {
                 <input
                   value={modsWorkspace.searchText}
                   onChange={(event) => {
+                    prepareModSearchScroll(modsWorkspace.searchText, event.target.value);
                     dispatchModsWorkspace({
                       type: 'search-changed',
                       searchText: event.target.value
                     });
-                    modListVirtualizerRef.current?.scrollTo(0);
                   }}
                   placeholder="Search mods"
                   aria-label="Search mods"

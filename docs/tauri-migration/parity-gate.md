@@ -59,7 +59,7 @@ Required unit anchors:
 - `project-catalog-state.test.ts` covers project/template filtering and create wizard step completion.
 - `mod-workspace-state.test.ts` covers mod list state, row/windowing helpers and mod UI formatting.
 - `plugin-workspace-state.test.ts` covers plugin/load-order UI state.
-- `download-workspace-state.test.ts` covers download filtering, state labels and row actions.
+- `download-workspace-state.test.ts` covers download filtering, state labels, row actions and queued-transfer refresh eligibility. `taskbar-download-progress.test.ts` covers determinate aggregation, indeterminate/paused/error/clear states, facade routing and renderer-boundary validation; Rust shell unit tests cover native Tauri status mapping and percentage validation.
 - `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides, FOMOD wizard state, core-provided Smart Select plans, manual pins and remembered choices. `install-plan-state.test.ts`, install flow coverage and the typed bridge tests verify that a user-edited final name is replanned natively before replace/merge conflict selection. Component/flow tests cover structured reasons, accessible statuses, reset/recalculation and stale-context recovery. `fomod-preview-url.test.ts` covers typed conversion of native preview-cache paths, while `ai-security-hardening.test.ts` keeps the Tauri asset scope restricted to `.fomod-previews`.
 - `profiles-executables-workspace-state.test.ts`, `launch-process-session.test.ts` and `launch-process-watch.test.ts` cover profile/executable UI state, readable process labels, VFS-holder handoff, native exit-signal wiring and fallback polling.
 - `settings-workspace-state.test.ts` and `nexus-auth-workflow.test.ts` cover settings sections, single-theme normalization, language/MO2 transfer state, retryable Nexus status failures and independent auth/API-limit settlement.
@@ -128,6 +128,7 @@ Manual acceptance must not be replaced by a green automated smoke. Required befo
 
 - Walk every screen listed in `docs/tauri-migration/wpf-ui-inventory.md`.
 - Run real Windows user scenarios for project lifecycle, mods, plugins, downloads/install, FOMOD, profiles, executables, settings, MO2 transfer and FluxPack.
+- On Windows, verify the installed main window shows live taskbar progress while Downloads is hidden and while Fluxora is minimized, then verify pause, retryable failure, completion and cancellation states clear or change color correctly.
 - Run Linux and macOS smoke according to `docs/tauri-migration/cross-platform-support.md`.
 - Verify capability states are honest where a platform or native feature is limited.
 - Confirm there is no Tauri-missing scenario still needed for normal Fluxora use.

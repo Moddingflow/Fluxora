@@ -15,17 +15,22 @@ namespace fluxora
     {
     public:
         explicit InstallProjectGate(const std::filesystem::path& projectDirectory);
+        InstallProjectGate(
+            const std::filesystem::path& projectDirectory,
+            std::try_to_lock_t);
         ~InstallProjectGate();
 
         InstallProjectGate(const InstallProjectGate&) = delete;
         InstallProjectGate& operator=(const InstallProjectGate&) = delete;
 
         [[nodiscard]] std::chrono::milliseconds waitDuration() const noexcept;
+        [[nodiscard]] bool ownsLock() const noexcept;
 
     private:
         std::shared_ptr<std::mutex> localMutex_;
         std::unique_lock<std::mutex> localLock_;
         void* nativeHandle_{nullptr};
+        bool nativeLockAcquired_{false};
         std::chrono::milliseconds waitDuration_{0};
     };
 

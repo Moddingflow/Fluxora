@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   attachBackgroundInstallPlan,
+  attachInstallPlanForDisplay,
   installPlanNeedsUserNameReplan,
   matchedInstallTargetForCurrentName
 } from '../src/renderer/features/install/install-plan-state';
@@ -62,6 +63,56 @@ describe('background install plan state', () => {
     ).toMatchObject({
       modName: 'Spell Perk Item Distributor',
       modNameSource: 'identity',
+      installPlan: plan
+    });
+  });
+
+  it('reveals a standard install only when its final identity plan is attached', () => {
+    const plan = {
+      suggestedModName: 'Spell Perk Item Distributor',
+      matchedTarget: null
+    } as unknown as FluxoraInstallPlan;
+
+    expect(
+      attachInstallPlanForDisplay(
+        {
+          phase: 'detecting' as const,
+          installerKind: 'standard' as const,
+          modName: 'SPID-7.3.1',
+          modNameSource: 'source' as const,
+          installPlan: null
+        },
+        plan
+      )
+    ).toMatchObject({
+      phase: 'options',
+      modName: 'Spell Perk Item Distributor',
+      modNameSource: 'source',
+      installPlan: plan
+    });
+  });
+
+  it('keeps the skeleton visible when the installer kind is still pending', () => {
+    const plan = {
+      suggestedModName: 'Spell Perk Item Distributor',
+      matchedTarget: null
+    } as unknown as FluxoraInstallPlan;
+
+    expect(
+      attachInstallPlanForDisplay(
+        {
+          phase: 'detecting' as const,
+          installerKind: 'pending' as const,
+          modName: 'SPID-7.3.1',
+          modNameSource: 'source' as const,
+          installPlan: null
+        },
+        plan
+      )
+    ).toMatchObject({
+      phase: 'detecting',
+      modName: 'SPID-7.3.1',
+      modNameSource: 'source',
       installPlan: plan
     });
   });

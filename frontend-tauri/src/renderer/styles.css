@@ -2,6 +2,10 @@
 @import "./design-system/primitives/primitives.css";
 @import "./features/text-editor/text-editor-workbench.css";
 
+:root {
+  --flx-scrollbar-size: 14px;
+  --flx-scrollbar-button-size: 14px;
+}
 
 * {
   box-sizing: border-box;
@@ -10,8 +14,8 @@
 }
 
 *::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
+  width: var(--flx-scrollbar-size);
+  height: var(--flx-scrollbar-size);
 }
 
 *::-webkit-scrollbar-track {
@@ -46,8 +50,8 @@
 
 *::-webkit-scrollbar-button:single-button {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: var(--flx-scrollbar-button-size);
+  height: var(--flx-scrollbar-button-size);
   border: 1px solid rgba(var(--flx-accent-rgb), 0.18);
   border-radius: var(--radius-pill);
   background-color: rgba(10, 13, 20, 0.96);
@@ -5670,23 +5674,24 @@ body.row-reorder-active.row-reorder-blocked * {
 
 .mod-conflict-scrollbar {
   position: absolute;
-  top: 38px;
-  right: 2px;
-  bottom: 0;
   z-index: 6;
-  width: 10px;
+  contain: layout paint;
   pointer-events: none;
+}
+
+.mod-conflict-scrollbar[data-visible="false"],
+.mod-list__body[data-scrollable="false"] + .mod-conflict-scrollbar {
+  display: none;
 }
 
 .mod-conflict-scrollbar span {
   position: absolute;
-  top: calc(var(--conflict-marker-top) + var(--conflict-marker-offset));
-  right: 1px;
-  width: 8px;
-  height: 2px;
-  border-radius: 999px;
+  top: var(--conflict-marker-top);
+  right: 0;
+  left: 0;
+  height: var(--conflict-marker-height);
+  border-radius: 2px 0 0 2px;
   background: currentColor;
-  transform: translateY(-50%);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.22),
     0 0 10px color-mix(in srgb, currentColor 44%, transparent);

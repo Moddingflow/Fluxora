@@ -10,7 +10,7 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
-describe('adaptive mod and plugin list virtualization', () => {
+describe('adaptive workspace list virtualization', () => {
   it('keeps display-synchronized scroll state outside the root App component', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const virtualList = readText(
@@ -24,10 +24,13 @@ describe('adaptive mod and plugin list virtualization', () => {
 
     expect(app).toContain('items={displayedModItems}');
     expect(app).toContain('items={filteredPluginItems}');
+    expect(app).toContain('items={filteredDownloadItems}');
     expect(app).toContain('virtualizerRef={modListVirtualizerRef}');
     expect(app).toContain('virtualizerRef={pluginListVirtualizerRef}');
+    expect(app).toContain('virtualizerRef={downloadListVirtualizerRef}');
     expect(app).not.toContain('setModListScrollTop');
     expect(app).not.toContain('setPluginListScrollTop');
+    expect(app).not.toContain('setDownloadListScrollTop');
     expect(virtualList).toContain('window.requestAnimationFrame');
     expect(virtualList).toContain('new ResizeObserver');
     expect(virtualList).toContain('createAdaptiveVirtualWindow');

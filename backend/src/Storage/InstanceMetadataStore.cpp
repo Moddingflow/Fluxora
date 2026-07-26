@@ -588,7 +588,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
-        constexpr int instanceDatabaseSchemaVersion = 13;
+        constexpr int instanceDatabaseSchemaVersion = 15;
         constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
@@ -2158,7 +2158,15 @@ namespace fluxora
                     "ELSE last_check_state END, "
                     "last_attempted_at = CASE WHEN last_attempted_at = '' THEN last_checked_at ELSE last_attempted_at END;");
             }
-            database.exec("PRAGMA user_version = 13;");
+            if (persistedVersion < 15)
+            {
+                // These tables are derived search indexes. Clearing them makes the
+                // next identity query rebuild every installed mod with the current
+                // normalization and tokenization rules without touching user data.
+                database.exec("DELETE FROM mod_identity_keys;");
+                database.exec("DELETE FROM mod_identity_tokens;");
+            }
+            database.exec("PRAGMA user_version = 15;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -6408,14 +6416,14 @@ namespace fluxora
             transaction.commit();
         }
 
-        const std::size_t requestedLimit = query.limit == 0 ? 5 : query.limit;
-        const std::size_t limit = (std::min<std::size_t>)(requestedLimit, 5);
+        const std::size_t requestedLimit = query.fuzzyLimit == 0 ? 5 : query.fuzzyLimit;
+        const std::size_t fuzzyLimit = (std::min<std::size_t>)(requestedLimit, 5);
         std::vector<std::int64_t> candidateIds;
-        candidateIds.reserve(limit);
+        candidateIds.reserve(fuzzyLimit + 16);
         std::set<std::int64_t> seenIds;
         const auto appendKeyMatches = [&](std::wstring_view kind, std::wstring_view value)
         {
-            if (value.empty() || candidateIds.size() >= limit)
+            if (value.empty())
             {
                 return;
             }
@@ -6424,10 +6432,10 @@ namespace fluxora
                 "JOIN mods m ON m.id = k.mod_id "
                 "WHERE k.key_kind = ? AND k.key_value = ? "
                 "AND m.state IN ('installed', 'disabled') "
-                "ORDER BY k.mod_id LIMIT 5;");
+                "ORDER BY k.mod_id;");
             statement.bindText(1, kind);
             statement.bindText(2, value);
-            while (candidateIds.size() < limit && statement.stepRow())
+            while (statement.stepRow())
             {
                 const std::int64_t id = std::stoll(statement.columnText(0));
                 if (seenIds.insert(id).second)
@@ -6445,7 +6453,7 @@ namespace fluxora
         appendKeyMatches(L"name", query.normalizedName);
         appendKeyMatches(L"folder", query.normalizedName);
 
-        if (candidateIds.size() < limit && !query.tokens.empty())
+        if (!query.tokens.empty())
         {
             std::string sql =
                 "SELECT t.mod_id, SUM(t.weight) AS score, COUNT(*) AS matches "
@@ -6459,18 +6467,20 @@ namespace fluxora
                 }
                 sql += '?';
             }
-            sql += ") GROUP BY t.mod_id ORDER BY matches DESC, score DESC, t.mod_id LIMIT 5;";
+            sql += ") GROUP BY t.mod_id ORDER BY matches DESC, score DESC, t.mod_id;";
             Statement statement = database.prepare(sql.c_str());
             for (std::size_t index = 0; index < query.tokens.size(); ++index)
             {
                 statement.bindText(static_cast<int>(index + 1), query.tokens[index]);
             }
-            while (candidateIds.size() < limit && statement.stepRow())
+            std::size_t fuzzyCandidateCount = 0;
+            while (fuzzyCandidateCount < fuzzyLimit && statement.stepRow())
             {
                 const std::int64_t id = std::stoll(statement.columnText(0));
                 if (seenIds.insert(id).second)
                 {
                     candidateIds.push_back(id);
+                    ++fuzzyCandidateCount;
                 }
             }
         }

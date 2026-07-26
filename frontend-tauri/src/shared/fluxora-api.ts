@@ -174,6 +174,7 @@ export const FluxoraIpcChannels = {
   windowOpenSettings: 'fluxora:window:open-settings',
   windowOpenAiTextEditor: 'fluxora:window:open-ai-text-editor',
   windowOpenTextEditor: 'fluxora:window:open-text-editor',
+  windowSetTaskbarProgress: 'fluxora:window:set-taskbar-progress',
   windowToggleMaximize: 'fluxora:window:toggle-maximize'
 } as const;
 
@@ -1341,6 +1342,11 @@ export interface FluxoraDownloadDuplicateDecision {
 }
 
 export type FluxoraDownloadDuplicateChoice = 'replace' | 'keepBoth' | 'cancel';
+
+export type FluxoraTaskbarProgressState =
+  | { status: 'none' | 'indeterminate' }
+  | { status: 'normal'; progress: number }
+  | { status: 'paused' | 'error'; progress?: number };
 
 export interface FluxoraDownloadEntry {
   id: string;
@@ -2991,6 +2997,7 @@ export interface FluxoraApi {
       relativePath?: string,
       fileName?: string
     ) => Promise<void>;
+    setTaskbarProgress: (state: FluxoraTaskbarProgressState) => Promise<void>;
     toggleMaximize: () => Promise<void>;
   };
 }

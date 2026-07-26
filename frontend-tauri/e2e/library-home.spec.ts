@@ -3248,6 +3248,7 @@ test.beforeEach(async ({ page }) => {
         },
         openSettings: async () => undefined,
         openTextEditor: async () => undefined,
+        setTaskbarProgress: async () => undefined,
         toggleMaximize: async () => undefined
       }
     };
@@ -3433,6 +3434,28 @@ const enableLargeAdaptiveScrollWorkspace = async (
     }));
     scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
     scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+  }, itemCount);
+};
+
+const enableSearchScrollRestorationWorkspace = async (
+  page: Page,
+  itemCount = 240
+) => {
+  await enableLargeAdaptiveScrollWorkspace(page, itemCount);
+  await page.evaluate(async (requestedItemCount) => {
+    const scope = window as typeof window & { fluxora: any };
+    const listDownloads = scope.fluxora.downloads.list;
+    scope.fluxora.downloads.list = async (...args: unknown[]) => {
+      const downloads = await listDownloads(...args);
+      const template = downloads[0];
+      return Array.from({ length: requestedItemCount }, (_, index) => ({
+        ...structuredClone(template),
+        id: `download_search_scroll_${index}`,
+        name: `Search scroll download ${index}`,
+        fileName: `Search scroll download ${index}.7z`,
+        localPath: `D:\\Fluxora\\Downloads\\skyrimse\\Search scroll download ${index}.7z`
+      }));
+    };
   }, itemCount);
 };
 
@@ -4827,7 +4850,7 @@ test('shows optimistic Installing before the persisted archive status becomes In
   await expect(skyUiRow.getByText('Installed', { exact: true })).toBeVisible({ timeout: 5_000 });
 });
 
-test('deleting a pending mod cancels its durable install and it does not reappear', async ({
+test('a mod cannot be deleted while its durable install is active', async ({
   page
 }) => {
   await openSkyrimBuild(page);
@@ -4845,34 +4868,27 @@ test('deleting a pending mod cancels its durable install and it does not reappea
   await expect(pendingRow).toHaveAttribute('data-order-id', /^pending-install:/);
   await pendingRow.click();
   await pendingRow.press('Delete');
-  await page.getByRole('dialog', { name: 'Удаление мода' })
-    .getByRole('button', { name: 'Удалить' })
-    .click();
 
-  await expect.poll(() => callMethods(page)).toContain('installs.cancel');
-  await expect(pendingRow).toHaveCount(0);
-  await page.waitForTimeout(1_100);
-  await expect(pendingRow).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      (window as any).__fluxoraCalls.filter(
-        (call: { method: string; payload?: { modId?: string } }) =>
-          call.method === 'mods.deleteInstalled' &&
-          String(call.payload?.modId ?? '').startsWith('pending-install:')
-      ).length
-    )
-  ).toBe(0);
+  await expect(page.getByRole('dialog', { name: 'Удаление мода' })).toHaveCount(0);
+  await expect(pendingRow).not.toHaveAttribute('data-order-id', /^pending-install:/, {
+    timeout: 5_000
+  });
+  expect(await callMethods(page)).not.toContain('installs.cancel');
+  expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
 });
 
-test('keeps the standard install dialog stable while its skeleton resolves', async ({ page }) => {
+test('keeps the standard install name stable for double-click and context-menu installs', async ({ page }) => {
   await openSkyrimBuild(page);
-  await page.evaluate(() => window.localStorage.setItem('fluxora.test.fomodAnalyzeDelayMs', '900'));
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.fomodAnalyzeDelayMs', '50');
+    window.localStorage.setItem('fluxora.test.fomodPlanDelayMs', '900');
+  });
 
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
-  await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
+  await rightPane.getByRole('row', { name: /Spell Perks Item Distributor \(SPID\)/ }).dblclick();
 
-  const dialog = page.getByRole('dialog', { name: /SkyUI/ });
+  const dialog = page.locator('.install-modal-layout[role="dialog"]');
   const dialogSurface = dialog.locator('.install-dialog');
   await expect(dialog).toHaveAttribute('aria-busy', 'true');
   await expect(dialog.locator('.install-dialog-title')).toHaveText('Установка мода');
@@ -4894,7 +4910,12 @@ test('keeps the standard install dialog stable while its skeleton resolves', asy
     backgroundRepeat: 'no-repeat'
   });
 
+  await page.waitForTimeout(200);
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.getByLabel(/Mod name/)).toHaveCount(0);
+
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor');
   await expect(dialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
   const optionsBox = await dialogSurface.boundingBox();
 
@@ -4902,6 +4923,33 @@ test('keeps the standard install dialog stable while its skeleton resolves', asy
   expect(optionsBox).not.toBeNull();
   expect(detectingBox?.width).toBe(optionsBox?.width);
   expect(detectingBox?.height).toBe(optionsBox?.height);
+
+  const preflightCalls = await callMethods(page);
+  expect(preflightCalls.filter((method) => method === 'downloads.analyzeFomod')).toHaveLength(1);
+  expect(preflightCalls.filter((method) => method === 'downloads.planInstall')).toHaveLength(1);
+
+  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const spidRow = rightPane.getByRole('row', {
+    name: /Spell Perks Item Distributor \(SPID\)/
+  });
+  await spidRow.click({ button: 'right' });
+  await page
+    .getByRole('menu', { name: /Spell Perks Item Distributor \(SPID\).* actions/ })
+    .getByRole('menuitem', { name: 'Install' })
+    .click();
+
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await page.waitForTimeout(200);
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.getByLabel(/Mod name/)).toHaveCount(0);
+  await expect(dialog).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor');
+
+  const allPreflightCalls = await callMethods(page);
+  expect(allPreflightCalls.filter((method) => method === 'downloads.analyzeFomod')).toHaveLength(2);
+  expect(allPreflightCalls.filter((method) => method === 'downloads.planInstall')).toHaveLength(2);
 });
 
 test('keeps download search input usable after closing the install dialog', async ({ page }) => {
@@ -6713,6 +6761,12 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     .toHaveAttribute('data-version-mismatch', 'false');
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  const modsSearch = modsPane.getByRole('textbox', { name: 'Search mods' });
+  await modsSearch.fill('SkyUI');
+  await expect(modOrderTable.locator('.mod-list__body')).toHaveAttribute('data-scrollable', 'false');
+  await expect(modOrderTable.locator('.mod-conflict-scrollbar')).toBeHidden();
+  await modsSearch.fill('');
+
   await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
   await page.getByRole('menuitem', { name: 'Создать разделитель' }).click();
   const creationDialog = page.getByRole('dialog', { name: 'Создать разделитель' });
@@ -6828,6 +6882,73 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     .toMatchObject({
       path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\overwrite'
     });
+});
+
+test('hides collapse controls for empty mod and plugin separators', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const fluxora = (window as any).fluxora;
+    const getWorkspace = fluxora.mods.getWorkspace.bind(fluxora.mods);
+    fluxora.mods.getWorkspace = async (...args: any[]) => {
+      const workspace = await getWorkspace(...args);
+      const separatorTemplate = workspace.modOrder.find((item: any) => item.isSeparator);
+      return {
+        ...workspace,
+        modOrder: [
+          ...workspace.modOrder,
+          {
+            ...separatorTemplate,
+            id: 'sep_empty_mods',
+            orderId: 'sep_empty_mods',
+            order: workspace.modOrder.length,
+            separatorTitle: 'Empty mods',
+            name: 'Empty mods'
+          }
+        ]
+      };
+    };
+
+    const appendEmptyPluginSeparator = (items: any[]) => {
+      const separatorTemplate = items.find((item) => item.isSeparator);
+      return [
+        ...items,
+        {
+          ...separatorTemplate,
+          id: 'sep_empty_plugins',
+          orderId: 'sep_empty_plugins',
+          order: items.length,
+          separatorTitle: 'Empty plugins'
+        }
+      ];
+    };
+    const listPlugins = fluxora.plugins.list.bind(fluxora.plugins);
+    fluxora.plugins.list = async (...args: any[]) =>
+      appendEmptyPluginSeparator(await listPlugins(...args));
+    const listPersistedPlugins = fluxora.plugins.listPersisted.bind(fluxora.plugins);
+    fluxora.plugins.listPersisted = async (...args: any[]) =>
+      appendEmptyPluginSeparator(await listPersistedPlugins(...args));
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const populatedModSeparator = page.getByRole('row', { name: /Core fixes separator/ });
+  await expect(populatedModSeparator.getByRole('button', { name: 'Collapse Core fixes' })).toBeVisible();
+  const emptyModSeparator = page.getByRole('row', { name: /Empty mods separator/ });
+  await expect(emptyModSeparator.locator('.mod-separator-count')).toHaveText('0 mods');
+  await expect(emptyModSeparator.locator('.separator-toggle-button')).toHaveCount(0);
+  await expect(emptyModSeparator).not.toHaveAttribute('aria-expanded');
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: 'Плагины', exact: true }).click();
+  const populatedPluginSeparator = page.getByRole('row', { name: /Late patches separator/ });
+  await expect(
+    populatedPluginSeparator.getByRole('button', { name: 'Collapse Late patches' })
+  ).toBeVisible();
+  const emptyPluginSeparator = page.getByRole('row', { name: /Empty plugins separator/ });
+  await expect(emptyPluginSeparator).toContainText('0 plugins');
+  await expect(emptyPluginSeparator.locator('.separator-toggle-button')).toHaveCount(0);
+  await expect(emptyPluginSeparator).not.toHaveAttribute('aria-expanded');
 });
 
 test('does not show row focus rings when Shift is pressed without Tab navigation', async ({ page }) => {
@@ -7465,6 +7586,9 @@ test('fast 5k mod and plugin scrolls paint the destination window without growin
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
+  const modListBody = page.locator('.mod-list__body[data-virtualized="adaptive"]');
+  await expect(modListBody).toHaveAttribute('data-scrollable', 'true');
+
   const assertFastDestinationWindow = async (
     body: Locator,
     targetOrderId: string
@@ -7500,12 +7624,144 @@ test('fast 5k mod and plugin scrolls paint the destination window without growin
   };
 
   await assertFastDestinationWindow(
-    page.locator('.mod-list__body[data-virtualized="adaptive"]'),
+    modListBody,
     'mod_performance_4200'
   );
   await assertFastDestinationWindow(
     page.locator('.plugin-table .mod-table__body[data-virtualized="adaptive"]').first(),
     'plugin_performance_4200'
+  );
+});
+
+test('keeps conflict markers flush with the scrollbar and precisely inside its arrow-button track', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(baseUrl);
+  await page.addStyleTag({
+    content: [
+      '.mod-list { height: 180px !important; }',
+      '.mod-list__body { scrollbar-gutter: stable !important; }'
+    ].join('\n')
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await page.getByRole('row', { name: /Unofficial Patch mod/ }).click();
+
+  const modListBody = page.locator('.mod-list__body[data-virtualized="adaptive"]');
+  const ruler = page.locator('.mod-conflict-scrollbar');
+  await expect(modListBody).toHaveAttribute('data-scrollable', 'true');
+  await expect(ruler).toHaveAttribute('data-visible', 'true');
+
+  const geometry = await ruler.evaluate((element) => {
+    const scrollContainer = element.previousElementSibling as HTMLElement | null;
+    const markers = Array.from(element.querySelectorAll<HTMLElement>('span'));
+    if (!scrollContainer || markers.length === 0) {
+      return null;
+    }
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const containerStyle = getComputedStyle(scrollContainer);
+    const rulerRect = element.getBoundingClientRect();
+    const borderLeft = Number.parseFloat(containerStyle.borderLeftWidth) || 0;
+    const borderRight = Number.parseFloat(containerStyle.borderRightWidth) || 0;
+    const scrollbarWidth =
+      scrollContainer.offsetWidth - scrollContainer.clientWidth - borderLeft - borderRight;
+    const buttonSize =
+      Number.parseFloat(containerStyle.getPropertyValue('--flx-scrollbar-button-size')) || 0;
+    const devicePixelTolerance = 1 / Math.max(1, devicePixelRatio);
+    const markerPositionErrors = markers.map((marker) => {
+      const markerRect = marker.getBoundingClientRect();
+      const contentOffset = Number(marker.dataset.contentOffset);
+      const stackOffset = Number(marker.dataset.stackOffset);
+      const requestedTop =
+        (contentOffset / scrollContainer.scrollHeight) * rulerRect.height +
+        stackOffset - markerRect.height / 2;
+      const expectedTop = Math.min(
+        rulerRect.height - markerRect.height,
+        Math.max(0, requestedTop)
+      );
+      return Math.abs(markerRect.top - rulerRect.top - expectedTop);
+    });
+    const markerRightGaps = markers.map((marker) =>
+      Math.abs(rulerRect.right - marker.getBoundingClientRect().right)
+    );
+
+    return {
+      bottomInset:
+        containerRect.top + scrollContainer.clientTop + scrollContainer.clientHeight -
+        rulerRect.bottom,
+      buttonSize,
+      devicePixelTolerance,
+      markerCount: markers.length,
+      markerMaxPositionError: Math.max(...markerPositionErrors),
+      markerMaxRightGap: Math.max(...markerRightGaps),
+      pointerEvents: getComputedStyle(element).pointerEvents,
+      rightGap: Math.abs(containerRect.right - borderRight - rulerRect.right),
+      rulerWidth: rulerRect.width,
+      scrollbarWidth,
+      topInset: rulerRect.top - containerRect.top - scrollContainer.clientTop
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry!.markerCount).toBe(1);
+  expect(geometry!.rulerWidth).toBeCloseTo(geometry!.scrollbarWidth, 1);
+  expect(geometry!.rightGap).toBeLessThanOrEqual(0.5);
+  expect(geometry!.markerMaxRightGap).toBeLessThanOrEqual(0.5);
+  expect(geometry!.topInset).toBeCloseTo(geometry!.buttonSize, 1);
+  expect(geometry!.bottomInset).toBeCloseTo(geometry!.buttonSize, 1);
+  expect(geometry!.markerMaxPositionError)
+    .toBeLessThanOrEqual(geometry!.devicePixelTolerance + 0.01);
+  expect(geometry!.pointerEvents).toBe('none');
+});
+
+test('clearing search restores the exact prior scroll position for mods, plugins and downloads', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(baseUrl);
+  await enableSearchScrollRestorationWorkspace(page);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  const targetScrollTop = 120 * 48 + 17;
+  const assertSearchRestoresScroll = async (
+    body: Locator,
+    searchInput: Locator,
+    query: string
+  ) => {
+    const priorScrollTop = await body.evaluate(async (element, requestedScrollTop) => {
+      element.scrollTop = requestedScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      return element.scrollTop;
+    }, targetScrollTop);
+    expect(priorScrollTop).toBe(targetScrollTop);
+
+    await searchInput.fill(query);
+    await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBe(0);
+
+    await searchInput.fill('');
+    await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBe(priorScrollTop);
+  };
+
+  await assertSearchRestoresScroll(
+    page.locator('.mod-list__body[data-virtualized="adaptive"]'),
+    page.getByLabel('Search mods'),
+    'Performance mod 239'
+  );
+
+  await assertSearchRestoresScroll(
+    rightPane.locator('.plugin-table .mod-table__body[data-virtualized="adaptive"]'),
+    rightPane.getByLabel('Search plugins'),
+    'PerformancePlugin239'
+  );
+
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await assertSearchRestoresScroll(
+    rightPane.locator('.download-table .mod-table__body'),
+    rightPane.getByLabel('Search downloads'),
+    'Search scroll download 239'
   );
 });
 
@@ -9143,7 +9399,7 @@ test('opens install controls immediately and keeps native installation non-modal
   expect(preflightCalls).not.toContain('downloads.install');
 
   const skyuiDialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await expect(skyuiDialog.getByText('SkyUI', { exact: true }).first()).toBeVisible();
+  await expect(skyuiDialog.getByLabel(/Mod name/)).toHaveValue('SkyUI');
   await expect(skyuiDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
   await expect(skyuiDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
   await skyuiDialog.getByRole('button', { name: 'Установить', exact: true }).click();
@@ -9202,7 +9458,7 @@ test('opens install controls immediately and keeps native installation non-modal
   await expect(page.locator('.install-dialog[data-phase="analyzing"]')).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.planInstall')).toMatchObject({ delayMs: 15_000 });
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
-  await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible({ timeout: 2_000 });
+  await expect(fomodDialog).toBeVisible({ timeout: 2_000 });
   await expect(fomodDialog).not.toHaveAttribute('aria-busy', 'true');
   const stepSidebar = fomodDialog.locator('.install-step-sidebar');
   await expect(stepSidebar).toBeVisible();

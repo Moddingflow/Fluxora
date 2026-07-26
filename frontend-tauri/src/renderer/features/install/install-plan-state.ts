@@ -13,6 +13,14 @@ interface InstallPlanMatchState extends InstallNameState {
   installPlan: FluxoraInstallPlan | null;
 }
 
+type InstallPlanDisplayPhase =
+  | 'detecting'
+  | 'fomod'
+  | 'options'
+  | 'conflict'
+  | 'details'
+  | 'error';
+
 const normalizedInstallIdentityName = (value: string): string =>
   value.trim().toLocaleLowerCase();
 
@@ -58,4 +66,16 @@ export const attachBackgroundInstallPlan = <State extends InstallPlanState>(
     modName: nameState.modName,
     modNameSource: nameState.modNameSource
   };
+};
+
+export const attachInstallPlanForDisplay = <
+  State extends InstallPlanState & { phase: InstallPlanDisplayPhase }
+>(
+  current: State,
+  plan: FluxoraInstallPlan
+): State => {
+  const planned = attachBackgroundInstallPlan(current, plan);
+  return planned.phase === 'detecting' && planned.installerKind === 'standard'
+    ? { ...planned, phase: 'options' }
+    : planned;
 };

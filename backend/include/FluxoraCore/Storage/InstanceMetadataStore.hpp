@@ -101,7 +101,8 @@ namespace fluxora
         std::wstring fomodModuleId;
         std::wstring normalizedName;
         std::vector<std::wstring> tokens;
-        std::size_t limit{5};
+        // Exact indexed signals are never discarded; this only bounds fuzzy token candidates.
+        std::size_t fuzzyLimit{5};
     };
 
     struct ModIdentityCatalogCandidate

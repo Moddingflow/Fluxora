@@ -2,6 +2,7 @@
 
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/InstallOperationStore.hpp"
 #include "FluxoraCore/Services/InstallProjectGate.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
@@ -419,6 +420,53 @@ namespace fluxora
             }
 
             return value;
+        }
+
+        bool activeInstallTargetsMod(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath)
+        {
+            const std::vector<InstallOperationRecord> activeOperations =
+                InstallOperationStore::list(projectDirectory, false);
+            if (activeOperations.empty())
+            {
+                return false;
+            }
+
+            const std::wstring pathFolderKey = toLower(modPath.filename().wstring());
+            std::wstring modUuid;
+            std::wstring metadataFolderKey;
+            std::wstring displayNameKey;
+            for (const InstalledModRecord& installed :
+                 InstanceMetadataStore::listInstalledMods(projectDirectory, modPath.parent_path()))
+            {
+                if (toLower(installed.folderName) == pathFolderKey ||
+                    toLower(installed.path.filename().wstring()) == pathFolderKey)
+                {
+                    modUuid = toLower(installed.uuid);
+                    metadataFolderKey = toLower(installed.folderName);
+                    displayNameKey = toLower(installed.displayName);
+                    break;
+                }
+            }
+
+            return std::any_of(
+                activeOperations.begin(),
+                activeOperations.end(),
+                [&](const InstallOperationRecord& operation)
+                {
+                    const std::wstring operationUuid = toLower(operation.targetModUuid);
+                    if (!modUuid.empty() && !operationUuid.empty() && operationUuid == modUuid)
+                    {
+                        return true;
+                    }
+
+                    const std::wstring targetFolderKey = toLower(operation.targetFolder);
+                    return !targetFolderKey.empty() &&
+                        (targetFolderKey == pathFolderKey ||
+                         (!metadataFolderKey.empty() && targetFolderKey == metadataFolderKey) ||
+                         (!displayNameKey.empty() && targetFolderKey == displayNameKey));
+                });
         }
 
         bool isAllowedPreviewExtension(const std::filesystem::path& relativePath, std::wstring_view kind)
@@ -1425,7 +1473,38 @@ namespace fluxora
             throw std::invalid_argument("Mod path is outside the project mods directory.");
         }
 
-        InstallProjectGate projectGate(projectDirectory);
+        if (activeInstallTargetsMod(projectDirectory, modPath))
+        {
+            logger_.writeOperation(
+                LogLevel::Warning,
+                "ModDelete",
+                "Rejected installed mod deletion because the target has an active install. path=\"" +
+                    toUtf8(modPath.wstring()) + "\"");
+            throw std::runtime_error(
+                "Installed mod cannot be deleted while its install or update is active.");
+        }
+
+        InstallProjectGate projectGate(projectDirectory, std::try_to_lock);
+        if (!projectGate.ownsLock())
+        {
+            logger_.writeOperation(
+                LogLevel::Warning,
+                "ModDelete",
+                "Rejected installed mod deletion because the project commit gate is busy. path=\"" +
+                    toUtf8(modPath.wstring()) + "\"");
+            throw std::runtime_error(
+                "Installed mod cannot be deleted while another project commit is active.");
+        }
+        if (activeInstallTargetsMod(projectDirectory, modPath))
+        {
+            logger_.writeOperation(
+                LogLevel::Warning,
+                "ModDelete",
+                "Rejected installed mod deletion because an install targeted it while acquiring the project gate. path=\"" +
+                    toUtf8(modPath.wstring()) + "\"");
+            throw std::runtime_error(
+                "Installed mod cannot be deleted while its install or update is active.");
+        }
 
         try
         {
