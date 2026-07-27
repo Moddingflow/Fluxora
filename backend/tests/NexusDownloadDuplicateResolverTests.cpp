@@ -11,14 +11,15 @@ namespace fluxora
             std::wstring gameDomain,
             std::wstring modId,
             std::wstring fileId,
-            std::wstring version = {})
+            std::wstring version = {},
+            std::wstring fileName = L"archive.zip")
         {
             return NexusDownloadFileVersion{
                 std::move(id),
                 std::move(gameDomain),
                 std::move(modId),
                 std::move(fileId),
-                L"archive.zip",
+                std::move(fileName),
                 std::move(version),
                 {}};
         }
@@ -60,7 +61,7 @@ namespace fluxora
         EXPECT_EQ(mixed.existingFiles.size(), 2U);
     }
 
-    TEST(NexusDownloadDuplicateResolverTests, ReusesTheSameFileIdWithoutDecision)
+    TEST(NexusDownloadDuplicateResolverTests, ClassifiesTheSameFileIdWithOneStableSnapshot)
     {
         const NexusDownloadDuplicateResolution resolution = NexusDownloadDuplicateResolver().resolve(
             file(L"incoming", L"skyrimspecialedition", L"3863", L"200"),
@@ -73,7 +74,38 @@ namespace fluxora
         EXPECT_EQ(resolution.kind, NexusDownloadDuplicateKind::SameFile);
         ASSERT_TRUE(resolution.sameFile.has_value());
         EXPECT_EQ(resolution.sameFile->id, L"same");
-        EXPECT_TRUE(resolution.existingFiles.empty());
+        ASSERT_EQ(resolution.existingFiles.size(), 1U);
+        EXPECT_EQ(resolution.existingFiles.front().id, L"same");
+        EXPECT_EQ(resolution.lineageFileIds, (std::vector<std::wstring>{L"200"}));
+    }
+
+    TEST(NexusDownloadDuplicateResolverTests, InfersAnExactNamedVersionFamilyWithoutNexusLineage)
+    {
+        const NexusDownloadDuplicateResolution resolution = NexusDownloadDuplicateResolver().resolve(
+            file(
+                L"incoming",
+                L"skyrimspecialedition",
+                L"3863",
+                L"200",
+                L"1.1.0",
+                L"Horizon Fix AE.zip"),
+            {
+                file(
+                    L"older-copy",
+                    L"skyrimspecialedition",
+                    L"3863",
+                    L"100",
+                    L"1.0.0",
+                    L"Horizon Fix AE (2).zip")
+            },
+            {});
+
+        EXPECT_EQ(resolution.kind, NexusDownloadDuplicateKind::Upgrade);
+        ASSERT_EQ(resolution.existingFiles.size(), 1U);
+        EXPECT_EQ(resolution.existingFiles.front().id, L"older-copy");
+        EXPECT_EQ(
+            resolution.lineageFileIds,
+            (std::vector<std::wstring>{L"100", L"200"}));
     }
 
     TEST(NexusDownloadDuplicateResolverTests, RequiresTheExactGameAndModPair)

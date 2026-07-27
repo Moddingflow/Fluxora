@@ -172,6 +172,47 @@ namespace fluxora::tests
         EXPECT_FALSE(nextDescriptor.structureFingerprint.empty());
     }
 
+    TEST(FomodInstallerServiceTests, AnalyzeAndInstallFindFomodBelowArbitraryWrapperDepth)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / "project";
+        const std::filesystem::path package = temp.path() / "package";
+        const std::filesystem::path packageRoot =
+            package / "release" / "mod-name" / "installer-payload";
+        const std::filesystem::path destination = temp.path() / "installed";
+        writeTextFile(package / "release-notes.txt", "noise beside the wrapper");
+        writeTextFile(package / "release" / "docs" / "readme.txt", "nested noise");
+        writePackage(packageRoot);
+
+        EXPECT_EQ(FomodInstallerService::findPackageRoot(package), packageRoot);
+        EXPECT_TRUE(FomodInstallerService::hasXmlInstaller(package));
+
+        const FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity());
+        ASSERT_TRUE(descriptor.isFomod);
+        ASSERT_EQ(descriptor.steps.size(), 1U);
+        ASSERT_EQ(descriptor.steps[0].groups.size(), 1U);
+        ASSERT_EQ(descriptor.steps[0].groups[0].options.size(), 2U);
+
+        const std::vector<std::wstring> applied = FomodInstallerService::install(
+            FomodInstallContext{
+                project,
+                temp.path() / "game",
+                temp.path() / "mods",
+                package,
+                destination,
+                identity(),
+                {descriptor.steps[0].groups[0].options[0].id}});
+
+        EXPECT_EQ(applied, (std::vector<std::wstring>{descriptor.steps[0].groups[0].options[0].id}));
+        EXPECT_EQ(readTextFile(destination / "common" / "readme.txt"), "common");
+        EXPECT_EQ(readTextFile(destination / "Data" / "plugin.esp"), "a");
+    }
+
     TEST(FomodInstallerServiceTests, MemoryV3DoesNotApplySelectionToChangedOptionStructure)
     {
         TempDirectory temp;

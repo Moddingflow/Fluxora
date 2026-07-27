@@ -1710,6 +1710,33 @@ namespace
             });
     }
 
+    std::wstring payloadGetWorkspaceDelta(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring templateId = optionalStringField(&params, L"templateId");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring sinceRevision = optionalStringField(&params, L"sinceRevision");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.workspaceDeltaFailed",
+            [&projectDirectory,
+             &templateId,
+             &profileName,
+             &sinceRevision,
+             &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_get_workspace_delta(
+                    projectDirectory.c_str(),
+                    templateId.empty() ? nullptr : templateId.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    sinceRevision.empty() ? nullptr : sinceRevision.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadGetPersistedModWorkspace(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2710,6 +2737,30 @@ namespace
             });
     }
 
+    std::wstring payloadGetDownloadsDelta(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring sinceRevision = optionalStringField(&params, L"sinceRevision");
+        const std::wstring reason = optionalStringField(&params, L"reason");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.downloadsDeltaFailed",
+            [&projectDirectory,
+             &sinceRevision,
+             &operationId,
+             &reason](wchar_t* buffer, int length)
+            {
+                return fluxora_get_downloads_delta(
+                    projectDirectory.c_str(),
+                    sinceRevision.empty() ? nullptr : sinceRevision.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    reason.empty() ? nullptr : reason.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadCaptureNxmLinks(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -3363,6 +3414,8 @@ namespace
         const std::wstring selectedOptionIdsJson = optionalStringField(&params, L"selectedOptionIdsJson");
         const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
         const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring templateId = optionalStringField(&params, L"templateId");
+        const std::wstring workspaceRevision = optionalStringField(&params, L"workspaceRevision");
         const std::wstring fomodContextId = optionalStringField(&params, L"fomodContextId");
         const std::wstring manualDecisionsJson = optionalStringField(&params, L"manualDecisionsJson");
         const int modOrderTargetIndex = optionalIntField(params, L"modOrderTargetIndex", -1);
@@ -3382,6 +3435,8 @@ namespace
              &selectedOptionIdsJson,
              &placementOverridesJson,
              &profileName,
+             &templateId,
+             &workspaceRevision,
              &fomodContextId,
              &manualDecisionsJson,
              modOrderTargetIndex,
@@ -3406,6 +3461,8 @@ namespace
                         : nullptr,
                     identity.present ? identity.newNamePolicy : 0,
                     profileName.empty() ? nullptr : profileName.c_str(),
+                    templateId.empty() ? nullptr : templateId.c_str(),
+                    workspaceRevision.empty() ? nullptr : workspaceRevision.c_str(),
                     fomodContextId.empty() ? nullptr : fomodContextId.c_str(),
                     manualDecisionsJson.empty() ? nullptr : manualDecisionsJson.c_str(),
                     modOrderTargetIndex,
@@ -3691,6 +3748,10 @@ namespace
         {
             return payloadGetModWorkspace(request);
         }
+        if (request.method == L"workspace.getDelta")
+        {
+            return payloadGetWorkspaceDelta(request);
+        }
         if (request.method == L"mods.getPersistedWorkspace")
         {
             return payloadGetPersistedModWorkspace(request);
@@ -3898,6 +3959,10 @@ namespace
         if (request.method == L"downloads.list")
         {
             return payloadListDownloads(request);
+        }
+        if (request.method == L"downloads.getDelta")
+        {
+            return payloadGetDownloadsDelta(request);
         }
         if (request.method == L"downloads.importFile")
         {

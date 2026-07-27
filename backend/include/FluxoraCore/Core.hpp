@@ -29,6 +29,7 @@ namespace fluxora
     class NexusUpdateApi;
     class ProjectService;
     class TemplateService;
+    class WorkspaceRevisionJournal;
 
     class Core final
     {
@@ -52,6 +53,7 @@ namespace fluxora
         [[nodiscard]] ProfileOrderService& profileOrder() noexcept;
         [[nodiscard]] ProfileService& profiles() noexcept;
         [[nodiscard]] DownloadService& downloads() noexcept;
+        [[nodiscard]] WorkspaceRevisionJournal& workspaceRevisions() noexcept;
         [[nodiscard]] InstallOperationService& installs() noexcept;
         [[nodiscard]] EffectiveFileTreeService& effectiveFileTree() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
@@ -84,6 +86,7 @@ namespace fluxora
         std::unique_ptr<NexusUpdateApi> nexusUpdateApi_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
         std::unique_ptr<DownloadService> downloads_;
+        std::unique_ptr<WorkspaceRevisionJournal> workspaceRevisions_;
         std::unique_ptr<InstallOperationService> installs_;
         std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;
         std::unique_ptr<ExecutableIconService> executableIcons_;

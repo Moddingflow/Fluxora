@@ -76,14 +76,13 @@ describe('build refresh loading', () => {
       app.indexOf('await loadBuildWorkspaceData(opened')
     );
     expect(app).toMatch(/window\.fluxora\.buildContent\s*\.\s*onChanged/);
-    expect(app).toContain("createRendererOperationId('build_content_mods_changed')");
-    expect(app).toContain("createRendererOperationId('build_content_plugins_changed')");
+    expect(app).toContain("createRendererOperationId('build_content_workspace_delta')");
     expect(watcher).toMatch(/buildContentRefreshCoordinator\s*\.\s*schedule/);
     expect(watcher).toContain('drainPendingPathsWithRetry');
     expect(watcher).toContain('buildContentEventSequences.record');
-    expect(app).toContain('showBusy: false');
-    expect(app).toContain('showLoading: false');
-    expect(app).toContain('resetScroll: false');
+    expect(watcher).toContain('await refreshWorkspaceDelta(');
+    expect(watcher).not.toContain('loadModsWorkspace(reconciliationProject');
+    expect(watcher).not.toContain('loadPluginsWorkspace(');
     expect(watcher).toContain('effectiveFileTreeCacheRef.current = {};');
     expect(watcher).not.toContain('setEffectiveFileTreeSnapshot(null);');
   });

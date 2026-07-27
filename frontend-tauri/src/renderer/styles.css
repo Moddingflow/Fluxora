@@ -5146,7 +5146,8 @@ input::placeholder {
 }
 
 .mod-list__body[data-virtualized="adaptive"],
-.plugin-table .mod-table__body[data-virtualized="adaptive"] {
+.plugin-table .mod-table__body[data-virtualized="adaptive"],
+.download-table .mod-table__body[data-virtualized="adaptive"] {
   overflow-anchor: none;
 }
 
@@ -8280,6 +8281,15 @@ body.row-reorder-active.row-reorder-blocked * {
 .download-duplicate-dialog__warning svg {
   flex: 0 0 auto;
   color: var(--warning);
+}
+
+.download-duplicate-dialog__archive-name {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
 }
 
 .download-duplicate-dialog__files {

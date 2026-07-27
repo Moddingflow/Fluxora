@@ -125,7 +125,7 @@ describe('mods workspace bridge contract', () => {
     });
   });
 
-  it('invalidates changed mod paths before watcher-triggered reloads', () => {
+  it('invalidates changed mod paths before watcher-triggered native deltas', () => {
     const app = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'renderer', 'App.tsx'), 'utf8');
     const watcher =
       app.match(/const unsubscribe = window\.fluxora\.buildContent\.onChanged[\s\S]*?\n  \}, \[/)?.[0] ?? '';
@@ -133,8 +133,10 @@ describe('mods workspace bridge contract', () => {
     expect(watcher).toContain("change.area === 'mods'");
     expect(watcher).toContain('window.fluxora.mods.invalidateFileCaches(');
     expect(watcher.indexOf('window.fluxora.mods.invalidateFileCaches(')).toBeLessThan(
-      watcher.indexOf('loadModsWorkspace(reconciliationProject')
+      watcher.indexOf('refreshWorkspaceDelta(')
     );
+    expect(watcher).not.toContain('loadModsWorkspace(reconciliationProject');
+    expect(watcher).not.toContain('loadPluginsWorkspace(reconciliationProject');
     expect(watcher).toContain('buildContentInvalidatedRevisionByScopeRef.current.set(');
   });
 });

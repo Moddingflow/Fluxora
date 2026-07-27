@@ -762,6 +762,30 @@ test.beforeEach(async ({ page }) => {
         }]
       }
     });
+    const nexusSameFileDecisionDownload = () => ({
+      ...nexusDuplicateDecisionDownload(),
+      id: 'nxm_skyui_same_file_pending',
+      name: 'SkyUI',
+      fileName: 'SkyUI.7z',
+      localPath: 'D:\\Fluxora\\Downloads\\skyrimse\\skyui-same-file.nxm',
+      buildStatus: null,
+      duplicateDecision: {
+        decisionId: 'decision-skyui-same-file',
+        direction: 'same-file',
+        incomingFile: {
+          id: 'incoming-skyui-same-file',
+          fileId: '100',
+          fileName: 'SkyUI.7z',
+          version: '1.0.0'
+        },
+        existingFiles: [{
+          id: 'skyui_archive',
+          fileId: '100',
+          fileName: 'SkyUI.7z',
+          version: '1.0.0'
+        }]
+      }
+    });
     const markDownloadInstalled = (downloadPath: unknown) => {
       const installedDownload = downloadRows.find(
         (entry) => entry.localPath === String(downloadPath ?? '')
@@ -1391,9 +1415,12 @@ test.beforeEach(async ({ page }) => {
 
     const buildContentChangedCallbacks = new Set<(event: any) => void>();
     let buildContentSequence = 0;
+    const downloadsChangedCallbacks = new Set<(event: any) => void>();
+    let downloadsChangedSequence = 0;
     const inboundNxmCallbacks = new Set<(event: any) => void>();
     const operationProgressCallbacks = new Set<(event: any) => void>();
     const installProgressCallbacks = new Set<(event: any) => void>();
+    const workspaceDeltaScopes = new Map<string, { revision: string; sequence: number }>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
       const payload = {
@@ -1421,6 +1448,31 @@ test.beforeEach(async ({ page }) => {
         callback(payload);
       }
     };
+    (window as any).__emitFluxoraDownloadsChanged = (event: any = {}) => {
+      window.__fluxoraListPerformanceRecordBridgeCall?.('downloads.getDelta');
+      calls.push({ method: 'downloads.getDelta', payload: { reason: 'test-change' } });
+      const payload = {
+        projectDirectory: skyrimProject.projectDirectory,
+        operationId: `op_test_downloads_${Date.now()}`,
+        revision: `downloads_test_${downloadsChangedSequence + 1}`,
+        sequence: ++downloadsChangedSequence,
+        upserts: [],
+        removedIds: [],
+        reason: 'test-change',
+        fullResyncRequired: false,
+        ...event
+      };
+      for (const callback of downloadsChangedCallbacks) {
+        callback(payload);
+      }
+    };
+    (window as any).__emitFluxoraInstallProgress = (event: any) => {
+      installOperations.set(String(event.operationId), event);
+      for (const callback of installProgressCallbacks) {
+        callback(event);
+      }
+    };
+    (window as any).__fluxoraInboundNxmSubscriberCount = () => inboundNxmCallbacks.size;
     (window as any).__emitFluxoraInstallConflictSnapshot = (
       operationId: string,
       targetIndex: number
@@ -1724,6 +1776,53 @@ test.beforeEach(async ({ page }) => {
           };
         }
       },
+      workspace: {
+        getDelta: async (
+          projectDirectory: any,
+          profileName: any,
+          sinceRevision: any,
+          operation: any
+        ) => {
+          const scopeKey = `${String(projectDirectory).toLocaleLowerCase()}|${String(profileName).toLocaleLowerCase()}`;
+          const previous = workspaceDeltaScopes.get(scopeKey) ?? {
+            revision: '',
+            sequence: 0
+          };
+          const next = {
+            revision: `workspace_test_${previous.sequence + 1}`,
+            sequence: previous.sequence + 1
+          };
+          workspaceDeltaScopes.set(scopeKey, next);
+          calls.push({
+            method: 'workspace.getDelta',
+            payload: { operation, profileName, projectDirectory, sinceRevision }
+          });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('workspace.getDelta');
+          return {
+            projectDirectory,
+            profileName,
+            operationId: operation?.operationId ?? 'op_workspace_delta',
+            sequence: next.sequence,
+            mods: {
+              baseRevision: String(sinceRevision ?? ''),
+              revision: next.revision,
+              upserts: sinceRevision ? [] : structuredClone(modRows),
+              removedOrderIds: [],
+              placements: []
+            },
+            installedModUpserts: [],
+            removedInstalledModIds: [],
+            plugins: {
+              baseRevision: String(sinceRevision ?? ''),
+              revision: next.revision,
+              upserts: sinceRevision ? [] : structuredClone(pluginRows),
+              removedOrderIds: [],
+              placements: []
+            },
+            fullResyncRequired: false
+          };
+        }
+      },
       downloads: {
         toFomodPreviewImageUrl: (imagePath: any) => String(imagePath),
         analyzeContentLayout: async (request: any, operation: any) => {
@@ -1788,6 +1887,15 @@ test.beforeEach(async ({ page }) => {
           window.localStorage.removeItem('fluxora.test.duplicateDecision');
           if (choice === 'cancel') {
             return null;
+          }
+          if (decisionId === 'decision-skyui-same-file') {
+            return {
+              ...nexusSameFileDecisionDownload(),
+              duplicateDecision: null,
+              transferState: 'downloading',
+              transferMessage: 'Загрузка',
+              isDownloading: true
+            };
           }
           const pending = nexusDuplicateDecisionDownload();
           return {
@@ -1858,6 +1966,7 @@ test.beforeEach(async ({ page }) => {
           return installed;
         },
         list: async (projectDirectory: any) => {
+          window.__fluxoraListPerformanceRecordBridgeCall?.('downloads.list');
           await waitForDownloadsList();
           const path = String(projectDirectory);
           if (window.localStorage.getItem('fluxora.test.concurrentInstalls') === 'true') {
@@ -1890,6 +1999,23 @@ test.beforeEach(async ({ page }) => {
           }
           return rows;
         },
+        getDelta: async (projectDirectory: any, sinceRevision: any, operation: any) => {
+          calls.push({
+            method: 'downloads.getDelta',
+            payload: { operation, projectDirectory, sinceRevision }
+          });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('downloads.getDelta');
+          return {
+            projectDirectory,
+            operationId: operation?.operationId ?? 'op_downloads_delta',
+            revision: `downloads_test_${downloadsChangedSequence}`,
+            sequence: downloadsChangedSequence,
+            upserts: [],
+            removedIds: [],
+            reason: 'test-delta',
+            fullResyncRequired: false
+          };
+        },
         watchFolder: async (projectDirectory: any, downloadsDirectory: any, operation: any) => {
           calls.push({
             method: 'downloads.watchFolder',
@@ -1900,6 +2026,10 @@ test.beforeEach(async ({ page }) => {
         unwatchFolder: async (operation: any) => {
           calls.push({ method: 'downloads.unwatchFolder', payload: { operation } });
           return { accepted: true, operationId: operation?.operationId ?? 'op_downloads_unwatch' };
+        },
+        onChanged: (callback: (event: any) => void) => {
+          downloadsChangedCallbacks.add(callback);
+          return () => downloadsChangedCallbacks.delete(callback);
         },
         onFolderChanged: () => () => undefined,
         resume: async () => ({})
@@ -2076,6 +2206,11 @@ test.beforeEach(async ({ page }) => {
           for (const candidate of restored) {
             const operationId = String(candidate.operationId);
             if (['completed', 'failed', 'cancelled'].includes(String(candidate.state))) {
+              continue;
+            }
+            if (
+              window.localStorage.getItem('fluxora.test.manualInstallProgress') === 'true'
+            ) {
               continue;
             }
             window.setTimeout(() => {
@@ -2846,6 +2981,8 @@ test.beforeEach(async ({ page }) => {
               : modRows;
         },
         getWorkspace: async (projectDirectory: any) => {
+          calls.push({ method: 'mods.getWorkspace', payload: { projectDirectory } });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('mods.getWorkspace');
           ensureConfiguredFomodExistingMod();
           const isEmptyBuild =
             String(projectDirectory).includes('Playwright build') ||
@@ -2856,6 +2993,8 @@ test.beforeEach(async ({ page }) => {
           };
         },
         getPersistedWorkspace: async (projectDirectory: any) => {
+          calls.push({ method: 'mods.getPersistedWorkspace', payload: { projectDirectory } });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('mods.getPersistedWorkspace');
           await waitForPersistedWorkspace();
           ensureConfiguredFomodExistingMod();
           const isEmptyBuild =
@@ -2981,8 +3120,20 @@ test.beforeEach(async ({ page }) => {
         importInboundDownloads: async (projectDirectory: any, operation: any) => {
           calls.push({ method: 'nxm.importInboundDownloads', payload: { operation, projectDirectory } });
           const inboundMode = window.localStorage.getItem('fluxora.test.returnInboundDownload');
+          if (inboundMode === 'duplicate-decision') {
+            return [nexusDuplicateDecisionDownload()];
+          }
+          if (inboundMode === 'same-file-decision') {
+            return [nexusSameFileDecisionDownload()];
+          }
           if (inboundMode === 'pending-then-resolved') {
             inboundNxmResolveAt = Date.now() + 300;
+            window.setTimeout(() => {
+              (window as any).__emitFluxoraDownloadsChanged({
+                reason: 'nxm-resolved',
+                upserts: [inboundNxmDownload(true)]
+              });
+            }, 300);
             return [inboundNxmDownload(false)];
           }
           return inboundMode === 'true'
@@ -3039,6 +3190,7 @@ test.beforeEach(async ({ page }) => {
             method: 'plugins.list',
             payload: { operation, profileName, projectDirectory, templateId }
           });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('plugins.list');
           return pluginRows;
         },
         listPersisted: async (
@@ -3051,6 +3203,7 @@ test.beforeEach(async ({ page }) => {
             method: 'plugins.listPersisted',
             payload: { operation, profileName, projectDirectory, templateId }
           });
+          window.__fluxoraListPerformanceRecordBridgeCall?.('plugins.listPersisted');
           return pluginRows;
         },
         move: async (projectDirectory: any, templateId: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
@@ -3279,6 +3432,168 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
 };
 
+const configureSeparatorDeletionFixture = async (
+  page: Page,
+  kind: 'mods' | 'plugins'
+) => {
+  await page.goto(baseUrl);
+  await page.evaluate(async (targetKind) => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      fluxora: any;
+    };
+    const titles = Array.from(
+      { length: 8 },
+      (_, index) => `Batch ${targetKind === 'mods' ? 'mod' : 'plugin'} separator ${index + 1}`
+    );
+
+    if (targetKind === 'mods') {
+      const getWorkspace = scope.fluxora.mods.getWorkspace.bind(scope.fluxora.mods);
+      const getPersistedWorkspace = scope.fluxora.mods.getPersistedWorkspace.bind(
+        scope.fluxora.mods
+      );
+      const deleteSeparator = scope.fluxora.mods.deleteSeparator.bind(scope.fluxora.mods);
+      const initialWorkspace = await getWorkspace(
+        'D:\\Fluxora\\Builds\\Skyrim graphics overhaul'
+      );
+      const separatorTemplate = initialWorkspace.modOrder.find((item: any) => item.isSeparator);
+      let extraSeparators = titles.map((title, index) => ({
+        ...structuredClone(separatorTemplate),
+        id: `sep_batch_mod_${index + 1}`,
+        orderId: `sep_batch_mod_${index + 1}`,
+        order: initialWorkspace.modOrder.length + index,
+        separatorTitle: title,
+        name: title
+      }));
+      const appendSeparators = (workspace: any) => ({
+        ...workspace,
+        modOrder: [...workspace.modOrder, ...extraSeparators].map((item, index) => ({
+          ...item,
+          order: index
+        }))
+      });
+
+      scope.fluxora.mods.getWorkspace = async (...args: any[]) =>
+        appendSeparators(await getWorkspace(...args));
+      scope.fluxora.mods.getPersistedWorkspace = async (...args: any[]) =>
+        appendSeparators(await getPersistedWorkspace(...args));
+      scope.fluxora.mods.deleteSeparator = async (...args: any[]) => {
+        await deleteSeparator(...args);
+        const orderId = String(args[2]);
+        extraSeparators = extraSeparators.filter((item) => item.orderId !== orderId);
+        return appendSeparators(initialWorkspace).modOrder;
+      };
+      return;
+    }
+
+    const list = scope.fluxora.plugins.list.bind(scope.fluxora.plugins);
+    const listPersisted = scope.fluxora.plugins.listPersisted.bind(scope.fluxora.plugins);
+    const initialRows = await list(
+      'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+      'skyrimse',
+      null,
+      { operationId: 'separator_deletion_fixture' }
+    );
+    const separatorTemplate = initialRows.find((item: any) => item.isSeparator);
+    let extraSeparators = titles.map((title, index) => ({
+      ...structuredClone(separatorTemplate),
+      id: `sep_batch_plugin_${index + 1}`,
+      orderId: `sep_batch_plugin_${index + 1}`,
+      order: initialRows.length + index,
+      separatorTitle: title
+    }));
+    const appendSeparators = (items: any[]) =>
+      [...items, ...extraSeparators].map((item, index) => ({ ...item, order: index }));
+
+    scope.fluxora.plugins.list = async (...args: any[]) =>
+      appendSeparators(await list(...args));
+    scope.fluxora.plugins.listPersisted = async (...args: any[]) =>
+      appendSeparators(await listPersisted(...args));
+    scope.fluxora.plugins.deleteSeparator = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      orderId: string,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.deleteSeparator',
+        payload: { operation, orderId, profileName, projectDirectory, templateId }
+      });
+      extraSeparators = extraSeparators.filter((item) => item.orderId !== orderId);
+      return appendSeparators(initialRows);
+    };
+  }, kind);
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+};
+
+const verifyShiftSelectedSeparatorDeletion = async (
+  page: Page,
+  kind: 'mods' | 'plugins'
+) => {
+  const labelKind = kind === 'mods' ? 'mod' : 'plugin';
+  const orderIdPrefix = kind === 'mods' ? 'sep_batch_mod_' : 'sep_batch_plugin_';
+  const method = `${kind}.deleteSeparator`;
+  const separatorRows = Array.from({ length: 8 }, (_, index) =>
+    page.getByRole('row', {
+      name: `Batch ${labelKind} separator ${index + 1} separator`
+    })
+  );
+  const deleteCalls = () =>
+    page.evaluate((expectedMethod) => {
+      const calls = (
+        window as typeof window & {
+          __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+        }
+      ).__fluxoraCalls ?? [];
+      return calls.filter((call) => call.method === expectedMethod);
+    }, method);
+
+  await separatorRows[0].click();
+  await separatorRows[3].click({ modifiers: ['Shift'] });
+  for (const row of separatorRows.slice(0, 4)) {
+    await expect(row).toHaveAttribute('data-selected', 'true');
+  }
+  await separatorRows[3].press('Delete');
+
+  await expect.poll(async () => (await deleteCalls()).length).toBe(4);
+  for (const row of separatorRows.slice(0, 4)) {
+    await expect(row).toHaveCount(0);
+  }
+  const keyboardCalls = await deleteCalls();
+  expect(keyboardCalls.map((call) => call.payload.orderId)).toEqual(
+    Array.from({ length: 4 }, (_, index) => `${orderIdPrefix}${index + 1}`)
+  );
+  expect(
+    new Set(keyboardCalls.map((call) => call.payload.operation.operationId)).size
+  ).toBe(1);
+
+  await separatorRows[4].click();
+  await separatorRows[7].click({ modifiers: ['Shift'] });
+  for (const row of separatorRows.slice(4)) {
+    await expect(row).toHaveAttribute('data-selected', 'true');
+  }
+  await separatorRows[4].click({ button: 'right' });
+  const deleteMenuItem = page.getByRole('menuitem', { name: 'Delete separator' });
+  await expect(deleteMenuItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
+  await deleteMenuItem.click();
+
+  await expect.poll(async () => (await deleteCalls()).length).toBe(8);
+  for (const row of separatorRows.slice(4)) {
+    await expect(row).toHaveCount(0);
+  }
+  const contextMenuCalls = (await deleteCalls()).slice(4);
+  expect(contextMenuCalls.map((call) => call.payload.orderId)).toEqual(
+    Array.from({ length: 4 }, (_, index) => `${orderIdPrefix}${index + 5}`)
+  );
+  expect(
+    new Set(contextMenuCalls.map((call) => call.payload.operation.operationId)).size
+  ).toBe(1);
+};
+
 const configureDisabledPluginToggleFixture = async (
   page: Page,
   extraPluginNames: readonly string[] = []
@@ -3394,7 +3709,7 @@ const enableLargeAdaptiveScrollWorkspace = async (
   itemCount = 5000
 ) => {
   await page.evaluate(async (requestedItemCount) => {
-    const scope = window as typeof window & { fluxora: any };
+    const scope = window as any;
     const getPersistedWorkspace = scope.fluxora.mods.getPersistedWorkspace;
     const getWorkspace = scope.fluxora.mods.getWorkspace;
     const expandMods = (snapshot: { installedMods: any[]; modOrder: any[] }) => {
@@ -3434,6 +3749,124 @@ const enableLargeAdaptiveScrollWorkspace = async (
     }));
     scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
     scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+
+    let revisionSequence = 0;
+    let currentRevision = '';
+    const queuedDeltas: any[] = [];
+    const createDelta = (payload: any = {}) => {
+      const baseRevision = currentRevision;
+      revisionSequence += 1;
+      currentRevision = `performance_workspace_${revisionSequence}`;
+      return {
+        projectDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+        profileName: 'Default',
+        operationId: payload.operationId ?? `op_performance_delta_${revisionSequence}`,
+        sequence: revisionSequence,
+        mods: {
+          baseRevision,
+          revision: currentRevision,
+          upserts: structuredClone(payload.modUpserts ?? []),
+          removedOrderIds: structuredClone(payload.removedModOrderIds ?? []),
+          placements: structuredClone(payload.modPlacements ?? [])
+        },
+        installedModUpserts: structuredClone(payload.installedModUpserts ?? []),
+        removedInstalledModIds: structuredClone(payload.removedInstalledModIds ?? []),
+        plugins: {
+          baseRevision,
+          revision: currentRevision,
+          upserts: structuredClone(payload.pluginUpserts ?? []),
+          removedOrderIds: structuredClone(payload.removedPluginOrderIds ?? []),
+          placements: structuredClone(payload.pluginPlacements ?? [])
+        },
+        fullResyncRequired: false
+      };
+    };
+    scope.__createFluxoraPerformanceWorkspaceDelta = createDelta;
+    scope.__queueFluxoraPerformanceWorkspaceDelta = (payload: any = {}) => {
+      const delta = createDelta(payload);
+      queuedDeltas.push(delta);
+      return structuredClone(delta);
+    };
+    scope.fluxora.workspace.getDelta = async (
+      projectDirectory: string,
+      profileName: string,
+      sinceRevision: string,
+      operation: any
+    ) => {
+      scope.__fluxoraCalls.push({
+        method: 'workspace.getDelta',
+        payload: { operation, profileName, projectDirectory, sinceRevision }
+      });
+      scope.__fluxoraListPerformanceRecordBridgeCall?.('workspace.getDelta');
+      if (!sinceRevision) {
+        revisionSequence = 0;
+        currentRevision = '';
+        queuedDeltas.length = 0;
+        const snapshot = await scope.fluxora.mods.getPersistedWorkspace(
+          projectDirectory,
+          '',
+          profileName,
+          operation
+        );
+        const baseline = createDelta({
+          operationId: operation?.operationId,
+          modUpserts: snapshot.modOrder,
+          pluginUpserts: pluginRows
+        });
+        return baseline;
+      }
+      const queued = queuedDeltas.shift();
+      if (queued) {
+        return {
+          ...structuredClone(queued),
+          operationId: operation?.operationId ?? queued.operationId
+        };
+      }
+      if (sinceRevision === currentRevision) {
+        return {
+          ...createDelta({
+            operationId: operation?.operationId
+          }),
+          mods: {
+            baseRevision: sinceRevision,
+            revision: currentRevision,
+            upserts: [],
+            removedOrderIds: [],
+            placements: []
+          },
+          plugins: {
+            baseRevision: sinceRevision,
+            revision: currentRevision,
+            upserts: [],
+            removedOrderIds: [],
+            placements: []
+          }
+        };
+      }
+      return {
+        projectDirectory,
+        profileName,
+        operationId: operation?.operationId ?? 'op_performance_full_resync',
+        sequence: revisionSequence,
+        mods: {
+          baseRevision: sinceRevision,
+          revision: currentRevision,
+          upserts: [],
+          removedOrderIds: [],
+          placements: []
+        },
+        installedModUpserts: [],
+        removedInstalledModIds: [],
+        plugins: {
+          baseRevision: sinceRevision,
+          revision: currentRevision,
+          upserts: [],
+          removedOrderIds: [],
+          placements: []
+        },
+        fullResyncRequired: true
+      };
+    };
   }, itemCount);
 };
 
@@ -3787,19 +4220,14 @@ test.describe('deletes selected mods with Del', () => {
     expect(itemBox!.x + itemBox!.width - shortcutBox!.x - shortcutBox!.width).toBeLessThanOrEqual(10);
   });
 
-  test('ignores Del outside real mod rows', async ({ page }) => {
+  test('ignores Del outside deletable order rows', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
     const overwriteRow = page.getByRole('row', {
       name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
     });
     const searchInput = page.getByLabel('Search mods');
     const deletionDialog = page.getByRole('dialog', { name: /Удаление мод/ });
-
-    await separatorRow.focus();
-    await separatorRow.press('Delete');
-    await expect(deletionDialog).toHaveCount(0);
 
     await overwriteRow.focus();
     await overwriteRow.press('Delete');
@@ -3809,6 +4237,21 @@ test.describe('deletes selected mods with Del', () => {
     await searchInput.press('Delete');
     await expect(deletionDialog).toHaveCount(0);
     expect((await callMethods(page)).filter((method) => method === 'mods.deleteInstalled')).toHaveLength(0);
+  });
+});
+
+test.describe('deletes Shift-selected separators as one action', () => {
+  test('deletes all selected mod separators with Delete and the context menu', async ({ page }) => {
+    await configureSeparatorDeletionFixture(page, 'mods');
+
+    await verifyShiftSelectedSeparatorDeletion(page, 'mods');
+  });
+
+  test('deletes all selected plugin separators with Delete and the context menu', async ({ page }) => {
+    await configureSeparatorDeletionFixture(page, 'plugins');
+    await page.getByLabel('Right pane').getByRole('tab', { name: 'Плагины', exact: true }).click();
+
+    await verifyShiftSelectedSeparatorDeletion(page, 'plugins');
   });
 });
 
@@ -5506,7 +5949,7 @@ test('reconciles the live profile after a delayed watcher invalidation', async (
       fluxora: any;
     };
     const invalidate = scope.fluxora.mods.invalidateFileCaches;
-    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
     let releaseInvalidation!: () => void;
     const invalidationGate = new Promise<void>((resolve) => {
       releaseInvalidation = resolve;
@@ -5518,12 +5961,12 @@ test('reconciles the live profile after a delayed watcher invalidation', async (
       await invalidationGate;
       return invalidate(...args);
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
       scope.__fluxoraCalls?.push({
-        method: 'mods.getWorkspace.delayed-profile-invalidation',
+        method: 'workspace.getDelta.delayed-profile-invalidation',
         payload: { profileName: args[1] }
       });
-      return exactWorkspace(...args);
+      return getWorkspaceDelta(...args);
     };
   });
 
@@ -5534,7 +5977,7 @@ test('reconciles the live profile after a delayed watcher invalidation', async (
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
           (call: { method: string }) =>
-            call.method === 'mods.getWorkspace.delayed-profile-invalidation'
+            call.method === 'workspace.getDelta.delayed-profile-invalidation'
         ).length
       )
     )
@@ -5563,7 +6006,7 @@ test('reconciles the live profile after a delayed watcher invalidation', async (
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
           (call: { method: string; payload?: { profileName?: string } }) =>
-            call.method === 'mods.getWorkspace.delayed-profile-invalidation' &&
+            call.method === 'workspace.getDelta.delayed-profile-invalidation' &&
             call.payload?.profileName === 'Testing'
         ).length
       )
@@ -5576,7 +6019,7 @@ test('reconciles the live profile after a delayed watcher invalidation', async (
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
           (call: { method: string; payload?: { profileName?: string } }) =>
-            call.method === 'mods.getWorkspace.delayed-profile-invalidation' &&
+            call.method === 'workspace.getDelta.delayed-profile-invalidation' &&
             call.payload?.profileName === 'Testing'
         ).length
       )
@@ -5645,14 +6088,14 @@ test('does not mark exact watcher coverage when an event arrives during reconcil
       __releaseDeferredExact?: () => void;
       fluxora: any;
     };
-    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
     let deferNextExact = false;
     scope.__deferNextExact = () => {
       deferNextExact = true;
       scope.__deferredExactStarted = false;
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
-      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.epoch' });
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'workspace.getDelta.epoch' });
       if (deferNextExact) {
         deferNextExact = false;
         await new Promise<void>((resolve) => {
@@ -5660,7 +6103,7 @@ test('does not mark exact watcher coverage when an event arrives during reconcil
           scope.__deferredExactStarted = true;
         });
       }
-      return exactWorkspace(...args);
+      return getWorkspaceDelta(...args);
     };
   });
 
@@ -5670,7 +6113,7 @@ test('does not mark exact watcher coverage when an event arrives during reconcil
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+          (call: { method: string }) => call.method === 'workspace.getDelta.epoch'
         ).length
       )
     )
@@ -5708,51 +6151,26 @@ test('does not mark exact watcher coverage when an event arrives during reconcil
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+          (call: { method: string }) => call.method === 'workspace.getDelta.epoch'
         ).length
       )
     )
     .toBe(3);
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as any).__fluxoraCalls.some(
-          (call: {
-            method: string;
-            payload?: { operation?: { operationId?: string } };
-          }) =>
-            call.method === 'plugins.list' &&
-            call.payload?.operation?.operationId?.includes(
-              '_build_content_plugins_changed_'
-            )
-        )
-      )
-    )
-    .toBe(true);
-
-  const pluginsBeforeFinalReopen = await page.evaluate(() =>
+  const deltasBeforeFinalReopen = await page.evaluate(() =>
     (window as any).__fluxoraCalls.filter(
-      (call: { method: string }) => call.method === 'plugins.list'
+      (call: { method: string }) => call.method === 'workspace.getDelta.epoch'
     ).length
   );
   await page.getByRole('button', { name: 'Home' }).click();
   await clickSkyrimBuildOpenButton(page);
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'plugins.list'
-        ).length
-      )
-    )
-    .toBeGreaterThan(pluginsBeforeFinalReopen);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
   expect(
     await page.evaluate(() =>
       (window as any).__fluxoraCalls.filter(
-        (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+        (call: { method: string }) => call.method === 'workspace.getDelta.epoch'
       ).length
     )
-  ).toBe(3);
+  ).toBe(deltasBeforeFinalReopen);
 });
 
 test('starts coverage reconciliation only after the pending invalidation settles', async ({ page }) => {
@@ -5767,7 +6185,7 @@ test('starts coverage reconciliation only after the pending invalidation settles
       fluxora: any;
     };
     const invalidate = scope.fluxora.mods.invalidateFileCaches;
-    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
     let releaseInvalidation!: () => void;
     const invalidationGate = new Promise<void>((resolve) => {
       releaseInvalidation = resolve;
@@ -5779,9 +6197,9 @@ test('starts coverage reconciliation only after the pending invalidation settles
       await invalidationGate;
       return invalidate(...args);
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
-      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.invalidation-happens-before' });
-      const result = await exactWorkspace(...args);
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'workspace.getDelta.invalidation-happens-before' });
+      const result = await getWorkspaceDelta(...args);
       if (deferNextExact) {
         deferNextExact = false;
         scope.__coverageExactStarted = true;
@@ -5804,7 +6222,7 @@ test('starts coverage reconciliation only after the pending invalidation settles
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
           (call: { method: string }) =>
-            call.method === 'mods.getWorkspace.invalidation-happens-before'
+            call.method === 'workspace.getDelta.invalidation-happens-before'
         ).length
       )
     )
@@ -5834,7 +6252,7 @@ test('starts coverage reconciliation only after the pending invalidation settles
     await page.evaluate(() =>
       (window as any).__fluxoraCalls.filter(
         (call: { method: string }) =>
-          call.method === 'mods.getWorkspace.invalidation-happens-before'
+          call.method === 'workspace.getDelta.invalidation-happens-before'
       ).length
     )
   ).toBe(1);
@@ -5849,90 +6267,79 @@ test('starts coverage reconciliation only after the pending invalidation settles
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
           (call: { method: string }) =>
-            call.method === 'mods.getWorkspace.invalidation-happens-before'
+            call.method === 'workspace.getDelta.invalidation-happens-before'
         ).length
       )
     )
     .toBe(2);
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'plugins.list'
-        ).length
-      )
-    )
-    .toBeGreaterThanOrEqual(2);
-
 });
 
-test('refreshes plugins before a slow mod workspace reconciliation finishes', async ({ page }) => {
+test('applies coalesced mod and plugin deltas only after cache invalidation finishes', async ({ page }) => {
   await page.goto(baseUrl);
   await page.evaluate(() => {
     const scope = window as typeof window & {
-      __deferNextWatcherMods?: () => void;
-      __releaseWatcherMods?: () => void;
-      __watcherModsStarted?: boolean;
-      __watcherPluginRefreshCount?: number;
+      __releaseWatcherInvalidation?: () => void;
+      __watcherDeltaCallCount?: number;
+      __watcherInvalidationStarted?: boolean;
       fluxora: any;
     };
-    const getWorkspace = scope.fluxora.mods.getWorkspace;
-    const listPlugins = scope.fluxora.plugins.list;
-    let deferNextWatcherMods = false;
-    scope.__deferNextWatcherMods = () => {
-      deferNextWatcherMods = true;
-      scope.__watcherModsStarted = false;
-      scope.__watcherPluginRefreshCount = 0;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
+    const invalidate = scope.fluxora.mods.invalidateFileCaches;
+    let releaseInvalidation!: () => void;
+    const invalidationGate = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    let pluginTemplate: any = null;
+    scope.__watcherDeltaCallCount = 0;
+    scope.__releaseWatcherInvalidation = releaseInvalidation;
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__watcherInvalidationStarted = true;
+      await invalidationGate;
+      return invalidate(...args);
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
-      if (deferNextWatcherMods) {
-        deferNextWatcherMods = false;
-        scope.__watcherModsStarted = true;
-        await new Promise<void>((resolve) => {
-          scope.__releaseWatcherMods = resolve;
-        });
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      const delta = await getWorkspaceDelta(...args);
+      if (!args[2]) {
+        pluginTemplate = delta.plugins.upserts.find(
+          (item: any) => item.orderId === 'plugin_skyui'
+        );
+        return delta;
       }
-      return getWorkspace(...args);
-    };
-    scope.fluxora.plugins.list = async (...args: unknown[]) => {
-      const operation = args[3] as { operationId?: string } | undefined;
-      const rows = await listPlugins(...args);
-      if (operation?.operationId?.includes('_build_content_plugins_changed_')) {
-        scope.__watcherPluginRefreshCount = (scope.__watcherPluginRefreshCount ?? 0) + 1;
-        const template = rows.find((item: any) => item.orderId === 'plugin_skyui');
-        const generatedRows = [
-          ...rows,
-          {
-            ...structuredClone(template),
-            id: 'pgpatcher.esp',
-            orderId: 'plugin_pgpatcher',
-            order: rows.length,
-            name: 'pgpatcher.esp',
-            sourceMod: 'PGPatcher Output'
-          }
-        ];
-        return (scope.__watcherPluginRefreshCount ?? 0) >= 2
-          ? [
-              ...generatedRows,
-              {
-                ...structuredClone(template),
-                id: 'pg_1.esp',
-                orderId: 'plugin_pg_1',
-                order: rows.length + 1,
-                name: 'pg_1.esp',
-                sourceMod: 'PGPatcher Output'
-              }
-            ]
-          : generatedRows;
-      }
-      return rows;
+      scope.__watcherDeltaCallCount = (scope.__watcherDeltaCallCount ?? 0) + 1;
+      return {
+        ...delta,
+        plugins: {
+          ...delta.plugins,
+          upserts: [
+            {
+              ...structuredClone(pluginTemplate),
+              id: 'pgpatcher.esp',
+              orderId: 'plugin_pgpatcher',
+              order: 3,
+              name: 'pgpatcher.esp',
+              sourceMod: 'PGPatcher Output'
+            },
+            {
+              ...structuredClone(pluginTemplate),
+              id: 'pg_1.esp',
+              orderId: 'plugin_pg_1',
+              order: 4,
+              name: 'pg_1.esp',
+              sourceMod: 'PGPatcher Output'
+            }
+          ],
+          placements: [
+            { orderId: 'plugin_pgpatcher', beforeOrderId: null },
+            { orderId: 'plugin_pg_1', beforeOrderId: null }
+          ]
+        }
+      };
     };
   });
 
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await page.evaluate(() => {
-    (window as any).__deferNextWatcherMods();
     (window as any).__emitFluxoraBuildContentChanged({
       changes: [
         {
@@ -5945,7 +6352,9 @@ test('refreshes plugins before a slow mod workspace reconciliation finishes', as
     });
   });
 
-  await expect.poll(() => page.evaluate(() => (window as any).__watcherModsStarted)).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__watcherInvalidationStarted))
+    .toBe(true);
   await page.evaluate(() => {
     (window as any).__emitFluxoraBuildContentChanged({
       changes: [
@@ -5958,9 +6367,11 @@ test('refreshes plugins before a slow mod workspace reconciliation finishes', as
       ]
     });
   });
+  expect(await page.evaluate(() => (window as any).__watcherDeltaCallCount)).toBe(0);
+  await page.evaluate(() => (window as any).__releaseWatcherInvalidation());
   await expect
-    .poll(() => page.evaluate(() => (window as any).__watcherPluginRefreshCount ?? 0))
-    .toBeGreaterThanOrEqual(2);
+    .poll(() => page.evaluate(() => (window as any).__watcherDeltaCallCount ?? 0))
+    .toBeGreaterThanOrEqual(1);
   await expect
     .poll(() =>
       page
@@ -5969,7 +6380,6 @@ test('refreshes plugins before a slow mod workspace reconciliation finishes', as
         .evaluateAll((rows) => rows.slice(-2).map((row) => row.getAttribute('data-order-id')))
     )
     .toEqual(['plugin_pgpatcher', 'plugin_pg_1']);
-  await page.evaluate(() => (window as any).__releaseWatcherMods());
 });
 
 test('autonomously retries a failed watcher invalidation before exact refresh', async ({ page }) => {
@@ -5981,7 +6391,7 @@ test('autonomously retries a failed watcher invalidation before exact refresh', 
       fluxora: any;
     };
     const invalidate = scope.fluxora.mods.invalidateFileCaches;
-    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
     scope.__watchInvalidationAttempts = 0;
     scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
       scope.__watchInvalidationAttempts = (scope.__watchInvalidationAttempts ?? 0) + 1;
@@ -5990,9 +6400,9 @@ test('autonomously retries a failed watcher invalidation before exact refresh', 
       }
       return invalidate(...args);
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
-      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.retry' });
-      return exactWorkspace(...args);
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'workspace.getDelta.retry' });
+      return getWorkspaceDelta(...args);
     };
   });
 
@@ -6002,7 +6412,7 @@ test('autonomously retries a failed watcher invalidation before exact refresh', 
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.retry'
+          (call: { method: string }) => call.method === 'workspace.getDelta.retry'
         ).length
       )
     )
@@ -6027,7 +6437,7 @@ test('autonomously retries a failed watcher invalidation before exact refresh', 
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.retry'
+          (call: { method: string }) => call.method === 'workspace.getDelta.retry'
         ).length
       )
     )
@@ -6044,7 +6454,7 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
       fluxora: any;
     };
     const invalidate = scope.fluxora.mods.invalidateFileCaches;
-    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
     scope.__allowPendingInvalidation = false;
     scope.__pendingInvalidationAttempts = 0;
     scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
@@ -6054,9 +6464,9 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
       }
       return invalidate(...args);
     };
-    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
-      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.pending-invalidation' });
-      return exactWorkspace(...args);
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'workspace.getDelta.pending-invalidation' });
+      return getWorkspaceDelta(...args);
     };
   });
 
@@ -6066,7 +6476,7 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+          (call: { method: string }) => call.method === 'workspace.getDelta.pending-invalidation'
         ).length
       )
     )
@@ -6094,7 +6504,7 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
   expect(
     await page.evaluate(() =>
       (window as any).__fluxoraCalls.filter(
-        (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+        (call: { method: string }) => call.method === 'workspace.getDelta.pending-invalidation'
       ).length
     )
   ).toBe(1);
@@ -6105,7 +6515,7 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
   expect(
     await page.evaluate(() =>
       (window as any).__fluxoraCalls.filter(
-        (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+        (call: { method: string }) => call.method === 'workspace.getDelta.pending-invalidation'
       ).length
     )
   ).toBe(1);
@@ -6117,7 +6527,7 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
     .poll(() =>
       page.evaluate(() =>
         (window as any).__fluxoraCalls.filter(
-          (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+          (call: { method: string }) => call.method === 'workspace.getDelta.pending-invalidation'
         ).length
       ),
       { timeout: 12_000 }
@@ -7218,9 +7628,14 @@ test('restores an interrupted install row and continues it after reopening the b
     count: 1,
     operationIds: ['restored-install-1']
   });
-  await expect.poll(() => latestCallPayload(page, 'ui.log.ModInstall')).toMatchObject({
-    message: 'Restored 1 pending install projection(s) after workspace refresh.'
-  });
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__fluxoraCalls.some(
+      (call: { method: string; payload?: { message?: string } }) =>
+        call.method === 'ui.log.ModInstall' &&
+        call.payload?.message ===
+          'Install recovery projected pending-install:restored-install-1.'
+    )
+  )).toBe(true);
   const restored = page.locator('.mod-list-row').filter({ hasText: 'Restored Install' });
   await expect(restored).toBeVisible();
   await expect(restored.locator('.mod-install-pending-label')).toHaveText('Восстановление');
@@ -7633,6 +8048,323 @@ test('fast 5k mod and plugin scrolls paint the destination window without growin
   );
 });
 
+test('keeps 5k Mods and Plugins frame-paced while keyed install, download, and watcher deltas arrive', async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${baseUrl}?listPerformanceBenchmark=1`);
+  await enableLargeAdaptiveScrollWorkspace(page);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.manualInstallProgress', 'true');
+    window.localStorage.setItem('fluxora.test.restoredInstallOperations', JSON.stringify([{
+      operationId: 'performance-install-1',
+      sourceKind: 'download',
+      sourcePath: 'D:\\Fluxora\\Downloads\\skyrimse\\Performance install.7z',
+      archiveFingerprint: 'mock:performance-install',
+      profileName: 'Default',
+      existingModMode: 0,
+      targetModUuid: '',
+      targetFolder: 'Performance install',
+      selectedOptionIds: [],
+      manualDecisions: [],
+      placementOverridesJson: '[]',
+      resume: { isFomod: false, modOrderTargetIndex: 4200 },
+      beforeOrderId: 'mod_performance_4199',
+      afterOrderId: 'mod_performance_4200',
+      enqueueSequence: 1,
+      state: 'extracting',
+      stage: 'extracting',
+      progressPercent: 10,
+      indeterminate: false,
+      errorCode: '',
+      errorMessage: '',
+      result: null
+    }]));
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  await expect
+    .poll(() => callMethods(page))
+    .toContain('workspace.getDelta');
+  await expect
+    .poll(() => latestCallPayload(page, 'installs.restore.result'))
+    .toEqual({
+      count: 1,
+      operationIds: ['performance-install-1']
+    });
+
+  const modListBody = page.locator('.mod-list__body[data-virtualized="adaptive"]');
+  const pluginListBody = page
+    .locator('.plugin-table .mod-table__body[data-virtualized="adaptive"]')
+    .first();
+  await expect(modListBody).toHaveAttribute('data-scrollable', 'true');
+  await expect(pluginListBody).toHaveAttribute('data-scrollable', 'true');
+  await modListBody.evaluate((element) => {
+    element.scrollTop = 4200 * 48;
+  });
+  await pluginListBody.evaluate((element) => {
+    element.scrollTop = 4200 * 48;
+  });
+  const pendingRow = page.locator(
+    '.mod-list-row[data-order-id="pending-install:performance-install-1"]'
+  );
+  await expect(pendingRow).toBeVisible();
+
+  await page.evaluate(async () => {
+    const scope = window as any;
+    const downloads = await scope.fluxora.downloads.list(
+      'D:\\Fluxora\\Builds\\Skyrim graphics overhaul'
+    );
+    const mods = await scope.fluxora.mods.getPersistedWorkspace(
+      'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+      'skyrim-special-edition',
+      'Default',
+      { operationId: 'performance_fixture_mods' }
+    );
+    const plugins = await scope.fluxora.plugins.listPersisted(
+      'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+      'skyrim-special-edition',
+      'Default',
+      { operationId: 'performance_fixture_plugins' }
+    );
+    scope.__fluxoraPerformanceFixtures = {
+      download: structuredClone(downloads[0]),
+      mod: structuredClone(mods.modOrder.find((item: any) =>
+        item.orderId === 'mod_performance_4201'
+      )),
+      plugin: structuredClone(plugins.find((item: any) =>
+        item.orderId === 'plugin_performance_4201'
+      ))
+    };
+    scope.__fluxoraListPerformance.start('playwright-5k-concurrent-deltas');
+  });
+
+  const waitForTwoFrames = () =>
+    page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    ));
+  for (let updateIndex = 1; updateIndex <= 8; updateIndex += 1) {
+    await page.evaluate((index) => {
+      (window as any).__fluxoraListPerformance.beginUpdate(`mod-scroll-${index}`);
+    }, updateIndex);
+    await modListBody.hover();
+    await page.mouse.wheel(0, updateIndex % 2 === 0 ? -240 : 320);
+    await waitForTwoFrames();
+
+    await page.evaluate((index) => {
+      const scope = window as any;
+      scope.__fluxoraListPerformance.beginUpdate(`install-progress-${index}`);
+      scope.__emitFluxoraInstallProgress({
+        operationId: 'performance-install-1',
+        sourceKind: 'download',
+        sourcePath: 'D:\\Fluxora\\Downloads\\skyrimse\\Performance install.7z',
+        archiveFingerprint: 'mock:performance-install',
+        profileName: 'Default',
+        existingModMode: 0,
+        targetModUuid: '',
+        targetFolder: 'Performance install',
+        selectedOptionIds: [],
+        manualDecisions: [],
+        placementOverridesJson: '[]',
+        resume: { isFomod: false, modOrderTargetIndex: 4200 },
+        beforeOrderId: 'mod_performance_4199',
+        afterOrderId: 'mod_performance_4200',
+        enqueueSequence: 1,
+        state: 'extracting',
+        stage: 'extracting',
+        progressPercent: 10 + index * 8,
+        indeterminate: false,
+        errorCode: '',
+        errorMessage: '',
+        result: null
+      });
+    }, updateIndex);
+    await waitForTwoFrames();
+
+    await page.evaluate((index) => {
+      (window as any).__fluxoraListPerformance.beginUpdate(`plugin-scroll-${index}`);
+    }, updateIndex);
+    await pluginListBody.hover();
+    await page.mouse.wheel(0, updateIndex % 2 === 0 ? 220 : -180);
+    await waitForTwoFrames();
+  }
+
+  await page.evaluate(() => {
+    const scope = window as any;
+    const download = {
+      ...scope.__fluxoraPerformanceFixtures.download,
+      transferState: 'downloading',
+      transferMessage: 'Downloading',
+      progressPercent: 57,
+      progressText: '57%',
+      isDownloading: true,
+      hasKnownProgress: true
+    };
+    scope.__fluxoraListPerformance.beginUpdate('download-progress');
+    scope.__emitFluxoraDownloadsChanged({
+      upserts: [download],
+      reason: 'progress'
+    });
+  });
+  await waitForTwoFrames();
+
+  await page.evaluate(() => {
+    const scope = window as any;
+    const template = scope.__fluxoraPerformanceFixtures.mod;
+    const installed = {
+      ...template,
+      id: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Performance install',
+      order: 4200,
+      orderId: 'mod_performance_install',
+      modUuid: 'mod_performance_install',
+      name: 'Performance install',
+      latestFileId: '',
+      updateCheckState: '',
+      operationId: 'performance-install-1'
+    };
+    const plugin = {
+      ...scope.__fluxoraPerformanceFixtures.plugin,
+      isEnabled: !scope.__fluxoraPerformanceFixtures.plugin.isEnabled
+    };
+    const workspaceDelta = scope.__createFluxoraPerformanceWorkspaceDelta({
+      operationId: 'performance-install-1',
+      modUpserts: [installed],
+      modPlacements: [{
+        orderId: installed.orderId,
+        beforeOrderId: 'mod_performance_4200'
+      }],
+      installedModUpserts: [installed],
+      pluginUpserts: [plugin]
+    });
+    scope.__fluxoraListPerformance.beginUpdate('terminal-install-delta');
+    scope.__emitFluxoraInstallProgress({
+      operationId: 'performance-install-1',
+      sourceKind: 'download',
+      sourcePath: 'D:\\Fluxora\\Downloads\\skyrimse\\Performance install.7z',
+      archiveFingerprint: 'mock:performance-install',
+      profileName: 'Default',
+      existingModMode: 0,
+      targetModUuid: '',
+      targetFolder: 'Performance install',
+      selectedOptionIds: [],
+      manualDecisions: [],
+      placementOverridesJson: '[]',
+      resume: { isFomod: false, modOrderTargetIndex: 4200 },
+      beforeOrderId: 'mod_performance_4199',
+      afterOrderId: 'mod_performance_4200',
+      enqueueSequence: 1,
+      state: 'completed',
+      stage: 'completed',
+      progressPercent: 100,
+      indeterminate: false,
+      errorCode: '',
+      errorMessage: '',
+      result: installed,
+      workspaceDelta
+    });
+  });
+  await expect(
+    page.locator('.mod-list-row[data-order-id="mod_performance_install"]')
+  ).toBeVisible();
+  await waitForTwoFrames();
+
+  const workspaceDeltaCallsBeforeWatcher = (await callMethods(page)).filter(
+    (method) => method === 'workspace.getDelta'
+  ).length;
+  await page.evaluate(() => {
+    const scope = window as any;
+    scope.__queueFluxoraPerformanceWorkspaceDelta({
+      modUpserts: [{
+        ...scope.__fluxoraPerformanceFixtures.mod,
+        version: 'watcher-delta'
+      }],
+      pluginUpserts: [{
+        ...scope.__fluxoraPerformanceFixtures.plugin,
+        isEnabled: !scope.__fluxoraPerformanceFixtures.plugin.isEnabled
+      }]
+    });
+    scope.__fluxoraListPerformance.beginUpdate('watcher-delta');
+    scope.__emitFluxoraBuildContentChanged({
+      changes: [{
+        area: 'mods',
+        fileName: 'watcher-delta.txt',
+        kind: 'modify',
+        path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Performance mod 4201\\watcher-delta.txt'
+      }]
+    });
+  });
+  await expect
+    .poll(async () => (await callMethods(page)).filter(
+      (method) => method === 'workspace.getDelta'
+    ).length)
+    .toBeGreaterThan(workspaceDeltaCallsBeforeWatcher);
+  await expect(
+    page.locator('.mod-list-row[data-order-id="mod_performance_4201"]')
+  ).toContainText('watcher-delta');
+  await waitForTwoFrames();
+
+  const aggregate = await page.evaluate(() =>
+    (window as any).__fluxoraListPerformance.stop()
+  ) as any;
+  await test.info().attach('list-performance-aggregate.json', {
+    body: Buffer.from(JSON.stringify(aggregate, null, 2)),
+    contentType: 'application/json'
+  });
+  console.log('LIST_PERFORMANCE_AGGREGATE', JSON.stringify(aggregate));
+  const measuredFrame = aggregate.frameCadence.medianIntervalMs;
+  const cadenceQuantizationToleranceMs = 0.1;
+  expect(measuredFrame).toBeGreaterThan(0);
+  expect(aggregate.frameCadence.p95IntervalMs).toBeLessThanOrEqual(measuredFrame * 1.5);
+  expect(aggregate.frameCadence.p99IntervalMs).toBeLessThanOrEqual(
+    measuredFrame * 2 + cadenceQuantizationToleranceMs
+  );
+  expect(aggregate.frameCadence.gapsAtLeastThreeFrames).toBe(0);
+  expect(aggregate.longTasks.count).toBe(0);
+  expect(aggregate.surfaces.mods.maximumRenderedRows).toBeLessThan(150);
+  expect(aggregate.surfaces.plugins.maximumRenderedRows).toBeLessThan(150);
+  expect(aggregate.surfaces.mods.p99ScrollToFrameLatencyMs).toBeLessThanOrEqual(
+    measuredFrame * 2
+  );
+  expect(aggregate.surfaces.plugins.p99ScrollToFrameLatencyMs).toBeLessThanOrEqual(
+    measuredFrame * 2
+  );
+  for (const surface of ['mods', 'plugins']) {
+    const profiler = aggregate.surfaces[surface];
+    if (profiler.commitCount > 0) {
+      expect(profiler.p99RenderDurationMs).toBeLessThan(measuredFrame * 0.5);
+    }
+  }
+  expect(aggregate.bridgeCalls.fullSnapshots).toEqual({
+    mods: 0,
+    plugins: 0,
+    downloads: 0
+  });
+  expect(aggregate.bridgeCalls.deltas.workspace).toBeGreaterThanOrEqual(1);
+  expect(aggregate.bridgeCalls.deltas.downloads).toBeGreaterThanOrEqual(1);
+
+  const updates = new Map(
+    aggregate.updates.map((update: any) => [update.label, update])
+  );
+  for (let updateIndex = 1; updateIndex <= 8; updateIndex += 1) {
+    const progress = updates.get(`install-progress-${updateIndex}`) as any;
+    expect(progress.surfaceRenders).toEqual({ mods: 0, plugins: 0 });
+    expect(progress.rowCommits.mods.distinctRows).toBeLessThanOrEqual(1);
+    expect(progress.rowCommits.mods.maximumPerRow).toBeLessThanOrEqual(1);
+    expect(progress.rowCommits.plugins.total).toBe(0);
+  }
+  const downloadProgress = updates.get('download-progress') as any;
+  expect(downloadProgress.surfaceRenders).toEqual({ mods: 0, plugins: 0 });
+  expect(downloadProgress.rowCommits.mods.total).toBe(0);
+  expect(downloadProgress.rowCommits.plugins.total).toBe(0);
+  for (const label of ['terminal-install-delta', 'watcher-delta']) {
+    const update = updates.get(label) as any;
+    expect(update.surfaceRenders.mods).toBeLessThanOrEqual(1);
+    expect(update.surfaceRenders.plugins).toBeLessThanOrEqual(1);
+    expect(update.rowCommits.mods.maximumPerRow).toBeLessThanOrEqual(1);
+    expect(update.rowCommits.plugins.maximumPerRow).toBeLessThanOrEqual(1);
+  }
+});
+
 test('keeps conflict markers flush with the scrollbar and precisely inside its arrow-button track', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(baseUrl);
@@ -7860,6 +8592,106 @@ test('shows an accepted inbound Nexus download before any native list refresh', 
       )
     )
     .toBe(listCallsBeforeInbound);
+});
+
+test('opens the duplicate decision dialog for an inbound Nexus update before list refresh', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).__fluxoraInboundNxmSubscriberCount?.() ?? 0)
+    )
+    .toBeGreaterThan(0);
+  const listCallsBeforeInbound = await page.evaluate(() => {
+    const scope = window as any;
+    scope.localStorage.setItem('fluxora.test.returnInboundDownload', 'duplicate-decision');
+    const count = scope.__fluxoraCalls.filter(
+      (call: { method: string }) => call.method === 'downloads.list'
+    ).length;
+    scope.__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_duplicate' });
+    return count;
+  });
+
+  const dialog = page.getByRole('dialog', { name: 'Обновление архива Nexus' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/SkyUI 1\.0\.1\.7z/)).toBeVisible();
+  await expect(dialog.getByText(/SkyUI 1\.0\.0\.7z/)).toBeVisible();
+  await expect
+    .poll(() => latestCallPayload(page, 'nxm.importInboundDownloads'))
+    .toMatchObject({ operation: { operationId: 'op_test_inbound_duplicate' } });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'downloads.list'
+        ).length
+      )
+    )
+    .toBe(listCallsBeforeInbound);
+});
+
+test('offers direct archive replacement for an inbound identical Nexus file without opening install choices', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.returnInboundDownload', 'same-file-decision');
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).__fluxoraInboundNxmSubscriberCount?.() ?? 0)
+    )
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_same_file' });
+  });
+
+  const repeatedFileDialog = page.getByRole('dialog', { name: 'Повторная установка мода' });
+  await expect(repeatedFileDialog).toBeVisible();
+  await expect(repeatedFileDialog.getByText(/Точно такой же архив уже есть в Downloads/)).toBeVisible();
+  await expect(repeatedFileDialog.getByText('Этот файл уже скачан')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByText('SkyUI.7z', { exact: true })).toHaveCount(1);
+  await expect(repeatedFileDialog.getByText('Запрошенный файл')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByText('Готовый архив')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Сохранить оба' })).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Отмена', exact: true })).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Пропустить', exact: true })).toHaveCount(0);
+  await repeatedFileDialog.getByRole('button', { name: 'Заменить', exact: true }).click();
+
+  await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
+    choice: 'replace',
+    decisionId: 'decision-skyui-same-file'
+  });
+  await expect(repeatedFileDialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: /Install SkyUI/ })).toHaveCount(0);
+  await expect.poll(() => latestCallPayload(page, 'downloads.install')).toBeNull();
+});
+
+test('closes an inbound identical Nexus file decision without changing the existing download', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.returnInboundDownload', 'same-file-decision');
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).__fluxoraInboundNxmSubscriberCount?.() ?? 0)
+    )
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_same_file_skip' });
+  });
+
+  const repeatedFileDialog = page.getByRole('dialog', { name: 'Повторная установка мода' });
+  await expect(repeatedFileDialog).toBeVisible();
+  await repeatedFileDialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+
+  await expect(repeatedFileDialog).toHaveCount(0);
+  await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
+    choice: 'cancel',
+    decisionId: 'decision-skyui-same-file'
+  });
+  await expect.poll(() => latestCallPayload(page, 'downloads.install')).toBeNull();
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ }).first()).toBeVisible();
 });
 
 test('keeps NXM responsive while two installs finalize and preserves the terminal row identity and position', async ({ page }) => {
@@ -8791,6 +9623,24 @@ test('drags every movable selected plugin row and separator as one ordered group
       return structuredClone(pluginRows);
     };
     scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      const delta = await getWorkspaceDelta(...args);
+      const sinceRevision = String(args[2] ?? '');
+      return {
+        ...delta,
+        plugins: {
+          ...delta.plugins,
+          upserts: structuredClone(pluginRows),
+          placements: sinceRevision
+            ? pluginRows.slice(1).map((item: any, index: number) => ({
+                orderId: item.orderId,
+                afterOrderId: pluginRows[index].orderId
+              }))
+            : []
+        }
+      };
+    };
     scope.fluxora.plugins.move = async (
       projectDirectory: string,
       templateId: string,
@@ -8831,6 +9681,24 @@ test('drags every movable selected plugin row and separator as one ordered group
   });
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{
+              method: string;
+              payload?: { operation?: { operationId?: string } };
+            }>;
+          }).__fluxoraCalls ?? []
+        ).some(
+          (call) =>
+            call.method === 'workspace.getDelta' &&
+            call.payload?.operation?.operationId?.includes('_workspace_delta_baseline_')
+        )
+      )
+    )
+    .toBe(true);
 
   const rightPane = page.getByLabel('Right pane');
   const separator = rightPane.getByRole('row', { name: /Late patches separator/ });
@@ -8870,8 +9738,8 @@ test('drags every movable selected plugin row and separator as one ordered group
         }).__fluxoraCalls ?? []
       ).some(
         (call) =>
-          call.method === 'plugins.list' &&
-          call.payload?.operation?.operationId?.includes('_build_content_plugins_changed_')
+          call.method === 'workspace.getDelta' &&
+          call.payload?.operation?.operationId?.includes('_build_content_workspace_delta_')
       )
     )
   ).toBe(false);
@@ -8889,8 +9757,8 @@ test('drags every movable selected plugin row and separator as one ordered group
           }).__fluxoraCalls ?? []
         ).some(
           (call) =>
-            call.method === 'plugins.list' &&
-            call.payload?.operation?.operationId?.includes('_build_content_plugins_changed_')
+            call.method === 'workspace.getDelta' &&
+            call.payload?.operation?.operationId?.includes('_build_content_workspace_delta_')
         )
       )
     )
@@ -8941,9 +9809,7 @@ test('auto-fills SPID identity and installs separate copies as (2) then (3)', as
     await sourceRow.dblclick();
     const dialog = page.getByRole('dialog', { name: /Install Spell Perks Item Distributor/ });
     const nameInput = dialog.getByLabel(/Mod name/);
-    if (expectedSuffix === 2) {
-      await expect(nameInput).not.toHaveValue('Spell Perks Item Distributor');
-    }
+    await expect(nameInput).toHaveValue('Spell Perks Item Distributor');
     await nameInput.focus();
     await nameInput.press('Home');
     await nameInput.press('ArrowRight');
@@ -9211,7 +10077,7 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
   await expect(fomodDialog).toBeVisible();
   await expect(
-    fomodDialog.getByText('Автовыбор · 2 выбрано · 0 требует решения', { exact: true })
+    fomodDialog.getByText('Пересчитано · 2 выбрано · 0 требует решения', { exact: true })
   ).toBeVisible();
   await expect.poll(() => latestCallPayload(page, 'downloads.analyzeFomod')).toMatchObject({
     manualDecisions: [],
@@ -9246,12 +10112,14 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
   );
   await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
 
-  await expect(
-    fomodDialog.getByText(
-      'Профиль изменился. Автоподбор обновлён; проверьте выбор и нажмите «Установить» ещё раз.',
-      { exact: true }
-    )
-  ).toBeVisible();
+  await expect(fomodDialog).toHaveCount(0);
+  const needsReview = page
+    .locator('.mod-list-row')
+    .filter({ hasText: 'Natural Vision Of Tamriel' })
+    .getByRole('button', { name: 'Требуется проверка' });
+  await expect(needsReview).toBeVisible();
+  await needsReview.click();
+  await expect(fomodDialog).toBeVisible();
   expect(
     await page.evaluate(() =>
       ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
@@ -9260,7 +10128,7 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
     )
   ).toBe(0);
   await expect(
-    fomodDialog.getByText('Автовыбор · 1 выбрано · 1 требует решения', { exact: true })
+    fomodDialog.getByText('Пересчитано · 1 выбрано · 1 требует решения', { exact: true })
   ).toBeVisible();
   await fomodDialog.getByRole('button', { name: 'Preset', exact: true }).click();
   await expect(fullRadio).toBeChecked();
@@ -9279,7 +10147,7 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
   const recalculateButton = fomodDialog.getByRole('button', { name: 'Пересчитать', exact: true });
   await recalculateButton.click();
   await expect(
-    fomodDialog.getByText('Автовыбор · 2 выбрано · 0 требует решения', { exact: true })
+    fomodDialog.getByText('Пересчитано · 2 выбрано · 0 требует решения', { exact: true })
   ).toBeVisible();
   await expect(luxCheckbox).toBeChecked();
   await expect(luxOption.getByText('Изменено вручную', { exact: true })).toBeVisible();
@@ -9341,7 +10209,7 @@ test('drives Smart Select from a real ZIP FOMOD with TES4 master headers', async
     const fomodDialog = page.getByRole('dialog', { name: /Smart Playwright Mod/ });
     await expect(fomodDialog).toBeVisible();
     await expect(
-      fomodDialog.getByText('Автовыбор · 1 выбрано · 0 требует решения', { exact: true })
+      fomodDialog.getByText('Пересчитано · 1 выбрано · 0 требует решения', { exact: true })
     ).toBeVisible();
     const luxOption = fomodDialog.locator('label.fomod-option').filter({ hasText: 'Lux Patch' });
     await expect(luxOption.getByRole('checkbox', { name: /Lux Patch/ })).toBeChecked();
@@ -9834,7 +10702,7 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
     await page.evaluate(() => window.localStorage.setItem('fluxora.test.forceFomod', 'true'));
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
     const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
-    await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
+    await expect(fomodDialog.getByText('Установка мода', { exact: true })).toBeVisible();
     await expect(fomodDialog.getByRole('button', { name: /Preset/ })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'fomod-wizard', size);
 

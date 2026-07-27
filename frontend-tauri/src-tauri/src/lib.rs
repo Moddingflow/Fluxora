@@ -95,6 +95,7 @@ const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
 const NXM_INBOUND_LINKS_CAPTURED_EVENT: &str = "fluxora:nxm:inbound-links-captured";
 const DOWNLOADS_FOLDER_CHANGED_EVENT: &str = "fluxora:downloads:folder-changed";
+const DOWNLOADS_CHANGED_EVENT: &str = "fluxora:downloads:changed";
 const BUILD_CONTENT_CHANGED_EVENT: &str = "fluxora:build-content:changed";
 const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
 #[cfg(windows)]
@@ -108,7 +109,7 @@ const FLUXORA_VFS_MODULE_NAME: &str = "FluxoraVfs.dll";
 const OPERATION_PROGRESS_CACHE_LIMIT: usize = 100;
 const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
 const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
-const DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS: u64 = 650;
+const DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS: u64 = 100;
 const BUILD_CONTENT_WATCH_DEBOUNCE_MS: u64 = 900;
 const NIF_PREVIEW_MAX_BATCH_ASSETS: usize = 64;
 const NIF_PREVIEW_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
@@ -1201,6 +1202,7 @@ fn emit_downloads_folder_watch_result(
     project_directory: &str,
     downloads_directory: &str,
     sequence: &AtomicU64,
+    revision: &Arc<Mutex<String>>,
     result: DebounceEventResult,
 ) {
     match result {
@@ -1217,10 +1219,65 @@ fn emit_downloads_folder_watch_result(
                 downloads_directory: downloads_directory.to_string(),
                 event_id: format!("evt_{}_downloads_folder_{sequence}", now_millis()),
                 sequence,
-                reason,
+                reason: reason.clone(),
                 changes,
             };
             let _ = app.emit_to(MAIN_WINDOW_LABEL, DOWNLOADS_FOLDER_CHANGED_EVENT, payload);
+
+            let app = app.clone();
+            let project_directory = project_directory.to_string();
+            let reason = reason.to_string();
+            let revision = revision.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut current_revision = revision.lock().await;
+                let operation_id = format!(
+                    "op_{}_downloads_changed_{sequence}",
+                    now_millis()
+                );
+                let request = OperationRequest {
+                    operation_id: Some(operation_id),
+                };
+                let delta = fluxora_bridge_request(
+                    app.clone(),
+                    "downloads.getDelta".to_string(),
+                    json!({
+                        "projectDirectory": project_directory,
+                        "sinceRevision": current_revision.as_str(),
+                        "reason": reason,
+                    }),
+                    Some(request),
+                    None,
+                )
+                .await;
+                match delta {
+                    Ok(delta) => {
+                        if let Some(next_revision) =
+                            delta.get("revision").and_then(Value::as_str)
+                        {
+                            *current_revision = next_revision.to_string();
+                        }
+                        let _ = app.emit_to(
+                            MAIN_WINDOW_LABEL,
+                            DOWNLOADS_CHANGED_EVENT,
+                            delta,
+                        );
+                    }
+                    Err(error) => {
+                        drop(current_revision);
+                        let _ = write_log(
+                            &app,
+                            "main",
+                            "warning",
+                            "DownloadsFolderWatcher",
+                            &format!(
+                                "Failed to capture downloads delta. reason={error}"
+                            ),
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            });
         }
         Err(errors) => {
             let message = errors
@@ -7037,7 +7094,9 @@ impl BridgeState {
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
         "plugins.list" | "plugins.listPersisted" => BridgeLane::Plugin,
-        "mods.checkUpdates" | "apiLimits.list" => BridgeLane::Background,
+        "mods.checkUpdates"
+        | "apiLimits.list"
+        | "executables.completeManagedLaunch" => BridgeLane::Background,
         "connections.listStatus"
         | "connections.restoreAll"
         | "connections.connect"
@@ -7050,6 +7109,7 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "nxm.importInboundDownloads"
         | "downloads.cancel"
         | "downloads.delete"
+        | "downloads.getDelta"
         | "downloads.list"
         | "downloads.resolveDuplicateDecision"
         | "downloads.resume" => BridgeLane::Download,
@@ -9176,6 +9236,26 @@ async fn fluxora_downloads_watch_folder(
     let app_for_events = app.clone();
     let project_for_events = project_directory.clone();
     let downloads_for_events = downloads_path.to_string_lossy().to_string();
+    let initial_delta = fluxora_bridge_request(
+        app.clone(),
+        "downloads.getDelta".to_string(),
+        json!({
+            "projectDirectory": project_directory.clone(),
+            "sinceRevision": "",
+            "reason": "watch-started",
+        }),
+        Some(request.clone()),
+        None,
+    )
+    .await?;
+    let revision = Arc::new(Mutex::new(
+        initial_delta
+            .get("revision")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    ));
+    let revision_for_events = revision.clone();
 
     let mut debouncer = new_debouncer(
         Duration::from_millis(DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS),
@@ -9189,6 +9269,7 @@ async fn fluxora_downloads_watch_folder(
                 &project_for_events,
                 &downloads_for_events,
                 &sequence,
+                &revision_for_events,
                 result,
             );
         },
@@ -11299,6 +11380,11 @@ mod tests {
     }
 
     #[test]
+    fn downloads_folder_delta_cadence_is_not_slower_than_legacy_polling() {
+        assert!(DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS <= 500);
+    }
+
+    #[test]
     fn build_content_watch_roots_track_mods_active_profile_and_game_data() {
         let root = env::temp_dir().join(format!(
             "fluxora-build-content-watch-roots-{}-{}",
@@ -11723,6 +11809,10 @@ mod tests {
             bridge_lane_for_method("mods.getWorkspace"),
             BridgeLane::Main
         );
+        assert_eq!(
+            bridge_lane_for_method("workspace.getDelta"),
+            BridgeLane::Main
+        );
         assert_eq!(bridge_lane_for_method("plugins.list"), BridgeLane::Plugin);
         assert_eq!(
             bridge_lane_for_method("mods.checkUpdates"),
@@ -11789,6 +11879,7 @@ mod tests {
             ("executables.getIcon", BridgeLane::Main),
             ("mods.listInstalled", BridgeLane::Main),
             ("mods.getWorkspace", BridgeLane::Main),
+            ("workspace.getDelta", BridgeLane::Main),
             ("mods.getPersistedWorkspace", BridgeLane::Main),
             ("mods.invalidateFileCaches", BridgeLane::Main),
             ("mods.getOrder", BridgeLane::Main),
@@ -11841,6 +11932,7 @@ mod tests {
             ("nxm.captureLinks", BridgeLane::Download),
             ("nxm.importInboundDownloads", BridgeLane::Download),
             ("downloads.list", BridgeLane::Download),
+            ("downloads.getDelta", BridgeLane::Download),
             ("downloads.resolveDuplicateDecision", BridgeLane::Download),
             ("downloads.importFile", BridgeLane::Main),
             ("downloads.delete", BridgeLane::Download),
@@ -11964,6 +12056,7 @@ mod tests {
             "nxm.captureLinks",
             "nxm.importInboundDownloads",
             "downloads.list",
+            "downloads.getDelta",
             "downloads.resolveDuplicateDecision",
             "downloads.cancel",
             "downloads.resume",

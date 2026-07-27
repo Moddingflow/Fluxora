@@ -55,6 +55,7 @@ import type {
   FluxoraFomodInstaller,
   FluxoraFomodManualDecision,
   FluxoraDownloadsFolderChangedEvent,
+  FluxoraDownloadsChangedEvent,
   FluxoraDownloadsFolderWatchResult,
   FluxoraFluxPackExportRequest,
   FluxoraGrassCacheGenerationRequest,
@@ -91,6 +92,8 @@ import type {
   FluxoraModUpdateCheckResult,
   FluxoraModOrderItem,
   FluxoraModWorkspaceSnapshot,
+  FluxoraWorkspaceDelta,
+  FluxoraWorkspaceDeltaRequest,
   FluxoraNifPreviewAssetHandle,
   FluxoraNifPreviewStartResult,
   FluxoraNifPreviewTextureBatchResult,
@@ -217,6 +220,99 @@ const normalizeDownloadEntry = (entry: FluxoraDownloadEntry): FluxoraDownloadEnt
 const normalizeDownloadEntries = (
   entries: FluxoraDownloadEntry[]
 ): FluxoraDownloadEntry[] => entries.map(normalizeDownloadEntry);
+
+const isTerminalDownloadEntry = (entry: FluxoraDownloadEntry): boolean =>
+  !['queued', 'downloading', 'indexing'].includes(entry.transferState);
+
+const listenToDownloadsChanged = (
+  ipc: IpcInvoker,
+  callback: (event: FluxoraDownloadsChangedEvent) => void
+): (() => void) => {
+  let pending: FluxoraDownloadsChangedEvent | null = null;
+  let frameHandle: number | ReturnType<typeof setTimeout> | null = null;
+  const cancelFrame = () => {
+    if (frameHandle === null) {
+      return;
+    }
+    if (typeof cancelAnimationFrame === 'function' && typeof frameHandle === 'number') {
+      cancelAnimationFrame(frameHandle);
+    } else {
+      clearTimeout(frameHandle);
+    }
+    frameHandle = null;
+  };
+  const flush = () => {
+    frameHandle = null;
+    if (pending) {
+      const event = pending;
+      pending = null;
+      callback(event);
+    }
+  };
+  const schedule = () => {
+    if (frameHandle !== null) {
+      return;
+    }
+    frameHandle = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(flush)
+      : setTimeout(flush, 0);
+  };
+  const merge = (event: FluxoraDownloadsChangedEvent) => {
+    const normalizedEvent = {
+      ...event,
+      fullResyncRequired: event.fullResyncRequired ?? false,
+      upserts: normalizeDownloadEntries(event.upserts)
+    };
+    if (!pending || pending.projectDirectory !== normalizedEvent.projectDirectory) {
+      if (pending) {
+        flush();
+      }
+      pending = normalizedEvent;
+      return;
+    }
+
+    const upserts = new Map(pending.upserts.map((entry) => [entry.id, entry]));
+    const removedIds = new Set(pending.removedIds);
+    for (const removedId of normalizedEvent.removedIds) {
+      upserts.delete(removedId);
+      removedIds.add(removedId);
+    }
+    for (const entry of normalizedEvent.upserts) {
+      removedIds.delete(entry.id);
+      upserts.set(entry.id, entry);
+    }
+    pending = {
+      ...normalizedEvent,
+      upserts: [...upserts.values()],
+      removedIds: [...removedIds],
+      fullResyncRequired:
+        pending.fullResyncRequired || normalizedEvent.fullResyncRequired
+    };
+  };
+
+  const unsubscribe = listenTyped<FluxoraDownloadsChangedEvent>(
+    ipc,
+    FluxoraIpcChannels.downloadsChanged,
+    (event) => {
+      merge(event);
+      if (
+        event.fullResyncRequired
+        || event.removedIds.length > 0
+        || event.upserts.some(isTerminalDownloadEntry)
+      ) {
+        cancelFrame();
+        flush();
+      } else {
+        schedule();
+      }
+    }
+  );
+  return () => {
+    cancelFrame();
+    pending = null;
+    unsubscribe();
+  };
+};
 
 export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
@@ -505,6 +601,22 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   links: {
     openExternal: (url: string) =>
       invokeTyped<OpenExternalResult>(ipc, FluxoraIpcChannels.linksOpenExternal, url)
+  },
+  workspace: {
+    getDelta: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      sinceRevision: string,
+      request?: FluxoraWorkspaceDeltaRequest
+    ) =>
+      invokeTyped<FluxoraWorkspaceDelta>(
+        ipc,
+        FluxoraIpcChannels.workspaceGetDelta,
+        projectDirectory,
+        profileName,
+        sinceRevision,
+        request
+      )
   },
   mods: {
     listInstalled: (projectDirectory: string, request?: OperationRequest) =>
@@ -1148,6 +1260,24 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         request
       ).then(normalizeDownloadEntries),
+    getDelta: (
+      projectDirectory: string,
+      sinceRevision: string,
+      reason?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraDownloadsChangedEvent>(
+        ipc,
+        FluxoraIpcChannels.downloadsGetDelta,
+        projectDirectory,
+        sinceRevision,
+        reason,
+        request
+      ).then((event) => ({
+        ...event,
+        fullResyncRequired: event.fullResyncRequired ?? false,
+        upserts: normalizeDownloadEntries(event.upserts)
+      })),
     importFile: (projectDirectory: string, sourcePath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadEntry>(
         ipc,
@@ -1220,6 +1350,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.downloadsFolderChanged,
         callback
       ),
+    onChanged: (callback: (event: FluxoraDownloadsChangedEvent) => void) =>
+      listenToDownloadsChanged(ipc, callback),
     analyzeContentLayout: (
       request: FluxoraAnalyzeContentLayoutRequest,
       operation?: OperationRequest
@@ -1992,6 +2124,7 @@ const bridgeRequest = async <T>(
   request: OperationRequest,
   timeoutMs?: number
 ): Promise<T> => {
+  window.__fluxoraListPerformanceRecordBridgeCall?.(method);
   try {
     return await invoke<T>('fluxora_bridge_request', {
       method,
@@ -3291,6 +3424,20 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.modsListInstalled:
         return bridgeRequest('mods.listInstalled', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'mods_list_installed'));
+      case FluxoraIpcChannels.workspaceGetDelta: {
+        const deltaRequest = args[3] as FluxoraWorkspaceDeltaRequest | undefined;
+        return bridgeRequest(
+          'workspace.getDelta',
+          {
+            projectDirectory: args[0],
+            profileName: optionalString(args[1]),
+            sinceRevision: optionalString(args[2]),
+            templateId: optionalString(deltaRequest?.templateId)
+          },
+          requestWithOperationId(deltaRequest, 'workspace_get_delta'),
+          modsWorkspaceTimeoutMs
+        );
+      }
       case FluxoraIpcChannels.modsGetOrder:
         return bridgeRequest('mods.getOrder', { projectDirectory: args[0], profileName: optionalString(args[1]) }, requestWithOperationId(args[2], 'mods_get_order'));
       case FluxoraIpcChannels.modsGetWorkspace:
@@ -3704,6 +3851,16 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.downloadsList:
         return bridgeRequest('downloads.list', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'downloads_list'));
+      case FluxoraIpcChannels.downloadsGetDelta:
+        return bridgeRequest(
+          'downloads.getDelta',
+          {
+            projectDirectory: args[0],
+            sinceRevision: optionalString(args[1]),
+            reason: optionalString(args[2])
+          },
+          requestWithOperationId(args[3], 'downloads_get_delta')
+        );
       case FluxoraIpcChannels.downloadsImportFile:
         return bridgeRequest(
           'downloads.importFile',

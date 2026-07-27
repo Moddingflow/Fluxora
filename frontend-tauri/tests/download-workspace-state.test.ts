@@ -164,6 +164,34 @@ describe('download workspace state', () => {
     expect(updated.loadState).toBe('ready');
   });
 
+  it('applies event deltas in one reducer pass while retaining untouched row identity', () => {
+    const ready = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+    const progressed = {
+      ...items[2],
+      progressPercent: 48,
+      progressText: '48%'
+    };
+    const added = downloadEntry('new-archive', 'New Archive.7z');
+
+    const updated = downloadWorkspaceReducer(ready, {
+      type: 'delta-applied',
+      upserts: [progressed, added],
+      removedIds: ['paused']
+    });
+
+    expect(updated.items.map((entry) => entry.id)).toEqual([
+      'skyui',
+      'active',
+      'new-archive'
+    ]);
+    expect(updated.items[0]).toBe(items[0]);
+    expect(updated.items[1]).toBe(progressed);
+    expect(updated.items[2]).toBe(added);
+  });
+
   it('queues duplicate decisions in row order and removes a canceled pending row', () => {
     const firstDecision = downloadEntry('decision-first', 'SkyUI 1.0.1.7z', {
       archiveId: null,

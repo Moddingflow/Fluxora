@@ -13,6 +13,14 @@ const readText = (...segments: string[]): string =>
 describe('mods pane redesign', () => {
   it('keeps the Phase 7 mods table on virtualized rows and typed facade mutations', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const rowIndex = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'lists',
+      'order-row-view-index.ts'
+    );
 
     expect(app).toContain('className="mod-list mod-list--table"');
     expect(app).toContain('role="table" aria-label="Mod order"');
@@ -20,20 +28,19 @@ describe('mods pane redesign', () => {
     expect(app).toContain('<StatusDot');
     expect(app).toContain('modTableStatusView(item)');
     expect(app).toContain("const visibleConflictHighlight =");
-    expect(app).toContain("isCollapsed ? conflictHighlight : 'none'");
-    expect(app).toContain('const visibleConflictHighlight = conflictSnapshotReady');
+    expect(app).toContain("rowView?.visibleConflictHighlight ?? 'none'");
     expect(app).toContain('data-conflict-highlight={visibleConflictHighlight}');
-    expect(app).toContain('isCollapsed ? conflictMarkerStates : []');
-    expect(app).toContain('const visibleConflictMarkerStates = conflictSnapshotReady');
+    expect(app).toContain('rowView?.visibleConflictMarkerStates ?? []');
     expect(app).toContain('data-conflict-status={visibleConflictMarkerStates.join');
     expect(app).toContain('markers={modConflictScrollbarMarkers}');
-    expect(app).toContain('modConflictMarkerStatesForHighlight(highlight)');
-    expect(app).toContain('modConflictMarkerStatesForHighlight(conflictHighlight)');
+    expect(rowIndex).toContain('modConflictMarkerStatesForHighlight(');
+    expect(app).toContain('modConflictMarkerStatesForHighlight(rowView.conflictHighlight)');
     expect(app).toContain('className="mod-list-row__status mod-separator-status"');
     expect(app).toContain('className="mod-list__head-priority"');
     expect(app).toContain('className="mod-list-row__priority"');
     expect(app).toContain('className="workspace-skeleton workspace-skeleton--priority"');
-    expect(app).toContain('modPriorityByOrderId(modsWorkspace.items)');
+    expect(app).toContain('buildModRowViewIndex(');
+    expect(app).toContain('modRowViewIndex.byOrderId.get(item.orderId)');
     expect(app).toContain('className="separator-toggle-button mod-separator-toggle-button"');
     expect(app).toContain('className="mod-separator-count"');
     expect(app).toContain('label={status.overwrite.title}');

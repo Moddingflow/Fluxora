@@ -1185,15 +1185,27 @@ namespace fluxora::tests
             std::condition_variable changed;
             bool finalizingEntered{false};
             bool releaseFinalizing{false};
+            std::wstring terminalJson;
         } progress;
         const auto blockAtFinalizing = +[](const wchar_t* operationJson, void* userData)
         {
-            if (operationJson == nullptr ||
-                std::wstring_view(operationJson).find(L"finalizing") == std::wstring_view::npos)
+            if (operationJson == nullptr)
             {
                 return;
             }
             auto& state = *static_cast<BlockingProgress*>(userData);
+            const std::wstring_view json(operationJson);
+            if (json.find(L"\"state\":\"completed\"") != std::wstring_view::npos)
+            {
+                std::lock_guard lock(state.mutex);
+                state.terminalJson = operationJson;
+                state.changed.notify_all();
+                return;
+            }
+            if (json.find(L"finalizing") == std::wstring_view::npos)
+            {
+                return;
+            }
             std::unique_lock lock(state.mutex);
             state.finalizingEntered = true;
             state.changed.notify_all();
@@ -1216,6 +1228,8 @@ namespace fluxora::tests
             nullptr,
             0,
             L"Default",
+            L"skyrimse",
+            nullptr,
             nullptr,
             L"[]",
             -1,
@@ -1252,6 +1266,24 @@ namespace fluxora::tests
             progress.releaseFinalizing = true;
         }
         progress.changed.notify_all();
+
+        {
+            std::unique_lock lock(progress.mutex);
+            ASSERT_TRUE(progress.changed.wait_for(
+                lock,
+                std::chrono::seconds(10),
+                [&progress] { return !progress.terminalJson.empty(); }));
+            EXPECT_NE(
+                progress.terminalJson.find(L"\"workspaceDelta\":{\"projectDirectory\":"),
+                std::wstring::npos);
+            EXPECT_NE(
+                progress.terminalJson.find(L"\"operationId\":\"active-pandora-update\""),
+                std::wstring::npos);
+            EXPECT_NE(
+                progress.terminalJson.find(L"\"plugins\":{\"baseRevision\":\"\""),
+                std::wstring::npos);
+            EXPECT_NE(progress.terminalJson.find(L"Nemesis.esp"), std::wstring::npos);
+        }
 
         fluxora_core_shutdown();
 #endif
@@ -1936,6 +1968,28 @@ namespace fluxora::tests
         EXPECT_NE(persistedJson.find(L"\"modOrder\":["), std::wstring::npos);
         EXPECT_NE(persistedJson.find(L"Workspace API Probe"), std::wstring::npos);
 
+        ASSERT_EQ(
+            fluxora_get_workspace_delta(
+                project.c_str(),
+                L"skyrimse",
+                L"Default",
+                nullptr,
+                L"op_workspace_delta_api",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring deltaJson = copyBufferedApiOutput();
+        EXPECT_NE(
+            deltaJson.find(L"\"operationId\":\"op_workspace_delta_api\""),
+            std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"sequence\":1"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"mods\":{\"baseRevision\":\"\""), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"installedModUpserts\":["), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"modUuid\":"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"orderId\":"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"plugins\":{\"baseRevision\":\"\""), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"fullResyncRequired\":false"), std::wstring::npos);
+
         fluxora_core_shutdown();
 #endif
     }
@@ -2062,6 +2116,25 @@ namespace fluxora::tests
         EXPECT_EQ(json.find(L"\"status\":"), std::wstring::npos);
         EXPECT_TRUE(std::filesystem::exists(legacyDownloadsDirectory / L"Legacy Archive.7z"));
         EXPECT_TRUE(std::filesystem::exists(legacyDownloadsDirectory / L".fb16ecc071"));
+
+        ASSERT_EQ(
+            fluxora_get_downloads_delta(
+                projectDirectory.c_str(),
+                nullptr,
+                L"op_downloads_delta_api",
+                L"created",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring deltaJson = copyBufferedApiOutput();
+        EXPECT_NE(
+            deltaJson.find(L"\"operationId\":\"op_downloads_delta_api\""),
+            std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"sequence\":1"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"upserts\":["), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"removedIds\":[]"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"reason\":\"created\""), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"fullResyncRequired\":false"), std::wstring::npos);
 
         fluxora_core_shutdown();
     }

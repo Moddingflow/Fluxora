@@ -166,6 +166,9 @@ namespace fluxora
     public:
         FomodInstallerService() = delete;
 
+        [[nodiscard]] static std::filesystem::path findPackageRoot(
+            const std::filesystem::path& packageDirectory);
+
         [[nodiscard]] static bool hasXmlInstaller(const std::filesystem::path& packageDirectory);
 
         [[nodiscard]] static FomodInstallerDescriptor analyze(

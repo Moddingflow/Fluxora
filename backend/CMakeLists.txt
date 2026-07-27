@@ -195,6 +195,7 @@ add_library(FluxoraCore SHARED
     src/Services/RootBuilderLaunchCacheReconciler.cpp
     src/Services/TemplateService.cpp
     src/Services/VfsMountPlan.cpp
+    src/Services/WorkspaceRevisionJournal.cpp
     src/Services/VirtualFileSystemService.cpp
     src/Support/LaunchDescriptorStore.cpp
     src/Storage/AtomicFileStore.cpp

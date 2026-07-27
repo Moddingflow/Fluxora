@@ -414,17 +414,36 @@ describe('install dialog flow', () => {
 
   it('reopens needs-review rows with persisted FOMOD and placement decisions', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const progressLabel = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'mods',
+      'ModInstallProgressLabel.tsx'
+    );
     const reopen = sliceBetween(
       app,
       'const reopenInstallForReview',
       '  const resolveInstallDialogPlan'
     );
+    const detectionTransition = sliceBetween(
+      app,
+      'const installDialogWithDetection =',
+      '  const watchInstallDetection ='
+    );
 
-    expect(app).toContain("pendingOperation?.state === 'needsReview'");
-    expect(app).toContain('reopenInstallForReview(pendingOperation)');
+    expect(progressLabel).toContain("progress.state === 'needsReview'");
+    expect(progressLabel).toContain('onNeedsReview(progress.operation!)');
+    expect(app).toContain('onNeedsReview={reopenInstallForReview}');
     expect(reopen).toContain('operation.selectedOptionIds ?? []');
     expect(reopen).toContain('operation.manualDecisions ?? []');
     expect(reopen).toContain("JSON.parse(operation.placementOverridesJson || '[]')");
-    expect(reopen).toContain('validOptionIds.has(id)');
+    expect(reopen).not.toContain('validOptionIds.has(id)');
+    expect(detectionTransition).toContain('sanitizeFomodManualDecisions(');
+    expect(detectionTransition).toContain('current.manualFomodDecisions ?? []');
+    expect(detectionTransition).toContain(
+      'selectedFomodOptionIds: initialFomodSelection(fomodInstaller)'
+    );
   });
 });

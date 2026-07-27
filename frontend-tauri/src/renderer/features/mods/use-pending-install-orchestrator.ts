@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState
+} from 'react';
 
 import type {
   FluxoraInstallConflictSnapshot,
@@ -20,6 +26,10 @@ import {
   type PendingInstallDraft,
   type PendingInstallSessionState
 } from './pending-install-orchestrator-state';
+import {
+  createInstallProgressStore,
+  type InstallProgressStore
+} from './install-progress-store';
 
 interface PendingInstallOrchestratorOptions {
   items: FluxoraModOrderItem[];
@@ -36,6 +46,7 @@ interface BeginPendingInstallRequest extends PendingInstallDraft {
 export interface PendingInstallOrchestrator {
   session: PendingInstallSessionState | null;
   sessions: ReadonlyMap<string, PendingInstallSessionState>;
+  progressStore: InstallProgressStore;
   begin: (request: BeginPendingInstallRequest) => PendingInstallSessionState;
   complete: (installed: FluxoraInstalledModSummary) => CompletedPendingInstallState;
   rollback: (operationId: string) => boolean;
@@ -76,25 +87,6 @@ const stableOrderAnchors = (
   };
 };
 
-const installStateLabel = (operation: FluxoraInstallOperation): string => {
-  switch (operation.state) {
-    case 'queued': return 'В очереди';
-    case 'validating': return 'Проверка';
-    case 'extracting': return 'Распаковка';
-    case 'configuringFomod': return 'Настройка FOMOD';
-    case 'buildingStaging': return 'Подготовка файлов';
-    case 'projectingConflicts': return 'Проверка конфликтов';
-    case 'waitingTarget': return 'Ожидание другого обновления';
-    case 'committing': return 'Применение';
-    case 'finalizing': return 'Применение';
-    case 'recovering': return 'Восстановление';
-    case 'cancelled': return 'Отменено';
-    case 'needsReview': return 'Требуется проверка';
-    case 'failed': return 'Ошибка установки';
-    case 'completed': return operation.result?.version || 'Установлен';
-  }
-};
-
 export const installedSummaryFromOperation = (
   operation: FluxoraInstallOperation
 ): FluxoraInstalledModSummary | null => {
@@ -123,6 +115,11 @@ export const usePendingInstallOrchestrator = (
   const itemsRef = useRef(options.items);
   itemsRef.current = options.items;
   const projectedItemsRef = useRef(options.items);
+  const progressStoreRef = useRef<InstallProgressStore | null>(null);
+  if (!progressStoreRef.current) {
+    progressStoreRef.current = createInstallProgressStore();
+  }
+  const progressStore = progressStoreRef.current;
   const sessionsRef = useRef(new Map<string, PendingInstallSessionState>());
   const projectDirectoriesRef = useRef(new Map<string, string>());
   const rebaseInFlightRef = useRef(
@@ -228,13 +225,14 @@ export const usePendingInstallOrchestrator = (
     const restored = rollbackPendingInstall(current, itemsRef.current);
     sessionsRef.current.delete(operationId);
     projectDirectoriesRef.current.delete(operationId);
+    progressStore.delete(operationId);
     itemsRef.current = restored;
     projectedItemsRef.current = restored;
     publishSessions();
     optionsRef.current.onWorkspaceRevision();
     optionsRef.current.onItemsChanged(restored);
     return true;
-  }, [publishSessions]);
+  }, [progressStore, publishSessions]);
 
   const complete = useCallback((installed: FluxoraInstalledModSummary) => {
     const current = sessionsRef.current.get(installed.operationId);
@@ -244,13 +242,25 @@ export const usePendingInstallOrchestrator = (
     const completed = completePendingInstall(current, itemsRef.current, installed);
     sessionsRef.current.delete(installed.operationId);
     projectDirectoriesRef.current.delete(installed.operationId);
+    progressStore.delete(installed.operationId);
     itemsRef.current = completed.items;
     projectedItemsRef.current = completed.items;
     publishSessions();
     optionsRef.current.onWorkspaceRevision();
     optionsRef.current.onItemsChanged(completed.items);
     return completed;
-  }, [publishSessions]);
+  }, [progressStore, publishSessions]);
+
+  const finalizeForWorkspaceDelta = useCallback((operationId: string): boolean => {
+    if (!sessionsRef.current.has(operationId)) {
+      return false;
+    }
+    sessionsRef.current.delete(operationId);
+    projectDirectoriesRef.current.delete(operationId);
+    progressStore.delete(operationId);
+    startTransition(publishSessions);
+    return true;
+  }, [progressStore, publishSessions]);
 
   const rebase = useCallback(async (
     projectDirectory: string,
@@ -351,20 +361,17 @@ export const usePendingInstallOrchestrator = (
   }), [applySnapshot, flushOperationRebase]);
 
   useEffect(() => window.fluxora.installs.onProgress((operation) => {
+    progressStore.setOperation(operation);
     const session = sessionsRef.current.get(operation.operationId);
     if (session) {
-      const nextItems = itemsRef.current.map((item) =>
-        activeItemMatches(session, item)
-          ? { ...item, version: installStateLabel(operation) }
-          : item
-      );
-      itemsRef.current = nextItems;
-      projectedItemsRef.current = nextItems;
-      optionsRef.current.onItemsChanged(nextItems);
       if (operation.state === 'completed') {
         const installed = installedSummaryFromOperation(operation);
         if (installed) {
-          complete(installed);
+          if (operation.workspaceDelta) {
+            finalizeForWorkspaceDelta(operation.operationId);
+          } else {
+            complete(installed);
+          }
         } else {
           rollback(operation.operationId);
         }
@@ -373,12 +380,13 @@ export const usePendingInstallOrchestrator = (
       }
     }
     optionsRef.current.onOperationProgress?.(operation);
-  }), [complete, rollback]);
+  }), [complete, finalizeForWorkspaceDelta, progressStore, rollback]);
 
   const latestSession = [...sessions.values()].at(-1) ?? null;
   return {
     session: latestSession,
     sessions,
+    progressStore,
     begin,
     complete,
     rollback,

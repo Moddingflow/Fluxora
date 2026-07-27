@@ -6,7 +6,7 @@ import { DownloadDuplicateDecisionDialog } from '../src/renderer/features/downlo
 import type { FluxoraDownloadEntry } from '../src/shared/fluxora-api';
 
 const duplicateEntry = (
-  direction: 'upgrade' | 'downgrade' | 'mixed'
+  direction: 'upgrade' | 'downgrade' | 'mixed' | 'same-file'
 ): FluxoraDownloadEntry => ({
   id: `pending-${direction}`,
   name: 'SkyUI 1.0.0',
@@ -75,5 +75,21 @@ describe('download duplicate decision dialog', () => {
     expect(renderDialog(duplicateEntry('mixed'))).toContain(
       'одновременно есть более старые и более новые версии'
     );
+  });
+
+  it('shows one plain archive name and only the replace action for an identical archive', () => {
+    const markup = renderDialog(duplicateEntry('same-file'));
+
+    expect(markup).toContain('Точно такой же архив уже есть в Downloads');
+    expect(markup).toContain('Заменить');
+    expect(markup.match(/SkyUI 1\.0\.1\.7z/g)).toHaveLength(1);
+    expect(markup).not.toContain('— 1.0.1');
+    expect(markup).not.toContain('Запрошенный файл');
+    expect(markup).not.toContain('Готовый архив');
+    expect(markup).not.toContain('Пропустить');
+    expect(markup).not.toContain('Этот файл уже скачан');
+    expect(markup).not.toContain('Выбрать способ установки');
+    expect(markup).not.toContain('Отмена');
+    expect(markup).not.toContain('Сохранить оба');
   });
 });

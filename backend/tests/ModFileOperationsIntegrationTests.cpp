@@ -3106,6 +3106,72 @@ namespace fluxora::tests
         EXPECT_EQ(findInstalledMod(records, L"Northern Roads - Patches Compendium.fomod-package"), nullptr);
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, ReplaceFomodUpdateSupportsArbitrarilyNestedArchiveRoot)
+    {
+        std::string baselineError;
+        const std::optional<InstalledMod> baseline = tryInstallFomodArchive(
+            L"Nested FOMOD Update 3.0.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Nested FOMOD Update</moduleName>
+  <requiredInstallFiles>
+    <file source="payload/NestedUpdate.esp" destination="NestedUpdate.esp" />
+    <file source="payload/RemovedInUpdate.esp" destination="RemovedInUpdate.esp" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"payload/NestedUpdate.esp", "3.0"},
+                {L"payload/RemovedInUpdate.esp", "old"}
+            },
+            L"Nested FOMOD Update",
+            baselineError);
+        if (!baseline.has_value() && isMissingExtractorError(baselineError))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available: " << baselineError;
+        }
+        ASSERT_TRUE(baseline.has_value()) << baselineError;
+
+        const DownloadEntry update = importArchive(
+            L"Nested FOMOD Update 3.1.zip",
+            {
+                {L"release/Nested FOMOD Update/package/fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Nested FOMOD Update</moduleName>
+  <requiredInstallFiles>
+    <file source="payload/NestedUpdate.esp" destination="NestedUpdate.esp" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"release/Nested FOMOD Update/package/payload/NestedUpdate.esp", "3.1"},
+                {L"release/docs/readme.txt", "archive-level documentation"}
+            });
+
+        FomodInstallerDescriptor descriptor;
+        try
+        {
+            descriptor = downloads_.analyzeFomodDownload(project_, update.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+        ASSERT_TRUE(descriptor.isFomod);
+
+        const InstalledMod installed = downloads_.installFomodDownload(
+            project_,
+            update.localPath,
+            L"Nested FOMOD Update",
+            ExistingModInstallMode::Replace,
+            {});
+
+        EXPECT_EQ(installed.id, baseline->id);
+        EXPECT_EQ(readTextFile(installed.id / L"NestedUpdate.esp"), "3.1");
+        EXPECT_FALSE(std::filesystem::exists(installed.id / L"RemovedInUpdate.esp"));
+        EXPECT_FALSE(std::filesystem::exists(
+            modsDirectory() / L".Nested FOMOD Update.installing"));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, InstallFomodDownloadNormalizesOutputThroughContentLayout)
     {
         std::string error;

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import {
   lazy,
+  startTransition,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -69,6 +70,10 @@ import {
   AdaptiveVirtualList,
   type AdaptiveVirtualListHandle
 } from './components/virtualization/AdaptiveVirtualList';
+import {
+  installListPerformanceBenchmarkHarness,
+  measureListPerformanceStage
+} from './performance/list-performance-benchmark';
 import { useSearchScrollRestoration } from './hooks/useSearchScrollRestoration';
 import { Badge, Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
@@ -147,7 +152,18 @@ import {
 } from './features/deletion/DeletionConfirmationDialog';
 import { DownloadDuplicateDecisionDialog } from './features/downloads/DownloadDuplicateDecisionDialog';
 import { taskbarDownloadProgress } from './features/downloads/taskbar-download-progress';
+import {
+  buildModRowViewIndex,
+  buildPluginRowViewIndex,
+  modOrderItemPresentationKey,
+  modRowViewPresentationKey,
+  pluginOrderItemPresentationKey,
+  pluginRowViewPresentationKey,
+  type ModRowViewIndex,
+  type PluginRowViewIndex
+} from './features/lists/order-row-view-index';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
+import { PluginRow, PluginsListSurface } from './features/plugins/PluginsListSurface';
 import {
   PluginSeparatorDialog,
   PLUGIN_SEPARATOR_NAME_MAX_LENGTH,
@@ -172,6 +188,8 @@ import {
   type ModCreationDialogKind,
   type ModCreationDialogState
 } from './features/mods/ModCreationDialog';
+import { ModInstallProgressLabel } from './features/mods/ModInstallProgressLabel';
+import { ModRow, ModsListSurface } from './features/mods/ModsListSurface';
 import {
   createModDetailsContentCache,
   modDetailsContentCacheKey,
@@ -180,9 +198,11 @@ import {
 import { downloadInstallDropPlacementFromPointer } from './features/mods/download-install-drop-state';
 import { resolveModSourcePageUrl } from './features/mods/mod-source-url';
 import {
+  pendingInstallConflictMarkerReady,
   pendingInstallTargetIndexForPlacement,
   type PendingInstallDropPlacement
 } from './features/mods/pending-install-orchestrator-state';
+import { shouldAcceptInstallOperation } from './features/mods/install-progress-store';
 import { usePostInstallModReveal } from './features/mods/use-post-install-mod-reveal';
 import {
   restoredInstallNeedsPendingProjection,
@@ -224,8 +244,6 @@ import {
   formatFileSize,
   hasConflict,
   isModOverwriteItem,
-  isModNestedUnderSeparator,
-  modConflictMarkerStates,
   modConflictMarkerStatesForHighlight,
   modItemTitle,
   modLatestVersionDiffers,
@@ -233,9 +251,6 @@ import {
   modOverwriteView,
   modOrderItemMovePlan,
   modOrderItemMatchesLookup,
-  modPriorityByOrderId,
-  modRowConflictHighlight,
-  modSeparatorChildCount,
   modStatusText,
   modTableStatusView,
   modVersionText,
@@ -254,11 +269,14 @@ import {
   saveCollapsedSeparatorOrderIds
 } from './separator-collapse-persistence';
 import {
+  deleteSeparatorSelection,
+  separatorDeletionOrderIds
+} from './order-separator-deletion-service';
+import {
   assessPluginOrderItemSelectionReorder,
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   enabledPluginNameKeys,
-  isPluginNestedUnderSeparator,
   isSkyrimMissingMasterStatusProject,
   mergePendingPluginEnabledStates,
   pluginCapabilityView,
@@ -266,8 +284,6 @@ import {
   pluginItemTitle,
   pluginMissingMasterSummary,
   pluginOrderItemMovePlan,
-  pluginSeparatorChildCount,
-  pluginSeparatorMissingMasterSummary,
   pluginSourceLabel,
   pluginSourceModKey,
   pluginStatusText,
@@ -290,7 +306,6 @@ import {
   downloadWorkspaceReducer,
   emptyDownloadWorkspaceState,
   filterDownloadEntries,
-  hasActiveDownload,
   queuedDownloadDuplicateDecisions,
   selectedDownloadEntry
 } from './download-workspace-state';
@@ -398,6 +413,10 @@ import {
   normalizeMo2TransferDestinationRoot
 } from './mo2-transfer-request';
 import { createVirtualWindow } from './ui-performance';
+import {
+  applyWorkspaceDelta,
+  type WorkspaceDeltaState
+} from './services/workspace-delta-state';
 import type {
   FluxoraAppInfo,
   FluxoraAiHostStatus,
@@ -407,6 +426,7 @@ import type {
   FluxoraExternalConnectionSnapshot,
   FluxoraContentLayoutPreview,
   FluxoraDownloadEntry,
+  FluxoraDownloadsChangedEvent,
   FluxoraDownloadDuplicateChoice,
   FluxoraExecutable,
   FluxoraExecutableLaunchResult,
@@ -441,6 +461,7 @@ import type {
   FluxoraSecurityState,
   FluxoraThemeMode,
   FluxoraTransferDriveOption,
+  FluxoraWorkspaceDelta,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
 
@@ -463,6 +484,29 @@ interface FluxPackManualDownloadState {
   selectedArchives: Record<string, string>;
   sources: FluxoraFluxPackSourceInstallPlan[];
 }
+
+interface PendingWorkspaceFullResync {
+  project: FluxoraProject;
+  profileName: string;
+  reason: string;
+}
+
+installListPerformanceBenchmarkHarness();
+
+const listPresentationTokens = new WeakMap<object, number>();
+let listPresentationTokenSequence = 0;
+const listPresentationToken = (value: object | null | undefined): number => {
+  if (!value) {
+    return 0;
+  }
+  const existing = listPresentationTokens.get(value);
+  if (existing !== undefined) {
+    return existing;
+  }
+  listPresentationTokenSequence += 1;
+  listPresentationTokens.set(value, listPresentationTokenSequence);
+  return listPresentationTokenSequence;
+};
 
 const FilePreviewWorkspace = lazy(async () => {
   const module = await import('./features/file-preview/FilePreviewWorkspace');
@@ -985,7 +1029,6 @@ const pluginLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index
 const effectiveFileTreeSkeletonRows = Array.from({ length: 14 }, (_, index) => index);
 const loadingSkeletonWidths = ['72%', '58%', '66%', '48%', '62%'] as const;
 const downloadRowHeight = 48;
-const DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS = 500;
 const downloadSkeletonRows = [
   {
     id: 'skyui',
@@ -1453,6 +1496,10 @@ export const App = () => {
   const nexusConnectionReady = connectionIsReady(nexusConnection);
   const nxmAutoRegistrationAttemptedRef = useRef(false);
   const pendingInboundNxmEventRef = useRef<FluxoraNxmInboundLinksCaptured | null>(null);
+  const inboundNxmReadinessRef = useRef({
+    bridgeReady: false,
+    downloadBridgeAvailable: false
+  });
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
   const [transferDestinationRootDirectory, setTransferDestinationRootDirectory] = useState('');
   const [transferStep, setTransferStep] = useState<TransferStepId>('source');
@@ -1482,8 +1529,12 @@ export const App = () => {
     undefined,
     emptyModWorkspaceState
   );
+  const modsWorkspaceItemsRef = useRef<FluxoraModOrderItem[]>([]);
+  modsWorkspaceItemsRef.current = modsWorkspace.items;
   const modsWorkspaceProjectIdRef = useRef<string | null>(null);
   const [installedMods, setInstalledMods] = useState<FluxoraInstalledMod[]>([]);
+  const installedModsRef = useRef<FluxoraInstalledMod[]>([]);
+  installedModsRef.current = installedMods;
   const [modUpdateResultsByProject, setModUpdateResultsByProject] =
     useState<ModUpdateResultsByProject>({});
   const [manualModUpdateNotice, setManualModUpdateNotice] = useState<string | null>(null);
@@ -1597,6 +1648,8 @@ export const App = () => {
     undefined,
     emptyPluginWorkspaceState
   );
+  const pluginsWorkspaceItemsRef = useRef<FluxoraPluginOrderItem[]>([]);
+  pluginsWorkspaceItemsRef.current = pluginsWorkspace.items;
   const pluginsWorkspaceProjectIdRef = useRef<string | null>(null);
   useEffect(() => {
     const projectId = modsWorkspaceProjectIdRef.current;
@@ -1640,6 +1693,8 @@ export const App = () => {
     undefined,
     emptyDownloadWorkspaceState
   );
+  const downloadsWorkspaceItemsRef = useRef<FluxoraDownloadEntry[]>([]);
+  downloadsWorkspaceItemsRef.current = downloadsWorkspace.items;
   const [downloadsBusyLabel, setDownloadsBusyLabel] = useState<string | null>(null);
   const [isImportingNxmManually, setIsImportingNxmManually] = useState(false);
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null);
@@ -1653,7 +1708,43 @@ export const App = () => {
   const downloadDropCueRef = useRef<DownloadDropCue>('idle');
   const downloadDropSurfaceRef = useRef<HTMLDivElement | null>(null);
   const downloadDropResetRef = useRef<number | null>(null);
-  const downloadProgressRefreshInFlightRef = useRef(false);
+  const downloadsDeltaCursorRef = useRef<{
+    projectDirectory: string;
+    revision: string;
+    sequence: number;
+  } | null>(null);
+  const downloadsDeltaResyncInFlightRef = useRef(false);
+  const workspaceDeltaStateRef = useRef<WorkspaceDeltaState | null>(null);
+  const workspaceDeltaSeedRef = useRef<{
+    scopeKey: string;
+    promise: Promise<WorkspaceDeltaState | null>;
+  } | null>(null);
+  const workspaceFullResyncInFlightRef = useRef(false);
+  const pendingWorkspaceFullResyncRef = useRef<PendingWorkspaceFullResync | null>(null);
+  const listScrollActivityRef = useRef({ mods: false, plugins: false });
+  const applyIncomingWorkspaceDeltaRef = useRef<(
+    delta: FluxoraWorkspaceDelta,
+    expectedOperationId?: string,
+    urgent?: boolean
+  ) => boolean>(() => false);
+  const queueWorkspaceFullResyncRef = useRef<(
+    project: FluxoraProject,
+    profileName: string,
+    reason: string
+  ) => void>(() => undefined);
+  const flushWorkspaceFullResyncRef = useRef<() => void>(() => undefined);
+  const handleModsScrollActivityChange = useCallback((active: boolean) => {
+    listScrollActivityRef.current.mods = active;
+    if (!active) {
+      flushWorkspaceFullResyncRef.current();
+    }
+  }, []);
+  const handlePluginsScrollActivityChange = useCallback((active: boolean) => {
+    listScrollActivityRef.current.plugins = active;
+    if (!active) {
+      flushWorkspaceFullResyncRef.current();
+    }
+  }, []);
   const [activeRightPane, setActiveRightPane] = useState<RightPaneId>('plugins');
   const [archiveTreeScrollTop, setArchiveTreeScrollTop] = useState(0);
   const [profilesWorkspace, dispatchProfilesWorkspace] = useReducer(
@@ -1745,6 +1836,12 @@ export const App = () => {
     },
     onOperationProgress: (operation) => {
       installOperationsRef.current.set(operation.operationId, operation);
+      if (operation.workspaceDelta) {
+        applyIncomingWorkspaceDeltaRef.current(
+          operation.workspaceDelta,
+          operation.operationId
+        );
+      }
       if (operation.state === 'committing' || operation.state === 'finalizing') {
         installCommitOperationsRef.current.add(operation.operationId);
       } else if (
@@ -1783,7 +1880,7 @@ export const App = () => {
         installSourceByOperationRef.current.delete(operation.operationId);
       }
       if (operation.state === 'completed') {
-        const source = downloadsWorkspace.items.find(
+        const source = downloadsWorkspaceItemsRef.current.find(
           (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
         );
         if (source) {
@@ -1799,18 +1896,9 @@ export const App = () => {
           });
         }
         setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
-        if (selectedProject) {
-          void loadDownloadsWorkspace(selectedProject, {
-            operationId: operation.operationId,
-            showBusy: false,
-            showLoading: false,
-            resetScroll: false,
-            suppressError: true
-          });
-        }
       } else if (operation.state === 'needsReview') {
         setMessage(operation.errorMessage || 'The interrupted install needs review.');
-        const source = downloadsWorkspace.items.find(
+        const source = downloadsWorkspaceItemsRef.current.find(
           (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
         );
         if (source) {
@@ -1821,7 +1909,7 @@ export const App = () => {
         }
       } else if (operation.state === 'cancelled') {
         setMessage(`Installation cancelled: ${operation.targetFolder}.`);
-        const source = downloadsWorkspace.items.find(
+        const source = downloadsWorkspaceItemsRef.current.find(
           (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
         );
         if (source) {
@@ -1832,7 +1920,7 @@ export const App = () => {
         }
       } else {
         setMessage(operation.errorMessage || `Could not install ${operation.targetFolder}.`);
-        const source = downloadsWorkspace.items.find(
+        const source = downloadsWorkspaceItemsRef.current.find(
           (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
         );
         if (source) {
@@ -1929,6 +2017,7 @@ export const App = () => {
       }
       for (const operation of operations) {
         installOperationsRef.current.set(operation.operationId, operation);
+        pendingInstallOrchestrator.progressStore.setOperation(operation);
         const restoredSourceKey = operation.sourcePath.toLocaleLowerCase();
         if (!restoredInstallNeedsPendingProjection(operation)) {
           installSubmitSourcesRef.current.delete(restoredSourceKey);
@@ -2092,17 +2181,14 @@ export const App = () => {
 
   const filteredModItems = useMemo(
     () =>
-      visibleModOrderItems(
-        modsWorkspace.items,
-        deferredModSearchText,
-        modsWorkspace.collapsedSeparatorOrderIds
+      measureListPerformanceStage('derive:visible-mods', () =>
+        visibleModOrderItems(
+          modsWorkspace.items,
+          deferredModSearchText,
+          modsWorkspace.collapsedSeparatorOrderIds
+        )
       ),
     [modsWorkspace.items, deferredModSearchText, modsWorkspace.collapsedSeparatorOrderIds]
-  );
-
-  const modPrioritiesByOrderId = useMemo(
-    () => modPriorityByOrderId(modsWorkspace.items),
-    [modsWorkspace.items]
   );
 
   const overwriteModItem = useMemo(
@@ -2118,7 +2204,10 @@ export const App = () => {
   );
 
   const displayedModItems = useMemo(
-    () => appendOverwriteOrderItem(filteredModItems, overwriteModItem, deferredModSearchText),
+    () =>
+      measureListPerformanceStage('derive:displayed-mods', () =>
+        appendOverwriteOrderItem(filteredModItems, overwriteModItem, deferredModSearchText)
+      ),
     [deferredModSearchText, filteredModItems, overwriteModItem]
   );
 
@@ -2141,24 +2230,27 @@ export const App = () => {
 
   const selectableModOrderIds = useMemo(
     () =>
-      displayedModItems
-        .filter((item) => !isModOverwriteItem(item))
-        .map((item) => item.orderId),
+      measureListPerformanceStage('derive:selectable-mods', () =>
+        displayedModItems
+          .filter((item) => !isModOverwriteItem(item))
+          .map((item) => item.orderId)
+      ),
     [displayedModItems]
   );
 
   const selectedModItem = useMemo(
-    () => {
-      if (modsWorkspace.selectedOrderId === overwriteModItem?.orderId) {
-        return overwriteModItem;
-      }
+    () =>
+      measureListPerformanceStage('derive:selected-mod', () => {
+        if (modsWorkspace.selectedOrderId === overwriteModItem?.orderId) {
+          return overwriteModItem;
+        }
 
-      return selectedModOrderItem(
-        modsWorkspace.items,
-        modsWorkspace.selectedOrderId,
-        modsWorkspace.collapsedSeparatorOrderIds
-      );
-    },
+        return selectedModOrderItem(
+          modsWorkspace.items,
+          modsWorkspace.selectedOrderId,
+          modsWorkspace.collapsedSeparatorOrderIds
+        );
+      }),
     [
       modsWorkspace.items,
       modsWorkspace.selectedOrderId,
@@ -2167,18 +2259,22 @@ export const App = () => {
     ]
   );
   const aiVoiceBuildTerms = useMemo(() => {
-    const selectedName = selectedModItem?.isMod ? modItemTitle(selectedModItem) : '';
-    const loadedNames = installedMods.map((mod) => mod.name);
-    const workspaceNames = modsWorkspace.items
-      .filter((item) => item.isMod)
-      .map(modItemTitle);
-    return [selectedName, selectedProject?.name ?? '', ...loadedNames, ...workspaceNames];
+    return measureListPerformanceStage('derive:ai-voice-mod-terms', () => {
+      const selectedName = selectedModItem?.isMod ? modItemTitle(selectedModItem) : '';
+      const loadedNames = installedMods.map((mod) => mod.name);
+      const workspaceNames = modsWorkspace.items
+        .filter((item) => item.isMod)
+        .map(modItemTitle);
+      return [selectedName, selectedProject?.name ?? '', ...loadedNames, ...workspaceNames];
+    });
   }, [installedMods, modsWorkspace.items, selectedModItem, selectedProject?.name]);
 
   const selectedModDeletionItems = useMemo(
     () =>
-      modsWorkspace.items.filter(
-        (item) => item.isMod && modsWorkspace.selectedOrderIds.has(item.orderId)
+      measureListPerformanceStage('derive:selected-mod-deletions', () =>
+        modsWorkspace.items.filter(
+          (item) => item.isMod && modsWorkspace.selectedOrderIds.has(item.orderId)
+        )
       ),
     [modsWorkspace.items, modsWorkspace.selectedOrderIds]
   );
@@ -2191,21 +2287,31 @@ export const App = () => {
   }, [modDetailsConflictPage]);
 
   const totalModCount = useMemo(
-    () => modsWorkspace.items.filter((item) => item.isMod).length,
+    () =>
+      measureListPerformanceStage(
+        'derive:total-mod-count',
+        () => modsWorkspace.items.filter((item) => item.isMod).length
+      ),
     [modsWorkspace.items]
   );
 
   const enabledModCount = useMemo(
-    () => modsWorkspace.items.filter((item) => item.isMod && item.isEnabled).length,
+    () =>
+      measureListPerformanceStage(
+        'derive:enabled-mod-count',
+        () => modsWorkspace.items.filter((item) => item.isMod && item.isEnabled).length
+      ),
     [modsWorkspace.items]
   );
 
   const filteredPluginItems = useMemo(
     () =>
-      visiblePluginOrderItems(
-        pluginsWorkspace.items,
-        deferredPluginSearchText,
-        pluginsWorkspace.collapsedSeparatorOrderIds
+      measureListPerformanceStage('derive:visible-plugins', () =>
+        visiblePluginOrderItems(
+          pluginsWorkspace.items,
+          deferredPluginSearchText,
+          pluginsWorkspace.collapsedSeparatorOrderIds
+        )
       ),
     [
       pluginsWorkspace.items,
@@ -2215,16 +2321,22 @@ export const App = () => {
   );
 
   const selectablePluginOrderIds = useMemo(
-    () => filteredPluginItems.map((item) => item.orderId),
+    () =>
+      measureListPerformanceStage(
+        'derive:selectable-plugins',
+        () => filteredPluginItems.map((item) => item.orderId)
+      ),
     [filteredPluginItems]
   );
 
   const selectedPluginItem = useMemo(
     () =>
-      selectedPluginOrderItem(
-        pluginsWorkspace.items,
-        pluginsWorkspace.selectedOrderId,
-        pluginsWorkspace.collapsedSeparatorOrderIds
+      measureListPerformanceStage('derive:selected-plugin', () =>
+        selectedPluginOrderItem(
+          pluginsWorkspace.items,
+          pluginsWorkspace.selectedOrderId,
+          pluginsWorkspace.collapsedSeparatorOrderIds
+        )
       ),
     [
       pluginsWorkspace.items,
@@ -2328,6 +2440,12 @@ export const App = () => {
     profileName: selectedProjectProfileName,
     project: selectedProject
   };
+  useEffect(() => {
+    window.__fluxoraListPerformance?.setContext({
+      projectDirectory: selectedProject?.projectDirectory,
+      profileName: selectedProjectProfileName
+    });
+  }, [selectedProject?.projectDirectory, selectedProjectProfileName]);
 
   const modWorkspaceProfileName =
     isFilePreviewWindow && filePreviewProfileName
@@ -2355,38 +2473,17 @@ export const App = () => {
     ]
   );
 
-  const modOrderRevisionKey = useMemo(
-    () =>
-      modsWorkspace.items
-        .map((item) =>
-          [
-            item.orderId,
-            item.id,
-            item.order,
-            item.name,
-            item.isEnabled ? '1' : '0',
-            item.fileCount,
-            item.overwrittenFileCount,
-            item.overwritingFileCount
-          ].join(':')
-        )
-        .join('|'),
-    [modsWorkspace.items]
-  );
-
   const effectiveFileTreeRequestKey = useMemo(
     () =>
       selectedProject
         ? [
             selectedProject.projectDirectory,
             selectedProjectProfileName,
-            buildPathRevisionKey,
-            modOrderRevisionKey
+            buildPathRevisionKey
           ].join('\n')
         : '',
     [
       buildPathRevisionKey,
-      modOrderRevisionKey,
       selectedProject,
       selectedProjectProfileName
     ]
@@ -2407,57 +2504,65 @@ export const App = () => {
     [executablesWorkspace.items, executablesWorkspace.selectedId]
   );
 
-  const enabledPluginSlotCounts = useMemo(() => {
-    const counts = {
-      enabled: 0,
-      heavy: 0,
-      light: 0
-    };
+  const enabledPluginSlotCounts = useMemo(
+    () =>
+      measureListPerformanceStage('derive:enabled-plugin-slot-counts', () => {
+        const counts = {
+          enabled: 0,
+          heavy: 0,
+          light: 0
+        };
 
-    pluginsWorkspace.items.forEach((item) => {
-      if (!item.isPlugin || !item.isEnabled) {
-        return;
-      }
+        pluginsWorkspace.items.forEach((item) => {
+          if (!item.isPlugin || !item.isEnabled) {
+            return;
+          }
 
-      counts.enabled += 1;
-      if (item.isLight) {
-        counts.light += 1;
-      } else {
-        counts.heavy += 1;
-      }
-    });
+          counts.enabled += 1;
+          if (item.isLight) {
+            counts.light += 1;
+          } else {
+            counts.heavy += 1;
+          }
+        });
 
-    return counts;
-  }, [pluginsWorkspace.items]);
+        return counts;
+      }),
+    [pluginsWorkspace.items]
+  );
 
-  const selectedProjectRuntimeSummary = useMemo<ProjectRuntimeSummary | undefined>(() => {
-    if (!loadedWorkspaceProjectId) {
-      return undefined;
-    }
+  const selectedProjectRuntimeSummary = useMemo<ProjectRuntimeSummary | undefined>(
+    () =>
+      measureListPerformanceStage('derive:project-runtime-summary', () => {
+        if (!loadedWorkspaceProjectId) {
+          return undefined;
+        }
 
-    const modEntries =
-      installedMods.length > 0
-        ? installedMods
-        : modsWorkspace.items.filter((item) => item.isMod);
-    const hasModData = installedMods.length > 0 || modsWorkspace.loadState === 'ready';
+        const modEntries =
+          installedMods.length > 0
+            ? installedMods
+            : modsWorkspace.items.filter((item) => item.isMod);
+        const hasModData = installedMods.length > 0 || modsWorkspace.loadState === 'ready';
 
-    return {
-      projectId: loadedWorkspaceProjectId,
-      modCount: hasModData ? modEntries.length : undefined,
-      disabledModCount: hasModData
-        ? modEntries.filter((item) => !item.isEnabled).length
-        : undefined,
-      downloadsCount:
-        downloadsWorkspace.loadState === 'ready' ? downloadsWorkspace.items.length : undefined
-    };
-  }, [
-    downloadsWorkspace.items,
-    downloadsWorkspace.loadState,
-    installedMods,
-    loadedWorkspaceProjectId,
-    modsWorkspace.items,
-    modsWorkspace.loadState
-  ]);
+        return {
+          projectId: loadedWorkspaceProjectId,
+          modCount: hasModData ? modEntries.length : undefined,
+          disabledModCount: hasModData
+            ? modEntries.filter((item) => !item.isEnabled).length
+            : undefined,
+          downloadsCount:
+            downloadsWorkspace.loadState === 'ready' ? downloadsWorkspace.items.length : undefined
+        };
+      }),
+    [
+      downloadsWorkspace.items,
+      downloadsWorkspace.loadState,
+      installedMods,
+      loadedWorkspaceProjectId,
+      modsWorkspace.items,
+      modsWorkspace.loadState
+    ]
+  );
 
   const selectedProjectLibraryStats = useMemo(
     () =>
@@ -2675,43 +2780,199 @@ export const App = () => {
     () => isSkyrimMissingMasterStatusProject(selectedProject),
     [selectedProject]
   );
-  const disabledPluginSourceModNameKeys = useMemo(() => {
-    const keys = new Set<string>();
-    const addSourceModKey = (value: string | null | undefined) => {
-      const key = pluginSourceModKey(value);
-      if (key) {
-        keys.add(key);
-      }
-    };
+  const disabledPluginSourceModNameKeys = useMemo(
+    () =>
+      measureListPerformanceStage('derive:disabled-plugin-source-mods', () => {
+        const keys = new Set<string>();
+        const addSourceModKey = (value: string | null | undefined) => {
+          const key = pluginSourceModKey(value);
+          if (key) {
+            keys.add(key);
+          }
+        };
 
-    modsWorkspace.items.forEach((item) => {
-      if (item.isMod && !item.isEnabled) {
-        addSourceModKey(modItemTitle(item));
-      }
-    });
-    installedMods.forEach((mod) => {
-      if (!mod.isEnabled) {
-        addSourceModKey(mod.name);
-      }
-    });
+        modsWorkspace.items.forEach((item) => {
+          if (item.isMod && !item.isEnabled) {
+            addSourceModKey(modItemTitle(item));
+          }
+        });
+        installedMods.forEach((mod) => {
+          if (!mod.isEnabled) {
+            addSourceModKey(mod.name);
+          }
+        });
 
-    return keys;
-  }, [installedMods, modsWorkspace.items]);
+        return keys;
+      }),
+    [installedMods, modsWorkspace.items]
+  );
+  const pluginMasterAvailabilityNeeded = useMemo(
+    () =>
+      measureListPerformanceStage('derive:plugin-master-availability-needed', () =>
+        pluginsWorkspace.items.some(
+          (item) => item.isPlugin && (item.masterFiles?.length ?? 0) > 0
+        )
+      ),
+    [pluginsWorkspace.items]
+  );
   const pluginMissingMasterContext = useMemo<PluginMissingMasterContext>(
-    () => ({
-      disabledSourceModNameKeys: disabledPluginSourceModNameKeys,
-      enabledPluginNameKeys: enabledPluginNameKeys(
-        pluginsWorkspace.items,
-        disabledPluginSourceModNameKeys
-      )
-    }),
-    [disabledPluginSourceModNameKeys, pluginsWorkspace.items]
+    () =>
+      measureListPerformanceStage('derive:plugin-missing-master-context', () => ({
+        disabledSourceModNameKeys: disabledPluginSourceModNameKeys,
+        enabledPluginNameKeys: pluginMasterAvailabilityNeeded
+          ? enabledPluginNameKeys(
+              pluginsWorkspace.items,
+              disabledPluginSourceModNameKeys
+            )
+          : undefined
+      })),
+    [
+      disabledPluginSourceModNameKeys,
+      pluginMasterAvailabilityNeeded,
+      pluginsWorkspace.items
+    ]
+  );
+  const pendingInstallSessionByOrderId = useMemo(
+    () =>
+      measureListPerformanceStage('derive:pending-install-index', () => {
+        if (pendingInstallOrchestrator.sessions.size === 0) {
+          return new Map<
+            string,
+            ReturnType<typeof pendingInstallOrchestrator.activeSessionForItem>
+          >();
+        }
+        const byOrderId = new Map<
+          string,
+          ReturnType<typeof pendingInstallOrchestrator.activeSessionForItem>
+        >();
+        const byModUuid = new Map<
+          string,
+          ReturnType<typeof pendingInstallOrchestrator.activeSessionForItem>
+        >();
+        pendingInstallOrchestrator.sessions.forEach((session) => {
+          if (!byOrderId.has(session.rowOrderId)) {
+            byOrderId.set(session.rowOrderId, session);
+          }
+          if (!byOrderId.has(session.pendingOrderId)) {
+            byOrderId.set(session.pendingOrderId, session);
+          }
+          if (session.targetModUuid && !byModUuid.has(session.targetModUuid)) {
+            byModUuid.set(session.targetModUuid, session);
+          }
+        });
+        modsWorkspace.items.forEach((item) => {
+          const session = item.modUuid ? byModUuid.get(item.modUuid) : null;
+          if (session && !byOrderId.has(item.orderId)) {
+            byOrderId.set(item.orderId, session);
+          }
+        });
+        return byOrderId;
+      }),
+    [modsWorkspace.items, pendingInstallOrchestrator.sessions]
+  );
+  const conflictMarkerReadyByOrderId = useMemo(
+    () =>
+      measureListPerformanceStage('derive:conflict-marker-ready-index', () => {
+        if (pendingInstallSessionByOrderId.size === 0) {
+          return new Map<string, boolean>();
+        }
+        const ready = new Map<string, boolean>();
+        modsWorkspace.items.forEach((item) => {
+          const session = pendingInstallSessionByOrderId.get(item.orderId);
+          ready.set(
+            item.orderId,
+            session ? pendingInstallConflictMarkerReady(session, item) : true
+          );
+        });
+        return ready;
+      }),
+    [modsWorkspace.items, pendingInstallSessionByOrderId]
+  );
+  const previousModRowViewIndexRef = useRef<ModRowViewIndex | undefined>(undefined);
+  const modRowViewIndex = useMemo(
+    () =>
+      measureListPerformanceStage('derive:mod-row-view-index', () =>
+        buildModRowViewIndex(
+          modsWorkspace.items,
+          {
+            selectedItem: selectedModItem,
+            collapsedSeparatorOrderIds: modsWorkspace.collapsedSeparatorOrderIds,
+            updateResult: currentModUpdateResult,
+            conflictMarkerReadyByOrderId
+          },
+          previousModRowViewIndexRef.current
+        )
+      ),
+    [
+      conflictMarkerReadyByOrderId,
+      currentModUpdateResult,
+      modsWorkspace.collapsedSeparatorOrderIds,
+      modsWorkspace.items,
+      selectedModItem
+    ]
+  );
+  useEffect(() => {
+    previousModRowViewIndexRef.current = modRowViewIndex;
+  }, [modRowViewIndex]);
+  const previousPluginRowViewIndexRef = useRef<PluginRowViewIndex | undefined>(undefined);
+  const pluginRowViewIndex = useMemo(
+    () =>
+      measureListPerformanceStage('derive:plugin-row-view-index', () =>
+        buildPluginRowViewIndex(
+          pluginsWorkspace.items,
+          {
+            collapsedSeparatorOrderIds: pluginsWorkspace.collapsedSeparatorOrderIds,
+            missingMasterContext: pluginMissingMasterContext,
+            missingMasterLimit: pluginMissingMasterStatusLimit
+          },
+          previousPluginRowViewIndexRef.current
+        )
+      ),
+    [
+      pluginMissingMasterContext,
+      pluginsWorkspace.collapsedSeparatorOrderIds,
+      pluginsWorkspace.items
+    ]
+  );
+  useEffect(() => {
+    previousPluginRowViewIndexRef.current = pluginRowViewIndex;
+  }, [pluginRowViewIndex]);
+  const modsListPresentationRevision = useMemo(
+    () => ({}),
+    [
+      downloadInstallDropTarget,
+      draggedModOrderIds,
+      modDropTarget,
+      modMenuOrderId,
+      modRowViewIndex,
+      modsBusyLabel,
+      modsWorkspace.selectedOrderIds,
+      pendingInstallSessionByOrderId,
+      postInstallRevealOrderId
+    ]
+  );
+  const pluginsListPresentationRevision = useMemo(
+    () => ({}),
+    [
+      draggedPluginOrderIds,
+      pluginCapabilities.loadOrderSupported,
+      pluginDropTarget,
+      pluginMenuOrderId,
+      pluginRowViewIndex,
+      pluginsBusyLabel,
+      pluginsWorkspace.selectedOrderIds,
+      showPluginMissingMastersStatus
+    ]
   );
 
   const downloadCapabilities = useMemo(
     () => downloadCapabilityView(selectedProject, bridgeStatus),
     [bridgeStatus, selectedProject]
   );
+  inboundNxmReadinessRef.current = {
+    bridgeReady: Boolean(bridgeStatus?.ready),
+    downloadBridgeAvailable: downloadCapabilities.bridgeAvailable
+  };
 
   const profilesCapabilities = useMemo(
     () => profilesCapabilityView(selectedProject, bridgeStatus),
@@ -2757,37 +3018,34 @@ export const App = () => {
   const transferCancellationSupported = settingsCapabilities.transferCancellationAvailable;
 
   const modConflictScrollbarMarkers = useMemo(() => {
-    if (displayedModItems.length === 0) {
-      return [];
-    }
-
-    return displayedModItems.flatMap((item, index) => {
-      if (!pendingInstallOrchestrator.conflictMarkerReady(item)) {
+    return measureListPerformanceStage('derive:mod-conflict-scrollbar-markers', () => {
+      if (displayedModItems.length === 0) {
         return [];
       }
-      const highlight = modRowConflictHighlight(modsWorkspace.items, item, selectedModItem);
-      const isCollapsedSeparator =
-        item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
-      const states = item.isSeparator
-        ? isCollapsedSeparator
-          ? modConflictMarkerStatesForHighlight(highlight)
-          : []
-        : modConflictMarkerStatesForHighlight(highlight);
 
-      return states.map((state, stateIndex) => ({
-        contentOffset: (index + 0.5) * modRowHeight,
-        key: `${item.orderId}:${state}`,
-        state,
-        stackOffset: (stateIndex - (states.length - 1) / 2) * 4
-      }));
+      return displayedModItems.flatMap((item, index) => {
+        const rowView = modRowViewIndex.byOrderId.get(item.orderId);
+        if (!rowView || !(conflictMarkerReadyByOrderId.get(item.orderId) ?? true)) {
+          return [];
+        }
+        const states = item.isSeparator
+          ? rowView.isCollapsed
+            ? modConflictMarkerStatesForHighlight(rowView.conflictHighlight)
+            : []
+          : modConflictMarkerStatesForHighlight(rowView.conflictHighlight);
+
+        return states.map((state, stateIndex) => ({
+          contentOffset: (index + 0.5) * modRowHeight,
+          key: `${item.orderId}:${state}`,
+          state,
+          stackOffset: (stateIndex - (states.length - 1) / 2) * 4
+        }));
+      });
     });
   }, [
+    conflictMarkerReadyByOrderId,
     displayedModItems,
-    modsWorkspace.collapsedSeparatorOrderIds,
-    modsWorkspace.items,
-    pendingInstallOrchestrator.session?.revision,
-    pendingInstallOrchestrator.session?.state,
-    selectedModItem
+    modRowViewIndex
   ]);
 
   const effectiveFileTreeChildren = useMemo(() => {
@@ -2896,6 +3154,152 @@ export const App = () => {
       setMessage(nextMessage);
     }
   };
+
+  const installWorkspaceDeltaState = (
+    nextState: WorkspaceDeltaState,
+    project: FluxoraProject,
+    urgent = false
+  ) => {
+    workspaceDeltaStateRef.current = nextState;
+    if (
+      selectedWorkspaceScopeRef.current.project?.projectDirectory !==
+        nextState.projectDirectory ||
+      selectedWorkspaceScopeRef.current.profileName !== nextState.profileName
+    ) {
+      return;
+    }
+    const projectedMods = measureListPerformanceStage(
+      'workspace-delta:merge-pending-installs',
+      () => pendingInstallOrchestrator.mergeAuthoritativeItems(nextState.mods)
+    );
+    const commit = () => {
+      setInstalledMods(nextState.installedMods);
+      modsWorkspaceProjectIdRef.current = project.id;
+      pluginsWorkspaceProjectIdRef.current = project.id;
+      dispatchModsWorkspace({
+        type: 'items-loaded',
+        items: projectedMods,
+        collapsedSeparatorOrderIds: loadCollapsedSeparatorOrderIds(
+          window.localStorage,
+          project.id,
+          'mods'
+        )
+      });
+      dispatchPluginsWorkspace({
+        type: 'items-loaded',
+        items: nextState.plugins,
+        collapsedSeparatorOrderIds: loadCollapsedSeparatorOrderIds(
+          window.localStorage,
+          project.id,
+          'plugins'
+        )
+      });
+    };
+    if (urgent) {
+      commit();
+    } else {
+      startTransition(commit);
+    }
+  };
+
+  const ensureWorkspaceDeltaBaseline = async (
+    project: FluxoraProject,
+    profileName: string,
+    operationId = createRendererOperationId('workspace_delta_baseline'),
+    force = false
+  ): Promise<WorkspaceDeltaState | null> => {
+    const scopeKey = pluginWorkspaceContextKey(project, profileName);
+    const current = workspaceDeltaStateRef.current;
+    if (
+      !force &&
+      current?.projectDirectory === project.projectDirectory &&
+      current.profileName === profileName
+    ) {
+      return current;
+    }
+    if (workspaceDeltaSeedRef.current?.scopeKey === scopeKey) {
+      return workspaceDeltaSeedRef.current.promise;
+    }
+
+    const promise = window.fluxora.workspace
+      .getDelta(project.projectDirectory, profileName, '', {
+        operationId,
+        templateId: project.templateId
+      })
+      .then((delta) => {
+        const emptyState: WorkspaceDeltaState = {
+          projectDirectory: project.projectDirectory,
+          profileName,
+          revision: '',
+          sequence: Math.max(0, delta.sequence - 1),
+          mods: [],
+          installedMods: installedModsRef.current,
+          plugins: []
+        };
+        const seeded = applyWorkspaceDelta(emptyState, delta, {
+          expectedOperationId: operationId
+        });
+        if (seeded.status !== 'applied') {
+          return null;
+        }
+        installWorkspaceDeltaState(seeded.state, project);
+        return seeded.state;
+      })
+      .catch((error) => {
+        void window.fluxora.ui.log({
+          level: 'warning',
+          category: 'WorkspaceDelta',
+          message: `Could not establish the workspace delta baseline: ${errorMessage(error)}`,
+          operationId
+        });
+        return null;
+      })
+      .finally(() => {
+        if (workspaceDeltaSeedRef.current?.promise === promise) {
+          workspaceDeltaSeedRef.current = null;
+        }
+      });
+    workspaceDeltaSeedRef.current = { scopeKey, promise };
+    return promise;
+  };
+
+  const applyIncomingWorkspaceDelta = (
+    delta: FluxoraWorkspaceDelta,
+    expectedOperationId?: string,
+    urgent = false
+  ): boolean => {
+    const current = workspaceDeltaStateRef.current;
+    const scope = selectedWorkspaceScopeRef.current;
+    const project =
+      scope.project?.projectDirectory === delta.projectDirectory
+        ? scope.project
+        : null;
+    if (!current || !project) {
+      if (project) {
+        queueWorkspaceFullResyncRef.current(
+          project,
+          delta.profileName,
+          'missing-delta-baseline'
+        );
+      }
+      return false;
+    }
+
+    const applied = measureListPerformanceStage(
+      'workspace-delta:apply',
+      () => applyWorkspaceDelta(current, delta, { expectedOperationId })
+    );
+    if (applied.status === 'applied') {
+      installWorkspaceDeltaState(applied.state, project, urgent);
+      return true;
+    }
+    if (applied.status === 'ignored') {
+      return true;
+    }
+    queueWorkspaceFullResyncRef.current(project, delta.profileName, applied.reason);
+    return false;
+  };
+  applyIncomingWorkspaceDeltaRef.current = applyIncomingWorkspaceDelta;
 
   const loadModsWorkspace = async (
     project = selectedProject,
@@ -3343,6 +3747,20 @@ export const App = () => {
     setMessage('Saving order...');
     const results = await Promise.allSettled(pendingSaves);
     return results.every((result) => result.status === 'fulfilled');
+  };
+
+  const waitForPendingOrderSavesQuietly = async (): Promise<void> => {
+    while (true) {
+      const pendingSaves = [
+        ...Array.from(pendingModOrderSavesRef.current),
+        ...Array.from(pendingPluginOrderSavesRef.current)
+      ];
+      if (pendingSaves.length === 0) {
+        return;
+      }
+
+      await Promise.allSettled(pendingSaves);
+    }
   };
 
   const updateInstalledModEnabled = (modPath: string, isEnabled: boolean) => {
@@ -3875,33 +4293,51 @@ export const App = () => {
     );
   };
 
-  const deleteModSeparator = async (item: FluxoraModOrderItem) => {
-    if (!selectedProject || !item.isSeparator) {
+  const deleteModSeparatorSelection = async (item: FluxoraModOrderItem) => {
+    if (!selectedProject || !item.isSeparator || modsBusyLabel) {
+      return;
+    }
+
+    const separatorOrderIds = separatorDeletionOrderIds(
+      modsWorkspace.items,
+      modsWorkspace.selectedOrderIds,
+      item.orderId
+    );
+    if (separatorOrderIds.length === 0) {
       return;
     }
 
     const project = selectedProject;
     const previousItems = modsWorkspace.items;
-    const removedOrderIds = new Set([item.orderId]);
+    const removedOrderIds = new Set(separatorOrderIds);
     const operationId = createRendererOperationId('mods_delete_separator');
 
     setMessage(null);
+    setModsBusyLabel(
+      separatorOrderIds.length === 1
+        ? 'Deleting mod separator'
+        : `Deleting ${separatorOrderIds.length} mod separators`
+    );
     dispatchModsWorkspace({
       type: 'items-loaded',
       items: removeModOrderItems(previousItems, removedOrderIds)
     });
 
     try {
-      await window.fluxora.mods.deleteSeparator(
-        project.projectDirectory,
-        modWorkspaceProfileName,
-        item.orderId,
-        { operationId }
+      await deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
+        window.fluxora.mods.deleteSeparator(
+          project.projectDirectory,
+          modWorkspaceProfileName,
+          separatorOrderId,
+          { operationId }
+        )
       );
       await loadModsWorkspace(project, backgroundReorderLoadOptions);
     } catch (error) {
-      dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
-      setMessage(`Could not delete separator: ${errorMessage(error)}`);
+      await loadModsWorkspace(project, backgroundReorderLoadOptions);
+      setMessage(`Could not delete selected separators: ${errorMessage(error)}`);
+    } finally {
+      setModsBusyLabel(null);
     }
   };
 
@@ -4520,6 +4956,120 @@ export const App = () => {
         setPluginsBusyLabel(null);
       }
     }
+  };
+
+  const performWorkspaceFullResync = async (
+    request: PendingWorkspaceFullResync
+  ) => {
+    if (workspaceFullResyncInFlightRef.current) {
+      pendingWorkspaceFullResyncRef.current ??= request;
+      return;
+    }
+    workspaceFullResyncInFlightRef.current = true;
+    workspaceDeltaStateRef.current = null;
+    const operationId = createRendererOperationId('workspace_delta_full_resync');
+    try {
+      const [modsLoaded, pluginsLoaded] = await Promise.all([
+        loadModsWorkspace(request.project, {
+          operationId,
+          profileName: request.profileName,
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        }),
+        loadPluginsWorkspace(request.project, {
+          operationId,
+          profileName: request.profileName,
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        })
+      ]);
+      if (modsLoaded && pluginsLoaded) {
+        await ensureWorkspaceDeltaBaseline(
+          request.project,
+          request.profileName,
+          operationId,
+          true
+        );
+      }
+      void window.fluxora.ui.log({
+        level: modsLoaded && pluginsLoaded ? 'info' : 'warning',
+        category: 'WorkspaceDelta',
+        message:
+          `Completed one revision-gap workspace resync. reason=${request.reason} ` +
+          `modsLoaded=${modsLoaded} pluginsLoaded=${pluginsLoaded}`,
+        operationId
+      });
+    } finally {
+      workspaceFullResyncInFlightRef.current = false;
+      flushWorkspaceFullResyncRef.current();
+    }
+  };
+
+  const flushWorkspaceFullResync = () => {
+    if (
+      workspaceFullResyncInFlightRef.current ||
+      listScrollActivityRef.current.mods ||
+      listScrollActivityRef.current.plugins
+    ) {
+      return;
+    }
+    const pending = pendingWorkspaceFullResyncRef.current;
+    if (!pending) {
+      return;
+    }
+    pendingWorkspaceFullResyncRef.current = null;
+    void performWorkspaceFullResync(pending).catch((error) => {
+      setMessage(`Workspace resync failed: ${errorMessage(error)}`);
+    });
+  };
+  flushWorkspaceFullResyncRef.current = flushWorkspaceFullResync;
+
+  const queueWorkspaceFullResync = (
+    project: FluxoraProject,
+    profileName: string,
+    reason: string
+  ) => {
+    const current = pendingWorkspaceFullResyncRef.current;
+    if (
+      !current ||
+      current.project.projectDirectory !== project.projectDirectory ||
+      current.profileName !== profileName
+    ) {
+      pendingWorkspaceFullResyncRef.current = { project, profileName, reason };
+    }
+    flushWorkspaceFullResync();
+  };
+  queueWorkspaceFullResyncRef.current = queueWorkspaceFullResync;
+
+  const refreshWorkspaceDelta = async (
+    project: FluxoraProject,
+    profileName: string,
+    operationId: string
+  ): Promise<boolean> => {
+    let baseline = workspaceDeltaStateRef.current;
+    if (
+      baseline?.projectDirectory !== project.projectDirectory ||
+      baseline.profileName !== profileName
+    ) {
+      baseline = await ensureWorkspaceDeltaBaseline(
+        project,
+        profileName,
+        operationId
+      );
+      return baseline !== null;
+    }
+    const delta = await window.fluxora.workspace.getDelta(
+      project.projectDirectory,
+      profileName,
+      baseline.revision,
+      {
+        operationId,
+        templateId: project.templateId
+      }
+    );
+    return applyIncomingWorkspaceDelta(delta, operationId);
   };
 
   const runPluginMutation = async (
@@ -5281,6 +5831,12 @@ export const App = () => {
       return;
     }
 
+    if (event.key === 'Delete' && item.isSeparator) {
+      event.preventDefault();
+      void deleteModSeparatorSelection(item);
+      return;
+    }
+
     if (event.key === 'Delete' && item.isMod) {
       event.preventDefault();
       requestDeleteInstalledMod(item);
@@ -5326,6 +5882,12 @@ export const App = () => {
     item: FluxoraPluginOrderItem
   ) => {
     if (event.currentTarget !== event.target) {
+      return;
+    }
+
+    if (event.key === 'Delete' && item.isSeparator) {
+      event.preventDefault();
+      void deletePluginSeparatorSelection(item);
       return;
     }
 
@@ -5522,20 +6084,58 @@ export const App = () => {
     });
   };
 
-  const deletePluginSeparator = async (item: FluxoraPluginOrderItem) => {
-    if (!selectedProject || !item.isSeparator || !pluginCapabilities.loadOrderSupported) {
+  const deletePluginSeparatorSelection = async (item: FluxoraPluginOrderItem) => {
+    if (
+      !selectedProject ||
+      !item.isSeparator ||
+      !pluginCapabilities.loadOrderSupported ||
+      pluginsBusyLabel
+    ) {
       return;
     }
 
-    await runPluginMutation('Deleting plugin separator', (operationId) =>
-      window.fluxora.plugins.deleteSeparator(
-        selectedProject.projectDirectory,
-        selectedProject.templateId,
-        selectedProjectProfileName,
-        item.orderId,
-        { operationId }
-      )
+    const separatorOrderIds = separatorDeletionOrderIds(
+      pluginsWorkspace.items,
+      pluginsWorkspace.selectedOrderIds,
+      item.orderId
     );
+    if (separatorOrderIds.length === 0) {
+      return;
+    }
+
+    const project = selectedProject;
+    const previousItems = pluginsWorkspace.items;
+    const removedOrderIds = new Set(separatorOrderIds);
+    const operationId = createRendererOperationId('plugins_delete_separator');
+
+    setMessage(null);
+    setPluginsBusyLabel(
+      separatorOrderIds.length === 1
+        ? 'Deleting plugin separator'
+        : `Deleting ${separatorOrderIds.length} plugin separators`
+    );
+    dispatchPluginsWorkspace({
+      type: 'items-loaded',
+      items: previousItems.filter((candidate) => !removedOrderIds.has(candidate.orderId))
+    });
+
+    try {
+      await deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
+        window.fluxora.plugins.deleteSeparator(
+          project.projectDirectory,
+          project.templateId,
+          selectedProjectProfileName,
+          separatorOrderId,
+          { operationId }
+        )
+      );
+      await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+    } catch (error) {
+      await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      setMessage(`Could not delete selected plugin separators: ${errorMessage(error)}`);
+    } finally {
+      setPluginsBusyLabel(null);
+    }
   };
 
   const cacheProjectExecutables = (
@@ -6307,6 +6907,10 @@ export const App = () => {
         fomodInstaller.moduleName || fallbackName,
         'fomod'
       );
+      const manualFomodDecisions = sanitizeFomodManualDecisions(
+        fomodInstaller,
+        current.manualFomodDecisions ?? []
+      );
       const detectedDialog: InstallDialogState = {
         ...current,
         ...nameState,
@@ -6314,7 +6918,7 @@ export const App = () => {
         installerKind: 'fomod',
         fomodInstaller,
         selectedFomodOptionIds: initialFomodSelection(fomodInstaller),
-        manualFomodDecisions: [],
+        manualFomodDecisions,
         isRecalculatingFomod: false,
         fomodStepIndex: 0,
         activeFomodOptionId: null,
@@ -6594,27 +7198,6 @@ export const App = () => {
     );
     watchInstallDetection(operation.operationId, operation.targetFolder, detectionPromise);
     watchInstallPlan(operation.operationId, planPromise);
-    void detectionPromise.then((installer) => {
-      if (!installer) {
-        return;
-      }
-      const validOptionIds = new Set(
-        installer.steps.flatMap((step) =>
-          step.groups.flatMap((group) => group.options.map((option) => option.id))
-        )
-      );
-      setInstallDialog((current) => current?.operationId === operation.operationId
-        ? {
-            ...current,
-            selectedFomodOptionIds: (operation.selectedOptionIds ?? []).filter((id) =>
-              validOptionIds.has(id)
-            ),
-            manualFomodDecisions: (operation.manualDecisions ?? []).filter((decision) =>
-              validOptionIds.has(decision.optionId)
-            )
-          }
-        : current);
-    }).catch(() => undefined);
   };
 
   const resolveInstallDialogPlan = async (
@@ -7180,6 +7763,9 @@ export const App = () => {
         { operationId }
       );
       if (updated) {
+        if (updated.id !== entry.id) {
+          dispatchDownloadsWorkspace({ type: 'item-removed', id: entry.id });
+        }
         dispatchDownloadsWorkspace({ type: 'items-upserted', items: [updated] });
       } else {
         dispatchDownloadsWorkspace({ type: 'item-removed', id: entry.id });
@@ -7634,6 +8220,14 @@ export const App = () => {
         submissionDialog.operationId,
         installSourceKey
       );
+      const workspaceDeltaBaseline = await ensureWorkspaceDeltaBaseline(
+        project,
+        selectedProjectProfileName,
+        submissionDialog.operationId
+      );
+      if (!workspaceDeltaBaseline) {
+        throw new Error('Could not establish the native workspace revision before installation.');
+      }
       const acceptedOperation = await window.fluxora.installs.submit(
         {
           operationId: submissionDialog.operationId,
@@ -7643,6 +8237,8 @@ export const App = () => {
           isFomod: submissionDialog.installerKind === 'fomod',
           modName,
           profileName: selectedProjectProfileName,
+          templateId: project.templateId,
+          workspaceRevision: workspaceDeltaBaseline.revision,
           modOrderTargetIndex,
           beforeOrderId,
           afterOrderId,
@@ -7657,7 +8253,13 @@ export const App = () => {
         },
         { operationId: submissionDialog.operationId }
       );
-      installOperationsRef.current.set(acceptedOperation.operationId, acceptedOperation);
+      const observedOperation = installOperationsRef.current.get(
+        acceptedOperation.operationId
+      );
+      if (shouldAcceptInstallOperation(observedOperation, acceptedOperation)) {
+        installOperationsRef.current.set(acceptedOperation.operationId, acceptedOperation);
+        pendingInstallOrchestrator.progressStore.setOperation(acceptedOperation);
+      }
       installAccepted = true;
       setMessage(`Queued ${modName} for installation`);
     } catch (error) {
@@ -8644,21 +9246,74 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    if (
+      isSecondaryWindow ||
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      !pluginCapabilities.projectSupported ||
+      modsWorkspace.loadState !== 'ready' ||
+      pluginsWorkspace.loadState !== 'ready'
+    ) {
+      return;
+    }
+    void ensureWorkspaceDeltaBaseline(
+      selectedProject,
+      selectedProjectProfileName
+    );
+  }, [
+    bridgeStatus?.ready,
+    isSecondaryWindow,
+    modsWorkspace.loadState,
+    pluginCapabilities.projectSupported,
+    pluginsWorkspace.loadState,
+    selectedProject?.projectDirectory,
+    selectedProject?.templateId,
+    selectedProjectProfileName
+  ]);
+
+  useEffect(() => {
     if (isSecondaryWindow) {
       return undefined;
     }
 
-    return window.fluxora.downloads.onFolderChanged((event) => {
+    return window.fluxora.downloads.onChanged((event: FluxoraDownloadsChangedEvent) => {
       if (!selectedProject || event.projectDirectory !== selectedProject.projectDirectory) {
         return;
       }
-
-      const operationId = createRendererOperationId('downloads_folder_changed');
-      void loadDownloadsWorkspace(selectedProject, {
-        operationId,
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
+      const cursor = downloadsDeltaCursorRef.current;
+      if (
+        cursor?.projectDirectory === event.projectDirectory &&
+        (event.sequence <= cursor.sequence || event.revision === cursor.revision)
+      ) {
+        return;
+      }
+      downloadsDeltaCursorRef.current = {
+        projectDirectory: event.projectDirectory,
+        revision: event.revision,
+        sequence: event.sequence
+      };
+      if (event.fullResyncRequired) {
+        if (downloadsDeltaResyncInFlightRef.current) {
+          return;
+        }
+        downloadsDeltaResyncInFlightRef.current = true;
+        void loadDownloadsWorkspace(selectedProject, {
+          operationId:
+            event.operationId ?? createRendererOperationId('downloads_delta_full_resync'),
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        }).finally(() => {
+          downloadsDeltaResyncInFlightRef.current = false;
+        });
+        return;
+      }
+      startTransition(() => {
+        dispatchDownloadsWorkspace({
+          type: 'delta-applied',
+          upserts: event.upserts,
+          removedIds: event.removedIds
+        });
       });
     });
   }, [
@@ -8705,27 +9360,6 @@ export const App = () => {
               .map((change) => change.path)
           );
       pendingBuildContentModPaths.add(event.projectDirectory, changedModPaths, eventRevision);
-      const fastPluginRefreshTask = async () => {
-        const liveScope = selectedWorkspaceScopeRef.current;
-        const project =
-          liveScope.project?.projectDirectory === event.projectDirectory
-            ? liveScope.project
-            : null;
-        if (
-          !project ||
-          selectedProjectDirectoryRef.current !== event.projectDirectory
-        ) {
-          return;
-        }
-        await loadPluginsWorkspace(project, {
-          forcePluginDiscoveryRefresh: true,
-          operationId: createRendererOperationId('build_content_plugins_changed'),
-          profileName: liveScope.profileName,
-          resetScroll: false,
-          showBusy: false,
-          showLoading: false
-        });
-      };
       const refreshTask = async () => {
           // The native route also clears plugin discovery caches. Failed and
           // unprocessed batches are restored so a transient bridge error cannot
@@ -8781,6 +9415,11 @@ export const App = () => {
             }
             return;
           }
+          // A grouped drag can require multiple sequential native moves while
+          // the renderer already shows their final optimistic order. Reconcile
+          // only after that durable save settles so a watcher delta cannot
+          // expose a partially persisted order between those moves.
+          await waitForPendingOrderSavesQuietly();
           const watchedScope = selectedWorkspaceScopeRef.current;
           if (
             watchedScope.project?.projectDirectory !== event.projectDirectory ||
@@ -8814,15 +9453,14 @@ export const App = () => {
           if (invalidatedRevision < reconciliationRevision) {
             throw new Error('Build content invalidation has not reached the active project revision.');
           }
-          // Rebuild mod_files/conflict state before the effective tree can
-          // observe the deliberately invalidated cache.
-          const modsReconciled = await loadModsWorkspace(reconciliationProject, {
-            operationId: createRendererOperationId('build_content_mods_changed'),
-            resetScroll: false,
-            showBusy: false,
-            showLoading: false,
-            profileName: reconciliationProfileName
-          });
+          // Native reconciliation computes one revisioned mod/plugin delta
+          // after cache invalidation, so the renderer never decodes or commits
+          // complete background lists.
+          const workspaceReconciled = await refreshWorkspaceDelta(
+            reconciliationProject,
+            reconciliationProfileName,
+            createRendererOperationId('build_content_workspace_delta')
+          );
           if (
             selectedProjectDirectoryRef.current !== event.projectDirectory ||
             selectedWorkspaceScopeRef.current.profileName !== reconciliationProfileName ||
@@ -8839,21 +9477,10 @@ export const App = () => {
             }
             return;
           }
-          if (!modsReconciled) {
-            throw new Error('Exact mod reconciliation failed for the active project.');
-          }
-          // Repeat plugin discovery after the mod inventory reconciliation so
-          // a newly created mod folder is visible even when the fast Plugin-lane
-          // read ran before that mod was registered.
-          const pluginsReconciled = await loadPluginsWorkspace(reconciliationProject, {
-            operationId: createRendererOperationId('build_content_plugins_reconciled'),
-            resetScroll: false,
-            showBusy: false,
-            showLoading: false,
-            profileName: reconciliationProfileName
-          });
-          if (!pluginsReconciled) {
-            throw new Error('Exact plugin reconciliation failed for the active project.');
+          if (!workspaceReconciled) {
+            // A revision/sequence gap has queued exactly one full fallback. It
+            // will run after both list surfaces leave active scrolling.
+            return;
           }
           if (refreshEffectiveFileTree) {
             await loadEffectiveFileTree(reconciliationProject, reconciliationProfileName, {
@@ -8889,7 +9516,6 @@ export const App = () => {
       };
       if (installCommitOperationsRef.current.size > 0) {
         deferredBuildContentRefreshRef.current = async () => {
-          await pluginBuildContentRefreshCoordinator.schedule(fastPluginRefreshTask);
           await refreshTask();
         };
         void window.fluxora.ui.log({
@@ -8900,9 +9526,6 @@ export const App = () => {
         });
         return;
       }
-      void pluginBuildContentRefreshCoordinator
-        .schedule(fastPluginRefreshTask)
-        .catch(() => undefined);
       void buildContentRefreshCoordinator.schedule(refreshTask).catch(() => undefined);
     });
     return unsubscribe;
@@ -8966,46 +9589,6 @@ export const App = () => {
       isSecondaryWindow ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      !downloadCapabilities.bridgeAvailable ||
-      !hasActiveDownload(downloadsWorkspace.items)
-    ) {
-      return undefined;
-    }
-
-    const refreshDownloadProgress = () => {
-      if (downloadProgressRefreshInFlightRef.current) {
-        return;
-      }
-
-      downloadProgressRefreshInFlightRef.current = true;
-      void loadDownloadsWorkspace(selectedProject, {
-        operationId: createRendererOperationId('downloads_progress_refresh'),
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
-      }).finally(() => {
-        downloadProgressRefreshInFlightRef.current = false;
-      });
-    };
-
-    const timer = window.setInterval(
-      refreshDownloadProgress,
-      DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS
-    );
-    return () => window.clearInterval(timer);
-  }, [
-    bridgeStatus?.ready,
-    downloadCapabilities.bridgeAvailable,
-    downloadsWorkspace.items,
-    isSecondaryWindow,
-    selectedProject
-  ]);
-
-  useEffect(() => {
-    if (
-      isSecondaryWindow ||
-      !selectedProject ||
-      !bridgeStatus?.ready ||
       !downloadCapabilities.bridgeAvailable
     ) {
       return;
@@ -9031,26 +9614,22 @@ export const App = () => {
     }
 
     return window.fluxora.nxm.onInboundLinksCaptured((event) => {
+      const project = selectedWorkspaceScopeRef.current.project;
+      const readiness = inboundNxmReadinessRef.current;
       const queuedText =
         event.count === 1
           ? 'NXM link captured. Open a build to import it.'
           : `${event.count} NXM links captured. Open a build to import them.`;
-      if (!selectedProject || !bridgeStatus?.ready || !downloadCapabilities.bridgeAvailable) {
+      if (!project || !readiness.bridgeReady || !readiness.downloadBridgeAvailable) {
         pendingInboundNxmEventRef.current = event;
         setMessage(queuedText);
         return;
       }
 
       pendingInboundNxmEventRef.current = null;
-      void importInboundDownloadsForProject(selectedProject, event);
+      void importInboundDownloadsForProject(project, event);
     });
-  }, [
-    activeRoute,
-    bridgeStatus?.ready,
-    downloadCapabilities.bridgeAvailable,
-    isSecondaryWindow,
-    selectedProject
-  ]);
+  }, [isSecondaryWindow]);
 
   useEffect(() => {
     if (
@@ -9291,7 +9870,6 @@ export const App = () => {
     bridgeStatus?.ready,
     buildPathRevisionKey,
     effectiveFileTreeRequestKey,
-    modOrderRevisionKey,
     selectedProject,
     selectedProjectProfileName
   ]);
@@ -11904,8 +12482,9 @@ export const App = () => {
             role="menuitem"
             onClick={() => {
               setModMenuOrderId(null);
-              void deleteModSeparator(item);
+              void deleteModSeparatorSelection(item);
             }}
+            aria-keyshortcuts="Delete"
           >
             <MenuIcon source={menuTrashIcon} />
             <span>Delete separator</span>
@@ -12129,67 +12708,34 @@ export const App = () => {
           <span role="columnheader">Latest</span>
           <span role="columnheader">Статус</span>
         </div>
-        <AdaptiveVirtualList
-          className="mod-list__body"
-          role="rowgroup"
+        <ModsListSurface
           items={displayedModItems}
+          presentationRevision={modsListPresentationRevision}
           rowHeight={modRowHeight}
-          getItemKey={(item) => item.orderId}
           scrollContainerRef={setModListScrollContainerRef}
           virtualizerRef={modListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
           onPointerCancel={cancelRowReorderDrag}
+          onScrollActivityChange={handleModsScrollActivityChange}
           renderItem={(item) => {
             const isSelected = modsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === modMenuOrderId;
             const isOverwrite = isModOverwriteItem(item);
-            const isPendingInstall = pendingInstallOrchestrator.isActiveOrderItem(item);
-            const pendingInstallEntry = isPendingInstall
-              ? [...pendingInstallOrchestrator.sessions.entries()].find(([, session]) =>
-                  session.rowOrderId === item.orderId ||
-                  session.pendingOrderId === item.orderId ||
-                  Boolean(session.targetModUuid && session.targetModUuid === item.modUuid)
-                )
-              : undefined;
-            const pendingOperation = pendingInstallEntry
-              ? installOperationsRef.current.get(pendingInstallEntry[0])
-              : undefined;
-            const conflictSnapshotReady = pendingInstallOrchestrator.conflictMarkerReady(item);
-            const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
-            const isCollapsed =
-              item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
-            const status = modTableStatusView(item);
-            const appliedUpdate = currentModUpdateResult?.mods.find(
-              (mod) => mod.folderName.trim().toLocaleLowerCase('en-US') ===
-                item.name.trim().toLocaleLowerCase('en-US')
-            );
-            const updateFreshness = modUpdateFreshnessView(
-              appliedUpdate ? { ...item, updateCheckState: appliedUpdate.updateCheckState } : item,
-              currentModUpdateResult
-            );
-            const conflictHighlight = modRowConflictHighlight(
-              modsWorkspace.items,
-              item,
-              selectedModItem
-            );
-            const conflictMarkerStates = item.isSeparator
-              ? modConflictMarkerStatesForHighlight(conflictHighlight)
-              : modConflictMarkerStates(item);
-            const visibleConflictHighlight = conflictSnapshotReady
-              ? item.isSeparator
-                ? (isCollapsed ? conflictHighlight : 'none')
-                : conflictHighlight
-              : 'none';
-            const visibleConflictMarkerStates = conflictSnapshotReady
-              ? item.isSeparator
-                ? (isCollapsed ? conflictMarkerStates : [])
-                : conflictMarkerStates
-              : [];
-            const separatorModCount = item.isSeparator
-              ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
-              : 0;
-            const priority = modPrioritiesByOrderId.get(item.orderId);
+            const rowView = modRowViewIndex.byOrderId.get(item.orderId);
+            const pendingInstallSession = pendingInstallSessionByOrderId.get(item.orderId);
+            const isPendingInstall = Boolean(pendingInstallSession);
+            const isNested = rowView?.isNested ?? false;
+            const isCollapsed = rowView?.isCollapsed ?? false;
+            const status = rowView?.status ?? modTableStatusView(item);
+            const updateFreshness =
+              rowView?.updateFreshness ?? modUpdateFreshnessView(item, currentModUpdateResult);
+            const visibleConflictHighlight =
+              rowView?.visibleConflictHighlight ?? 'none';
+            const visibleConflictMarkerStates =
+              rowView?.visibleConflictMarkerStates ?? [];
+            const separatorModCount = rowView?.separatorChildCount ?? 0;
+            const priority = rowView?.priority;
             const isDragging = draggedModOrderIds.has(item.orderId);
             const isOrderDropTarget =
               modDropTarget?.orderId === item.orderId && !draggedModOrderIds.has(item.orderId);
@@ -12200,9 +12746,22 @@ export const App = () => {
               ? downloadInstallDropTarget?.placement
               : modDropTarget?.placement;
             const canDragModRow = !modsBusyLabel && !isOverwrite;
+            const rowPresentationKey = [
+              modOrderItemPresentationKey(item),
+              rowView ? modRowViewPresentationKey(rowView) : '',
+              listPresentationToken(pendingInstallSession),
+              isSelected ? 1 : 0,
+              isMenuOpen ? 1 : 0,
+              isDragging ? 1 : 0,
+              isDropTarget ? dropPlacement ?? 'drop' : '',
+              isInstallDropTarget ? 1 : 0,
+              canDragModRow ? 1 : 0,
+              postInstallRevealOrderId === item.orderId ? 1 : 0
+            ].join(':');
 
             return (
-              <div
+              <ModRow orderId={item.orderId} presentationKey={rowPresentationKey}>
+                <div
                 className={`mod-list-row${item.isSeparator ? ' mod-list-row--separator' : ''}${isOverwrite ? ' mod-list-row--overwrite' : ''}`}
                 role="row"
                 tabIndex={0}
@@ -12399,22 +12958,16 @@ export const App = () => {
                         className="mod-overwrite-state-cell"
                         data-status={status.tone}
                         data-pending={isPendingInstall}
-                        title={isPendingInstall ? item.version : status.overwrite.title}
+                        title={isPendingInstall ? undefined : status.overwrite.title}
                       >
-                        {isPendingInstall ? pendingOperation?.state === 'needsReview' ? (
-                          <button
-                            className="mod-install-pending-label mod-install-pending-label--action"
-                            type="button"
-                            title="Повторно проверить установщик"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              reopenInstallForReview(pendingOperation);
-                            }}
-                          >
-                            {item.version}
-                          </button>
-                        ) : (
-                          <span className="mod-install-pending-label">{item.version}</span>
+                        {isPendingInstall && pendingInstallSession ? (
+                          <ModInstallProgressLabel
+                            fallbackLabel={item.version}
+                            operationId={pendingInstallSession.operationId}
+                            orderId={item.orderId}
+                            progressStore={pendingInstallOrchestrator.progressStore}
+                            onNeedsReview={reopenInstallForReview}
+                          />
                         ) : (
                           <StatusDot
                             className="mod-conflict-dot"
@@ -12429,7 +12982,8 @@ export const App = () => {
                     {isMenuOpen && !isPendingInstall ? renderModRowMenu(item) : null}
                   </>
                 )}
-              </div>
+                </div>
+              </ModRow>
             );
           }}
         />
@@ -12964,8 +13518,9 @@ export const App = () => {
             role="menuitem"
             onClick={() => {
               setPluginMenuOrderId(null);
-              void deletePluginSeparator(item);
+              void deletePluginSeparatorSelection(item);
             }}
+            aria-keyshortcuts="Delete"
           >
             <MenuIcon source={menuTrashIcon} />
             <span>Delete separator</span>
@@ -13061,26 +13616,22 @@ export const App = () => {
           <span role="columnheader">Source</span>
           <span role="columnheader">Статус</span>
         </div>
-        <AdaptiveVirtualList
-          className="mod-table__body"
-          role="rowgroup"
+        <PluginsListSurface
           items={filteredPluginItems}
+          presentationRevision={pluginsListPresentationRevision}
           rowHeight={pluginRowHeight}
-          getItemKey={(item) => item.orderId}
           virtualizerRef={pluginListVirtualizerRef}
           onPointerMove={updateRowReorderDrag}
           onPointerUp={endRowReorderDrag}
           onPointerCancel={cancelRowReorderDrag}
+          onScrollActivityChange={handlePluginsScrollActivityChange}
           renderItem={(item) => {
             const isSelected = pluginsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === pluginMenuOrderId;
-            const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
-            const isCollapsed =
-              item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
-            const hidesSeparatorChildren = isCollapsed;
-            const separatorPluginCount = item.isSeparator
-              ? pluginSeparatorChildCount(pluginsWorkspace.items, item.orderId)
-              : 0;
+            const rowView = pluginRowViewIndex.byOrderId.get(item.orderId);
+            const isNested = rowView?.isNested ?? false;
+            const isCollapsed = rowView?.isCollapsed ?? false;
+            const separatorPluginCount = rowView?.separatorChildCount ?? 0;
             const isDragging = draggedPluginOrderIds.has(item.orderId);
             const isDropTarget =
               pluginDropTarget?.orderId === item.orderId && !draggedPluginOrderIds.has(item.orderId);
@@ -13090,20 +13641,9 @@ export const App = () => {
               pluginCapabilities.loadOrderSupported &&
               !pluginsBusyLabel &&
               canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
-            const missingMasterSummary = item.isSeparator
-              ? hidesSeparatorChildren
-                ? pluginSeparatorMissingMasterSummary(
-                    pluginsWorkspace.items,
-                    item.orderId,
-                    pluginMissingMasterStatusLimit,
-                    pluginMissingMasterContext
-                  )
-                : pluginMissingMasterSummary(null, pluginMissingMasterStatusLimit)
-              : pluginMissingMasterSummary(
-                  item,
-                  pluginMissingMasterStatusLimit,
-                  pluginMissingMasterContext
-                );
+            const missingMasterSummary =
+              rowView?.missingMasterSummary ??
+              pluginMissingMasterSummary(null, pluginMissingMasterStatusLimit);
             const hasMissingMasters =
               showPluginMissingMastersStatus && missingMasterSummary.totalCount > 0;
             const missingMasterLabel = item.isSeparator
@@ -13113,9 +13653,21 @@ export const App = () => {
                     : ''
                 }`
               : undefined;
+            const rowPresentationKey = [
+              pluginOrderItemPresentationKey(item),
+              rowView ? pluginRowViewPresentationKey(rowView) : '',
+              isSelected ? 1 : 0,
+              isMenuOpen ? 1 : 0,
+              isDragging ? 1 : 0,
+              isDropTarget ? pluginDropTarget?.placement ?? 'drop' : '',
+              blockedDropReason ?? '',
+              canDragPluginRow ? 1 : 0,
+              hasMissingMasters ? 1 : 0
+            ].join(':');
 
             return (
-              <div
+              <PluginRow orderId={item.orderId} presentationKey={rowPresentationKey}>
+                <div
                 className="mod-row plugin-row"
                 role="row"
                 tabIndex={0}
@@ -13262,7 +13814,8 @@ export const App = () => {
                   ) : null}
                 </span>
                 {isMenuOpen ? renderPluginRowMenu(item) : null}
-              </div>
+                </div>
+              </PluginRow>
             );
           }}
         />

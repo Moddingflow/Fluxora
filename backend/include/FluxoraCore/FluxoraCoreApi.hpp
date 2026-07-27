@@ -62,6 +62,8 @@ extern "C"
         const wchar_t* targetModUuid,
         int newNamePolicy,
         const wchar_t* profileName,
+        const wchar_t* templateId,
+        const wchar_t* workspaceRevision,
         const wchar_t* fomodContextId,
         const wchar_t* manualDecisionsJson,
         int modOrderTargetIndex,
@@ -467,6 +469,15 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_get_workspace_delta(
+        const wchar_t* projectDirectory,
+        const wchar_t* templateId,
+        const wchar_t* profileName,
+        const wchar_t* sinceRevision,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_get_persisted_mod_workspace(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,
@@ -722,6 +733,14 @@ extern "C"
 
     FLUXORA_CORE_API int fluxora_get_downloads(
         const wchar_t* projectDirectory,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_downloads_delta(
+        const wchar_t* projectDirectory,
+        const wchar_t* sinceRevision,
+        const wchar_t* operationId,
+        const wchar_t* reason,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

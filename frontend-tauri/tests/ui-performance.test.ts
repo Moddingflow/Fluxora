@@ -2,11 +2,68 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adaptiveVirtualWindowOptions,
+  createDisplayCadenceSampler,
   createAdaptiveVirtualWindow,
-  createVirtualWindow
+  createVirtualWindow,
+  sampleDisplayCadence,
+  scrollEndFallbackDelayMs
 } from '../src/renderer/ui-performance';
 
 describe('renderer UI performance helpers', () => {
+  it.each([
+    ['60 Hz', 1000 / 60],
+    ['144 Hz', 1000 / 144],
+    ['240 Hz', 1000 / 240],
+    ['360 Hz', 1000 / 360]
+  ])('measures %s cadence without imposing a refresh-rate floor', (_label, intervalMs) => {
+    let sampler = createDisplayCadenceSampler();
+    for (let frame = 0; frame < 40; frame += 1) {
+      sampler = sampleDisplayCadence(sampler, frame * intervalMs);
+    }
+
+    expect(sampler.frameDurationMs).toBeCloseTo(intervalMs, 4);
+    expect(sampler.samples).toHaveLength(31);
+  });
+
+  it('tracks arbitrary fractional display cadences without a refresh-rate allowlist', () => {
+    for (let refreshHz = 23.976; refreshHz <= 1_000; refreshHz += 17.375) {
+      const intervalMs = 1_000 / refreshHz;
+      let sampler = createDisplayCadenceSampler();
+      for (let frame = 0; frame < 40; frame += 1) {
+        sampler = sampleDisplayCadence(sampler, frame * intervalMs);
+      }
+
+      expect(sampler.frameDurationMs).toBeCloseTo(intervalMs, 4);
+      expect(scrollEndFallbackDelayMs(sampler.frameDurationMs)).toBeCloseTo(
+        intervalMs * 12,
+        4
+      );
+    }
+  });
+
+  it('ignores background pauses and filters isolated dropped frames from cadence', () => {
+    const intervalMs = 1000 / 144;
+    let sampler = createDisplayCadenceSampler();
+    for (let frame = 0; frame < 20; frame += 1) {
+      sampler = sampleDisplayCadence(sampler, frame * intervalMs);
+    }
+
+    sampler = sampleDisplayCadence(sampler, 20 * intervalMs + 4_000);
+    sampler = sampleDisplayCadence(sampler, 21 * intervalMs + 4_000);
+    sampler = sampleDisplayCadence(sampler, 23 * intervalMs + 4_000);
+    sampler = sampleDisplayCadence(sampler, 24 * intervalMs + 4_000);
+
+    expect(sampler.frameDurationMs).toBeCloseTo(intervalMs, 4);
+    expect(sampler.rejectedBackgroundPauses).toBe(1);
+  });
+
+  it('derives scroll-end fallback timing from measured cadence at every supported refresh', () => {
+    expect(scrollEndFallbackDelayMs(1000 / 60)).toBeCloseTo(200, 4);
+    expect(scrollEndFallbackDelayMs(1000 / 144)).toBeCloseTo(1000 / 12, 4);
+    expect(scrollEndFallbackDelayMs(1000 / 240)).toBeCloseTo(50, 4);
+    expect(scrollEndFallbackDelayMs(1000 / 360)).toBeCloseTo(1000 / 30, 4);
+  });
+
   it('returns an overscanned visible window without rendering the full list', () => {
     const items = Array.from({ length: 5000 }, (_, index) => index);
     const window = createVirtualWindow(items, 48 * 120, {

@@ -32,6 +32,11 @@ export type DownloadWorkspaceAction =
   | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraDownloadEntry[] }
   | { type: 'items-upserted'; items: FluxoraDownloadEntry[] }
+  | {
+      type: 'delta-applied';
+      upserts: FluxoraDownloadEntry[];
+      removedIds: string[];
+    }
   | { type: 'item-removed'; id: string }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; id: string | null }
@@ -369,6 +374,24 @@ export const downloadWorkspaceReducer = (
         type: 'items-loaded',
         items: [...action.items, ...state.items.filter((entry) => !incomingIds.has(entry.id))]
       });
+    }
+    case 'delta-applied': {
+      const removedIds = new Set(action.removedIds);
+      const upserts = new Map(action.upserts.map((entry) => [entry.id, entry]));
+      const present = new Set<string>();
+      const items = state.items.flatMap((entry) => {
+        if (removedIds.has(entry.id)) {
+          return [];
+        }
+        present.add(entry.id);
+        return [upserts.get(entry.id) ?? entry];
+      });
+      for (const entry of action.upserts) {
+        if (!removedIds.has(entry.id) && !present.has(entry.id)) {
+          items.push(entry);
+        }
+      }
+      return downloadWorkspaceReducer(state, { type: 'items-loaded', items });
     }
     case 'item-removed':
       return downloadWorkspaceReducer(state, {

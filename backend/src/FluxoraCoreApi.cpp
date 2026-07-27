@@ -30,6 +30,7 @@
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
+#include "FluxoraCore/Services/WorkspaceRevisionJournal.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
@@ -2576,7 +2577,173 @@ namespace
         return writer.str();
     }
 
-    std::wstring serializeInstallOperation(const fluxora::InstallOperationRecord& operation)
+    void writeOrderPlacement(
+        fluxora::JsonWriter& writer,
+        const fluxora::OrderPlacement& placement)
+    {
+        writer.beginObject();
+        writer.field(L"orderId", placement.orderId);
+        if (!placement.beforeOrderId.empty())
+        {
+            writer.field(L"beforeOrderId", placement.beforeOrderId);
+        }
+        if (!placement.afterOrderId.empty())
+        {
+            writer.field(L"afterOrderId", placement.afterOrderId);
+        }
+        writer.endObject();
+    }
+
+    std::wstring normalizedPathKey(const std::filesystem::path& path)
+    {
+        std::wstring value = path.lexically_normal().generic_wstring();
+#ifdef _WIN32
+        std::transform(
+            value.begin(),
+            value.end(),
+            value.begin(),
+            [](wchar_t character)
+            {
+                return static_cast<wchar_t>(std::towlower(character));
+            });
+#endif
+        return value;
+    }
+
+    void writeInstalledModSummary(
+        fluxora::JsonWriter& writer,
+        const fluxora::InstalledModEntry& mod,
+        const std::vector<fluxora::ProfileModOrderItem>& modOrder,
+        std::wstring_view operationId)
+    {
+        const std::wstring modPathKey = normalizedPathKey(mod.id);
+        const auto orderItem = std::find_if(
+            modOrder.begin(),
+            modOrder.end(),
+            [&modPathKey](const fluxora::ProfileModOrderItem& candidate)
+            {
+                return candidate.kind != L"separator" &&
+                    normalizedPathKey(candidate.id) == modPathKey;
+            });
+
+        writer.beginObject();
+        writer.field(L"id", mod.id.wstring());
+        writer.field(L"name", mod.name);
+        writer.field(L"version", mod.version);
+        writer.field(L"isEnabled", mod.isEnabled);
+        writer.field(L"latestVersion", mod.latestVersion);
+        writer.field(L"latestFileId", mod.latestFileId);
+        writer.field(L"updateCheckState", mod.updateCheckState);
+        writer.field(L"sourceIsNexus", mod.sourceIsNexus);
+        writer.field(L"sourceIsModdingFlow", mod.sourceIsModdingFlow);
+        writer.field(L"sourceProvider", mod.sourceProvider);
+        writer.field(L"sourceGameDomain", mod.sourceGameDomain);
+        writer.field(L"sourceModId", mod.sourceModId);
+        writer.field(L"sourceFileId", mod.sourceFileId);
+        writer.field(L"sourceUrl", mod.sourceUrl);
+        writer.field(L"isLocal", mod.isLocal);
+        writer.field(L"isTranslation", mod.isTranslation);
+        writer.field(L"isPatch", mod.isPatch);
+        writer.field(
+            L"modUuid",
+            orderItem == modOrder.end() ? std::wstring{} : orderItem->modUuid);
+        writer.field(
+            L"orderId",
+            orderItem == modOrder.end() ? std::wstring{} : orderItem->orderId);
+        writer.field(L"fileCount", mod.fileCount);
+        writer.field(L"conflictingFileCount", mod.conflictingFileCount);
+        writer.field(L"overwrittenFileCount", mod.overwrittenFileCount);
+        writer.field(L"overwritingFileCount", mod.overwritingFileCount);
+        writer.stringArray(L"overwritesModIds", mod.overwritesModIds);
+        writer.stringArray(L"overwrittenByModIds", mod.overwrittenByModIds);
+        writer.field(L"operationId", operationId);
+        writer.endObject();
+    }
+
+    std::wstring serializeWorkspaceDelta(
+        const fluxora::WorkspaceDelta& delta,
+        const std::vector<fluxora::ProfileModOrderItem>& currentModOrder)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"projectDirectory", delta.projectDirectory.wstring());
+        writer.field(L"profileName", delta.profileName);
+        writer.field(L"operationId", delta.operationId);
+        writer.field(L"sequence", delta.sequence);
+        writer.key(L"mods").beginObject();
+        writer.field(L"baseRevision", delta.mods.baseRevision);
+        writer.field(L"revision", delta.mods.revision);
+        writer.key(L"upserts").beginArray();
+        for (const auto& item : delta.mods.upserts)
+        {
+            writeProfileModOrderItem(writer, item);
+        }
+        writer.endArray();
+        writer.stringArray(L"removedOrderIds", delta.mods.removedOrderIds);
+        writer.key(L"placements").beginArray();
+        for (const auto& placement : delta.mods.placements)
+        {
+            writeOrderPlacement(writer, placement);
+        }
+        writer.endArray();
+        writer.endObject();
+        writer.key(L"installedModUpserts").beginArray();
+        for (const auto& mod : delta.installedModUpserts)
+        {
+            writeInstalledModSummary(writer, mod, currentModOrder, delta.operationId);
+        }
+        writer.endArray();
+        writer.stringArray(L"removedInstalledModIds", delta.removedInstalledModIds);
+        writer.key(L"plugins").beginObject();
+        writer.field(L"baseRevision", delta.plugins.baseRevision);
+        writer.field(L"revision", delta.plugins.revision);
+        writer.key(L"upserts").beginArray();
+        for (const auto& item : delta.plugins.upserts)
+        {
+            writePluginEntry(writer, item);
+        }
+        writer.endArray();
+        writer.stringArray(L"removedOrderIds", delta.plugins.removedOrderIds);
+        writer.key(L"placements").beginArray();
+        for (const auto& placement : delta.plugins.placements)
+        {
+            writeOrderPlacement(writer, placement);
+        }
+        writer.endArray();
+        writer.endObject();
+        writer.field(L"fullResyncRequired", delta.fullResyncRequired);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeDownloadsChangedDelta(
+        const fluxora::DownloadsChangedDelta& delta)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"projectDirectory", delta.projectDirectory.wstring());
+        if (!delta.operationId.empty())
+        {
+            writer.field(L"operationId", delta.operationId);
+        }
+        writer.field(L"revision", delta.revision);
+        writer.field(L"sequence", delta.sequence);
+        writer.key(L"upserts").beginArray();
+        for (const auto& download : delta.upserts)
+        {
+            writeDownloadEntry(writer, download);
+        }
+        writer.endArray();
+        writer.stringArray(L"removedIds", delta.removedIds);
+        writer.field(L"reason", delta.reason);
+        writer.field(L"fullResyncRequired", delta.fullResyncRequired);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeInstallOperation(
+        const fluxora::InstallOperationRecord& operation,
+        std::wstring_view workspaceDeltaJson = {})
     {
         fluxora::JsonWriter writer;
         writer.beginObject();
@@ -2612,6 +2779,15 @@ namespace
         else
         {
             writer.numberValue(operation.resultJson);
+        }
+        writer.key(L"workspaceDelta");
+        if (workspaceDeltaJson.empty())
+        {
+            writer.nullValue();
+        }
+        else
+        {
+            writer.numberValue(workspaceDeltaJson);
         }
         writer.endObject();
         return writer.str();
@@ -4335,6 +4511,8 @@ extern "C"
         const wchar_t* targetModUuid,
         int newNamePolicy,
         const wchar_t* profileName,
+        const wchar_t* templateId,
+        const wchar_t* workspaceRevision,
         const wchar_t* fomodContextId,
         const wchar_t* manualDecisionsJson,
         int modOrderTargetIndex,
@@ -4411,14 +4589,74 @@ extern "C"
                 request.identityPlanJson = identityWriter.str();
             }
 
-            const auto publish = [progressCallback, progressUserData](
+            const std::filesystem::path deltaProjectDirectory(projectDirectory);
+            const std::wstring deltaProfileName =
+                isBlank(profileName) ? std::wstring{} : std::wstring(profileName);
+            const std::wstring deltaTemplateId =
+                isBlank(templateId) ? std::wstring{} : std::wstring(templateId);
+            const std::wstring deltaBaseRevision =
+                isBlank(workspaceRevision) ? std::wstring{} : std::wstring(workspaceRevision);
+            const auto publish = [
+                progressCallback,
+                progressUserData,
+                deltaProjectDirectory,
+                deltaProfileName,
+                deltaTemplateId,
+                deltaBaseRevision](
                 const fluxora::InstallOperationRecord& operation)
             {
                 if (progressCallback == nullptr)
                 {
                     return;
                 }
-                const std::wstring json = serializeInstallOperation(operation);
+                std::wstring workspaceDeltaJson;
+                const bool terminal =
+                    operation.state == L"completed" ||
+                    operation.state == L"cancelled" ||
+                    operation.state == L"failed" ||
+                    operation.state == L"needsReview";
+                if (terminal && !deltaTemplateId.empty())
+                {
+                    try
+                    {
+                        if (operation.state == L"completed")
+                        {
+                            syncSkyrimPluginsForInstalledMods(
+                                deltaProjectDirectory,
+                                "Install operation",
+                                true);
+                        }
+                        fluxora::WorkspaceRevisionInput input;
+                        input.workspace = core().profileOrder().workspaceSnapshot(
+                            deltaProjectDirectory,
+                            deltaProfileName);
+                        input.plugins = core().plugins().listPlugins(
+                            deltaProjectDirectory,
+                            resolvePluginRuleContextForTemplate(deltaTemplateId.c_str()),
+                            deltaProfileName);
+                        const fluxora::WorkspaceDelta delta =
+                            core().workspaceRevisions().captureWorkspace(
+                                deltaProjectDirectory,
+                                deltaProfileName,
+                                deltaBaseRevision,
+                                operation.operationId,
+                                input);
+                        workspaceDeltaJson =
+                            serializeWorkspaceDelta(delta, input.workspace.modOrder);
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        logOperation(
+                            fluxora::LogLevel::Warning,
+                            "Installs",
+                            std::string(
+                                "Terminal workspace delta capture failed. operationId=") +
+                                textForLog(operation.operationId) +
+                                ", reason=" + exception.what());
+                    }
+                }
+                const std::wstring json =
+                    serializeInstallOperation(operation, workspaceDeltaJson);
                 progressCallback(json.c_str(), progressUserData);
             };
             const fluxora::InstallOperationRecord operation =
@@ -5744,6 +5982,51 @@ extern "C"
                     std::filesystem::path(projectDirectory),
                     isBlank(profileName) ? L"" : std::wstring_view(profileName)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_workspace_delta(
+        const wchar_t* projectDirectory,
+        const wchar_t* templateId,
+        const wchar_t* profileName,
+        const wchar_t* sinceRevision,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::filesystem::path projectPath(projectDirectory);
+            const std::wstring_view resolvedProfile =
+                isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName);
+            fluxora::WorkspaceRevisionInput input;
+            input.workspace = core().profileOrder().workspaceSnapshot(
+                projectPath,
+                resolvedProfile);
+            input.plugins = core().plugins().listPlugins(
+                projectPath,
+                resolvePluginRuleContextForTemplate(templateId),
+                resolvedProfile);
+            const fluxora::WorkspaceDelta delta = core().workspaceRevisions().captureWorkspace(
+                projectPath,
+                resolvedProfile,
+                isBlank(sinceRevision) ? std::wstring_view{} : std::wstring_view(sinceRevision),
+                isBlank(operationId) ? std::wstring_view{} : std::wstring_view(operationId),
+                input);
+            return writeToBuffer(
+                serializeWorkspaceDelta(delta, input.workspace.modOrder),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -7419,6 +7702,43 @@ extern "C"
                 serializeInstallPlan(core().downloads().planDownloadInstall(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(downloadPath))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_downloads_delta(
+        const wchar_t* projectDirectory,
+        const wchar_t* sinceRevision,
+        const wchar_t* operationId,
+        const wchar_t* reason,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::filesystem::path projectPath(projectDirectory);
+            const std::vector<fluxora::DownloadEntry> downloads =
+                core().downloads().listDownloads(projectPath);
+            const fluxora::DownloadsChangedDelta delta =
+                core().workspaceRevisions().captureDownloads(
+                    projectPath,
+                    isBlank(sinceRevision) ? std::wstring_view{} : std::wstring_view(sinceRevision),
+                    isBlank(operationId) ? std::wstring_view{} : std::wstring_view(operationId),
+                    isBlank(reason) ? std::wstring_view(L"external") : std::wstring_view(reason),
+                    downloads);
+            return writeToBuffer(
+                serializeDownloadsChangedDelta(delta),
                 jsonBuffer,
                 jsonBufferLength);
         }

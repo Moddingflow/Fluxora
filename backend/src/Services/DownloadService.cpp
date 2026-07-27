@@ -123,6 +123,7 @@ namespace fluxora
         {
             std::filesystem::path path;
             std::filesystem::file_time_type lastWriteTime{};
+            std::uintmax_t lastActivityUnixMs{0};
         };
 
         std::mutex activeDownloadsMutex;
@@ -174,6 +175,7 @@ namespace fluxora
             std::uintmax_t bytesReceived{0};
             std::uintmax_t totalBytes{0};
             std::uintmax_t downloadStartedUnix{0};
+            std::uintmax_t lastRequestedUnixMs{0};
             bool isDownloading{false};
             std::optional<DownloadDuplicateDecision> duplicateDecision;
         };
@@ -1317,48 +1319,11 @@ namespace fluxora
             return {};
         }
 
-        [[nodiscard]] bool hasFomodModuleConfig(const std::filesystem::path& root)
-        {
-            for (std::wstring_view folderName : {L"fomod", L"FOMOD", L"Fomod"})
-            {
-                const std::filesystem::path fomodDirectory = root / std::filesystem::path(folderName);
-                for (std::wstring_view configName : {L"ModuleConfig.xml", L"moduleconfig.xml", L"ModuleConfig.XML"})
-                {
-                    std::error_code error;
-                    if (std::filesystem::is_regular_file(
-                            fomodDirectory / std::filesystem::path(configName),
-                            error))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
         [[nodiscard]] std::filesystem::path fomodPreviewPackageRoot(const std::filesystem::path& packageDirectory)
         {
-            if (hasFomodModuleConfig(packageDirectory))
-            {
-                return packageDirectory;
-            }
-
-            std::error_code iteratorError;
-            for (const auto& entry : std::filesystem::directory_iterator(packageDirectory, iteratorError))
-            {
-                if (!entry.is_directory())
-                {
-                    continue;
-                }
-
-                if (hasFomodModuleConfig(entry.path()))
-                {
-                    return entry.path();
-                }
-            }
-
-            return packageDirectory;
+            const std::filesystem::path packageRoot =
+                FomodInstallerService::findPackageRoot(packageDirectory);
+            return packageRoot.empty() ? packageDirectory : packageRoot;
         }
 
         [[nodiscard]] std::wstring materializeFomodPreviewImage(
@@ -1718,6 +1683,22 @@ namespace fluxora
             return static_cast<std::uintmax_t>(std::time(nullptr));
         }
 
+        std::uintmax_t currentUnixMilliseconds()
+        {
+            const auto now = std::chrono::system_clock::now().time_since_epoch();
+            return static_cast<std::uintmax_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+        }
+
+        std::uintmax_t fileTimeUnixMilliseconds(const std::filesystem::file_time_type& fileTime)
+        {
+            const auto systemTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                fileTime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+            const auto value = std::chrono::duration_cast<std::chrono::milliseconds>(
+                systemTime.time_since_epoch()).count();
+            return value > 0 ? static_cast<std::uintmax_t>(value) : 0;
+        }
+
         int downloadProgressPercent(const DownloadMetadata& metadata)
         {
             if (metadata.totalBytes == 0)
@@ -2053,6 +2034,7 @@ namespace fluxora
             writer.field(L"bytesReceived", metadata.bytesReceived);
             writer.field(L"totalBytes", metadata.totalBytes);
             writer.field(L"downloadStartedUnix", metadata.downloadStartedUnix);
+            writer.field(L"lastRequestedUnixMs", metadata.lastRequestedUnixMs);
             writer.field(L"isDownloading", metadata.isDownloading);
             if (metadata.duplicateDecision.has_value())
             {
@@ -2164,6 +2146,17 @@ namespace fluxora
                     else if (value->isString())
                     {
                         metadata.downloadStartedUnix = parseUnsigned(value->asString());
+                    }
+                }
+                if (const JsonValue* value = root.find(L"lastRequestedUnixMs"); value != nullptr)
+                {
+                    if (value->isNumber())
+                    {
+                        metadata.lastRequestedUnixMs = parseUnsigned(value->asNumber());
+                    }
+                    else if (value->isString())
+                    {
+                        metadata.lastRequestedUnixMs = parseUnsigned(value->asString());
                     }
                 }
                 if (const JsonValue* value = root.find(L"isDownloading"); value != nullptr && value->type() == JsonValue::Type::Boolean)
@@ -2281,6 +2274,10 @@ namespace fluxora
             if (!completedMetadata.latestVersion.empty())
             {
                 retained.latestVersion = completedMetadata.latestVersion;
+            }
+            if (completedMetadata.lastRequestedUnixMs != 0)
+            {
+                retained.lastRequestedUnixMs = completedMetadata.lastRequestedUnixMs;
             }
             retained.status.clear();
             retained.destinationFileName.clear();
@@ -6066,8 +6063,8 @@ namespace fluxora
                 }
 
                 validateExtractedDirectoryTree(destinationDirectory);
-                const bool hasInstaller = hasFomodModuleConfig(
-                    fomodPreviewPackageRoot(destinationDirectory));
+                const bool hasInstaller =
+                    FomodInstallerService::hasXmlInstaller(destinationDirectory);
                 if (!hasInstaller)
                 {
                     clearDirectoryContents(destinationDirectory);
@@ -7707,6 +7704,109 @@ namespace fluxora
             std::filesystem::remove(AtomicFileStore::backupPathFor(cancelMarkerPath(path)), error);
             archiveCatalog.removeArchiveSidecar(path);
         }
+
+        class SameFileArchiveReplacement final
+        {
+        public:
+            SameFileArchiveReplacement(
+                Logger& logger,
+                const std::filesystem::path& originalPath)
+                : logger_(logger),
+                  originalPath_(originalPath),
+                  stagedPath_(uniquePath(
+                      originalPath.parent_path(),
+                      L"." + originalPath.filename().wstring() + L".replacing.tmp"))
+            {
+                std::filesystem::rename(originalPath_, stagedPath_);
+                active_ = true;
+                logger_.writeOperation(
+                    LogLevel::Info,
+                    "NxmDuplicate",
+                    "choice=replace; phase=staged-existing-same-file; file=" +
+                        toUtf8(originalPath_.filename().wstring()) + ".");
+            }
+
+            SameFileArchiveReplacement(const SameFileArchiveReplacement&) = delete;
+            SameFileArchiveReplacement& operator=(const SameFileArchiveReplacement&) = delete;
+
+            ~SameFileArchiveReplacement()
+            {
+                rollbackNoThrow();
+            }
+
+            [[nodiscard]] const std::filesystem::path& originalPath() const noexcept
+            {
+                return originalPath_;
+            }
+
+            std::filesystem::path adoptDownloadedArchive(const std::filesystem::path& downloadedPath)
+            {
+                if (normalizedPathText(downloadedPath) == normalizedPathText(originalPath_))
+                {
+                    return originalPath_;
+                }
+                if (!std::filesystem::exists(downloadedPath) ||
+                    !std::filesystem::is_regular_file(downloadedPath) ||
+                    normalizedPathText(downloadedPath.parent_path()) !=
+                        normalizedPathText(originalPath_.parent_path()) ||
+                    std::filesystem::exists(originalPath_))
+                {
+                    throw std::runtime_error(
+                        "The identical Nexus archive could not be promoted to its original name.");
+                }
+
+                std::filesystem::rename(downloadedPath, originalPath_);
+                return originalPath_;
+            }
+
+            void commit()
+            {
+                std::error_code error;
+                const bool removed = std::filesystem::remove(stagedPath_, error);
+                if (error || !removed)
+                {
+                    throw std::runtime_error(
+                        "The staged identical Nexus archive could not be removed after replacement.");
+                }
+                active_ = false;
+                logger_.writeOperation(
+                    LogLevel::Info,
+                    "NxmDuplicate",
+                    "choice=replace; phase=committed-same-file-name.");
+            }
+
+        private:
+            void rollbackNoThrow() noexcept
+            {
+                if (!active_)
+                {
+                    return;
+                }
+
+                std::error_code error;
+                std::filesystem::remove(originalPath_, error);
+                error.clear();
+                std::filesystem::rename(stagedPath_, originalPath_, error);
+                try
+                {
+                    logger_.writeOperation(
+                        error ? LogLevel::Error : LogLevel::Warning,
+                        "NxmDuplicate",
+                        error
+                            ? "choice=replace; phase=rollback-same-file-failed; error=" + error.message() + "."
+                            : "choice=replace; phase=rolled-back-same-file.");
+                }
+                catch (...)
+                {
+                }
+                active_ = false;
+            }
+
+            Logger& logger_;
+            std::filesystem::path originalPath_;
+            std::filesystem::path stagedPath_;
+            bool active_{false};
+        };
 
         class ArchiveInstallAttemptGuard final
         {
@@ -9484,14 +9584,12 @@ namespace fluxora
         enum class NexusDuplicatePreflightKind
         {
             Continue,
-            ReuseExisting,
             AwaitDecision
         };
 
         struct NexusDuplicatePreflightResult
         {
             NexusDuplicatePreflightKind kind{NexusDuplicatePreflightKind::Continue};
-            std::filesystem::path existingPath;
             std::optional<DownloadDuplicateDecision> decision;
         };
 
@@ -9655,8 +9753,9 @@ namespace fluxora
                 return L"downgrade";
             case NexusDownloadDuplicateKind::Mixed:
                 return L"mixed";
-            case NexusDownloadDuplicateKind::None:
             case NexusDownloadDuplicateKind::SameFile:
+                return L"same-file";
+            case NexusDownloadDuplicateKind::None:
             default:
                 return {};
             }
@@ -9691,24 +9790,73 @@ namespace fluxora
                 metadata.version,
                 {}};
             const NexusDownloadDuplicateResolver resolver;
+            const auto decisionForResolution = [&](const NexusDownloadDuplicateResolution& resolution,
+                                                   std::string_view evidence)
+                -> std::optional<NexusDuplicatePreflightResult>
+            {
+                const std::wstring direction = duplicateDirection(resolution.kind);
+                if (direction.empty())
+                {
+                    return std::nullopt;
+                }
+
+                DownloadDuplicateDecision decision;
+                decision.decisionId = newDuplicateDecisionId(pendingPath);
+                decision.direction = direction;
+                decision.incomingFile = DownloadDuplicateFile{
+                    pendingPath.wstring(),
+                    incoming.fileId,
+                    incoming.fileName,
+                    incoming.version,
+                    {}};
+                for (const NexusDownloadFileVersion& file : resolution.existingFiles)
+                {
+                    decision.existingFiles.push_back(DownloadDuplicateFile{
+                        file.id,
+                        file.fileId,
+                        file.fileName,
+                        file.version,
+                        file.sha256});
+                }
+                std::wstring lineageSeed = toLower(trim(request.gameDomain)) + L"|" +
+                    trim(request.modId);
+                for (const std::wstring& fileId : resolution.lineageFileIds)
+                {
+                    lineageSeed += L"|" + fileId;
+                }
+                decision.lineageKey = hashText(lineageSeed);
+                logger.writeOperation(
+                    LogLevel::Info,
+                    "NxmDuplicate",
+                    "classification=" + toUtf8(direction) +
+                        "; evidence=" + std::string(evidence) +
+                        "; existingCount=" + std::to_string(decision.existingFiles.size()) +
+                        "; awaiting user decision.");
+                return NexusDuplicatePreflightResult{
+                    NexusDuplicatePreflightKind::AwaitDecision,
+                    std::move(decision)};
+            };
             NexusDownloadDuplicateResolution resolution = resolver.resolve(incoming, existing, {});
             if (resolution.kind == NexusDownloadDuplicateKind::SameFile &&
                 resolution.sameFile.has_value())
             {
-                logger.writeOperation(
-                    LogLevel::Info,
-                    "NxmDuplicate",
-                    "classification=same-file; reused existing completed archive.");
-                return {
-                    NexusDuplicatePreflightKind::ReuseExisting,
-                    std::filesystem::path(resolution.sameFile->id),
-                    std::nullopt};
+                if (std::optional<NexusDuplicatePreflightResult> sameFile =
+                        decisionForResolution(resolution, "exact-file-id");
+                    sameFile.has_value())
+                {
+                    return std::move(*sameFile);
+                }
             }
-
             const std::optional<NexusModFilesResponse> nexusFiles =
                 nexusFilesForDuplicatePreflight(logger, nexusAuth, request);
             if (!nexusFiles.has_value())
             {
+                if (std::optional<NexusDuplicatePreflightResult> inferred =
+                        decisionForResolution(resolution, "exact-name-version-fallback");
+                    inferred.has_value())
+                {
+                    return std::move(*inferred);
+                }
                 logger.writeOperation(
                     LogLevel::Info,
                     "NxmDuplicate",
@@ -9717,51 +9865,18 @@ namespace fluxora
             }
 
             resolution = resolver.resolve(incoming, existing, nexusFiles->fileUpdates);
-            const std::wstring direction = duplicateDirection(resolution.kind);
-            if (direction.empty())
+            if (std::optional<NexusDuplicatePreflightResult> proven =
+                    decisionForResolution(resolution, "nexus-lineage");
+                proven.has_value())
             {
-                logger.writeOperation(
-                    LogLevel::Info,
-                    "NxmDuplicate",
-                    "classification=unproven-or-different-branch; continuing as a separate file.");
-                return {};
+                return std::move(*proven);
             }
 
-            DownloadDuplicateDecision decision;
-            decision.decisionId = newDuplicateDecisionId(pendingPath);
-            decision.direction = direction;
-            decision.incomingFile = DownloadDuplicateFile{
-                pendingPath.wstring(),
-                incoming.fileId,
-                incoming.fileName,
-                incoming.version,
-                {}};
-            for (const NexusDownloadFileVersion& file : resolution.existingFiles)
-            {
-                decision.existingFiles.push_back(DownloadDuplicateFile{
-                    file.id,
-                    file.fileId,
-                    file.fileName,
-                    file.version,
-                    file.sha256});
-            }
-            std::wstring lineageSeed = toLower(trim(request.gameDomain)) + L"|" +
-                trim(request.modId);
-            for (const std::wstring& fileId : resolution.lineageFileIds)
-            {
-                lineageSeed += L"|" + fileId;
-            }
-            decision.lineageKey = hashText(lineageSeed);
             logger.writeOperation(
                 LogLevel::Info,
                 "NxmDuplicate",
-                "classification=" + toUtf8(direction) +
-                    "; existingCount=" + std::to_string(decision.existingFiles.size()) +
-                    "; awaiting user decision.");
-            return {
-                NexusDuplicatePreflightKind::AwaitDecision,
-                {},
-                std::move(decision)};
+                "classification=unproven-or-different-branch; continuing as a separate file.");
+            return {};
         }
 
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
@@ -9814,7 +9929,8 @@ namespace fluxora
             const std::filesystem::path& progressPath,
             DownloadMetadata progressMetadata,
             DownloadTransferLimiter& transferLimiter,
-            const NexusDuplicatePreflightCallback& duplicatePreflight = {})
+            const NexusDuplicatePreflightCallback& duplicatePreflight = {},
+            std::wstring_view forcedDestinationFileName = {})
         {
             ActiveDownloadRegistration activeDownload(progressPath);
             NexusDownloadedFile result;
@@ -9901,12 +10017,6 @@ namespace fluxora
             if (duplicatePreflight)
             {
                 const NexusDuplicatePreflightResult duplicate = duplicatePreflight(progressMetadata);
-                if (duplicate.kind == NexusDuplicatePreflightKind::ReuseExisting)
-                {
-                    result.path = duplicate.existingPath;
-                    result.reusedExisting = true;
-                    return result;
-                }
                 if (duplicate.kind == NexusDuplicatePreflightKind::AwaitDecision &&
                     duplicate.decision.has_value())
                 {
@@ -9918,6 +10028,11 @@ namespace fluxora
                     result.awaitingDecision = true;
                     return result;
                 }
+            }
+
+            if (!forcedDestinationFileName.empty())
+            {
+                progressMetadata.destinationFileName = sanitizeFileName(forcedDestinationFileName);
             }
 
             progressMetadata.status = L"Ожидает свободный слот";
@@ -9969,9 +10084,9 @@ namespace fluxora
             const std::wstring nexusFileName = nexusDisplayArchiveFileName(
                 fileInfo.displayName,
                 fallbackFileName);
-            progressMetadata.destinationFileName = nexusFileName.empty()
-                ? fallbackFileName
-                : nexusFileName;
+            progressMetadata.destinationFileName = forcedDestinationFileName.empty()
+                ? (nexusFileName.empty() ? fallbackFileName : nexusFileName)
+                : sanitizeFileName(forcedDestinationFileName);
             progressMetadata.status = L"Скачивается";
             writeMetadata(progressPath, progressMetadata);
             result.path = winHttpDownloadToFile(
@@ -10495,6 +10610,7 @@ namespace fluxora
 
             std::unique_ptr<DuplicateLineageGuard> lineageGuard;
             std::vector<std::unique_ptr<ArchiveUseGuard>> archiveGuards;
+            std::unique_ptr<SameFileArchiveReplacement> sameFileReplacement;
             if (job.duplicateChoice == DownloadDuplicateChoice::Replace)
             {
                 if (!job.duplicateDecision.has_value())
@@ -10510,12 +10626,26 @@ namespace fluxora
                     *job.duplicateDecision,
                     archiveCatalog_);
                 archiveGuards = lockDuplicateArchives(validated);
-                static_cast<void>(validateDuplicateSnapshot(
+                validated = validateDuplicateSnapshot(
                     job.projectDirectory,
                     job.directory,
                     progressMetadata,
                     *job.duplicateDecision,
-                    archiveCatalog_));
+                    archiveCatalog_);
+                if (toLower(trim(job.duplicateDecision->direction)) == L"same-file")
+                {
+                    if (validated.size() != 1U)
+                    {
+                        throw std::invalid_argument(
+                            "An identical Nexus archive replacement requires one existing archive.");
+                    }
+                    progressMetadata.destinationFileName =
+                        validated.front().path.filename().wstring();
+                    writeMetadata(job.pendingPath, progressMetadata);
+                    sameFileReplacement = std::make_unique<SameFileArchiveReplacement>(
+                        logger_,
+                        validated.front().path);
+                }
             }
 
             NexusDuplicatePreflightCallback duplicatePreflight;
@@ -10543,22 +10673,35 @@ namespace fluxora
                 job.pendingPath,
                 progressMetadata,
                 transferLimiter_,
-                duplicatePreflight);
+                duplicatePreflight,
+                sameFileReplacement
+                    ? sameFileReplacement->originalPath().filename().wstring()
+                    : std::wstring());
             if (downloadedFile.awaitingDecision)
             {
                 return;
             }
             if (!downloadedFile.path.empty())
             {
+                if (sameFileReplacement)
+                {
+                    downloadedFile.path =
+                        sameFileReplacement->adoptDownloadedArchive(downloadedFile.path);
+                }
                 DownloadMetadata completedMetadata = metadataForRequest(link, L"", request, downloadedFile.nexusModName);
                 completedMetadata.version = downloadedFile.version;
                 completedMetadata.latestVersion = downloadedFile.latestVersion;
+                completedMetadata.lastRequestedUnixMs = currentUnixMilliseconds();
                 ArchiveCatalogEntry retained;
                 {
                     const std::lock_guard completionLock(completedArchiveMetadataMutex);
-                    retained = archiveCatalog_.consolidateArchive(
-                        job.projectDirectory,
-                        downloadedFile.path);
+                    const bool replacingIdenticalArchive =
+                        job.duplicateChoice == DownloadDuplicateChoice::Replace &&
+                        job.duplicateDecision.has_value() &&
+                        toLower(trim(job.duplicateDecision->direction)) == L"same-file";
+                    retained = replacingIdenticalArchive
+                        ? archiveCatalog_.identifyArchive(job.projectDirectory, downloadedFile.path)
+                        : archiveCatalog_.consolidateArchive(job.projectDirectory, downloadedFile.path);
                     persistCompletedArchiveMetadata(
                         downloadedFile.path,
                         retained.path,
@@ -10577,6 +10720,10 @@ namespace fluxora
                                 removeReplacedArchive(existingPath, archiveCatalog_);
                             }
                         }
+                    }
+                    if (sameFileReplacement)
+                    {
+                        sameFileReplacement->commit();
                     }
                 }
                 removePendingNxmFile(job.pendingPath);
@@ -11036,14 +11183,23 @@ namespace fluxora
 
             std::error_code timeError;
             const std::filesystem::file_time_type lastWriteTime = entry.last_write_time(timeError);
+            const DownloadMetadata metadata = readMetadata(entry.path());
+            const std::uintmax_t fileActivityUnixMs = timeError
+                ? 0
+                : fileTimeUnixMilliseconds(lastWriteTime);
             files.push_back(DownloadFileCatalogEntry{
                 entry.path(),
-                timeError ? (std::filesystem::file_time_type::min)() : lastWriteTime
+                timeError ? (std::filesystem::file_time_type::min)() : lastWriteTime,
+                (std::max)(fileActivityUnixMs, metadata.lastRequestedUnixMs)
             });
         }
 
         std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
         {
+            if (left.lastActivityUnixMs != right.lastActivityUnixMs)
+            {
+                return left.lastActivityUnixMs > right.lastActivityUnixMs;
+            }
             if (left.lastWriteTime != right.lastWriteTime)
             {
                 return left.lastWriteTime > right.lastWriteTime;
@@ -11516,6 +11672,13 @@ namespace fluxora
                 "choice=cancel; removed pending request only.");
             removePendingNxmFile(downloadPath);
             return std::nullopt;
+        }
+
+        if (toLower(trim(decision.direction)) == L"same-file" &&
+            choice == DownloadDuplicateChoice::KeepBoth)
+        {
+            throw std::invalid_argument(
+                "An identical archive can be replaced or skipped, but not duplicated.");
         }
 
         if (choice == DownloadDuplicateChoice::Replace)

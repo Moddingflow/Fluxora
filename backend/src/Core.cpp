@@ -25,6 +25,7 @@
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
+#include "FluxoraCore/Services/WorkspaceRevisionJournal.hpp"
 
 namespace fluxora
 {
@@ -48,6 +49,7 @@ namespace fluxora
               *buildPathSettings_,
               *downloadTransferLimiter_,
               *nexusModsAuth_)),
+          workspaceRevisions_(std::make_unique<WorkspaceRevisionJournal>()),
           installs_(std::make_unique<InstallOperationService>(*logger_, *downloads_)),
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
@@ -196,6 +198,11 @@ namespace fluxora
     DownloadService& Core::downloads() noexcept
     {
         return *downloads_;
+    }
+
+    WorkspaceRevisionJournal& Core::workspaceRevisions() noexcept
+    {
+        return *workspaceRevisions_;
     }
 
     InstallOperationService& Core::installs() noexcept

@@ -14,7 +14,18 @@ import type {
   Ref
 } from 'react';
 
-import { createAdaptiveVirtualWindow } from '../../ui-performance';
+import {
+  createAdaptiveVirtualWindow,
+  createDisplayCadenceSampler,
+  sampleDisplayCadence,
+  scrollEndFallbackDelayMs
+} from '../../ui-performance';
+import {
+  recordListPerformanceRenderedRows,
+  recordListPerformanceScrollEvent,
+  recordListPerformanceScrollFrame,
+  type ListPerformanceSurfaceId
+} from '../../performance/list-performance-benchmark';
 
 export interface AdaptiveVirtualListHandle {
   getScrollTop: () => number;
@@ -30,6 +41,8 @@ export interface AdaptiveVirtualListProps<T>
   renderItem: (item: T, index: number) => ReactNode;
   scrollContainerRef?: Ref<HTMLDivElement>;
   virtualizerRef?: Ref<AdaptiveVirtualListHandle>;
+  onScrollActivityChange?: (active: boolean) => void;
+  performanceSurfaceId?: ListPerformanceSurfaceId;
 }
 
 interface ScrollMetrics {
@@ -58,19 +71,25 @@ export const AdaptiveVirtualList = <T,>({
   renderItem,
   scrollContainerRef,
   virtualizerRef,
+  onScrollActivityChange,
+  performanceSurfaceId,
   ...containerProps
 }: AdaptiveVirtualListProps<T>): ReactElement => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const scrollEndTimerRef = useRef<number | null>(null);
+  const scrollActiveRef = useRef(false);
+  const nativeScrollEndSupportedRef = useRef(false);
   const imperativeScrollTopRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(0);
   const pendingSampleTimeRef = useRef(0);
+  const pendingScrollVersionRef = useRef(0);
+  const committedScrollVersionRef = useRef(0);
   const lastCommittedSampleRef = useRef({
     scrollTop: 0,
     time: 0
   });
-  const lastAnimationFrameTimeRef = useRef<number | null>(null);
-  const measuredFrameDurationRef = useRef(defaultFrameDurationMs);
+  const cadenceSamplerRef = useRef(createDisplayCadenceSampler());
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined' ? rowHeight : Math.max(rowHeight, window.innerHeight)
   );
@@ -89,7 +108,7 @@ export const AdaptiveVirtualList = <T,>({
       const nextMetrics = {
         scrollTop,
         velocityPxPerMs,
-        frameDurationMs: measuredFrameDurationRef.current
+        frameDurationMs: cadenceSamplerRef.current.frameDurationMs
       };
 
       lastCommittedSampleRef.current = {
@@ -119,6 +138,41 @@ export const AdaptiveVirtualList = <T,>({
     [items, rowHeight, viewportHeight]
   );
 
+  const setScrollActive = useCallback((active: boolean) => {
+    if (scrollActiveRef.current === active) {
+      return;
+    }
+    scrollActiveRef.current = active;
+    onScrollActivityChange?.(active);
+  }, [onScrollActivityChange]);
+
+  const runScrollFrame = useCallback(function handleScrollFrame(frameTime: number) {
+    animationFrameRef.current = null;
+    cadenceSamplerRef.current = sampleDisplayCadence(
+      cadenceSamplerRef.current,
+      frameTime
+    );
+    if (performanceSurfaceId) {
+      recordListPerformanceScrollFrame(performanceSurfaceId, frameTime);
+    }
+    if (committedScrollVersionRef.current !== pendingScrollVersionRef.current) {
+      committedScrollVersionRef.current = pendingScrollVersionRef.current;
+      commitScrollPosition(
+        pendingScrollTopRef.current,
+        pendingSampleTimeRef.current
+      );
+    }
+    if (scrollActiveRef.current) {
+      animationFrameRef.current = window.requestAnimationFrame(handleScrollFrame);
+    }
+  }, [commitScrollPosition, performanceSurfaceId]);
+
+  const ensureScrollFrame = useCallback(() => {
+    if (animationFrameRef.current === null) {
+      animationFrameRef.current = window.requestAnimationFrame(runScrollFrame);
+    }
+  }, [runScrollFrame]);
+
   const synchronizeScrollPosition = useCallback(
     (requestedScrollTop?: number) => {
       const scrollTop =
@@ -126,7 +180,9 @@ export const AdaptiveVirtualList = <T,>({
       const sampleTime = performance.now();
       pendingScrollTopRef.current = scrollTop;
       pendingSampleTimeRef.current = sampleTime;
+      pendingScrollVersionRef.current += 1;
       commitScrollPosition(scrollTop, sampleTime);
+      committedScrollVersionRef.current = pendingScrollVersionRef.current;
     },
     [commitScrollPosition]
   );
@@ -150,14 +206,17 @@ export const AdaptiveVirtualList = <T,>({
         synchronizeScrollPosition(normalizedScrollTop);
       },
       synchronizeScrollPosition
-    }),
-    [synchronizeScrollPosition]
+      }),
+    [items.length, rowHeight, synchronizeScrollPosition]
   );
 
   const setContainerRef = useCallback(
     (container: HTMLDivElement | null) => {
       containerRef.current = container;
       assignRef(scrollContainerRef, container);
+      nativeScrollEndSupportedRef.current = Boolean(
+        container && 'onscrollend' in container
+      );
       if (container) {
         pendingScrollTopRef.current = container.scrollTop;
         setViewportHeight(Math.max(rowHeight, container.clientHeight));
@@ -192,6 +251,19 @@ export const AdaptiveVirtualList = <T,>({
 
   useLayoutEffect(() => {
     const container = containerRef.current;
+    if (!container || !nativeScrollEndSupportedRef.current) {
+      return;
+    }
+
+    const handleScrollEnd = () => {
+      setScrollActive(false);
+    };
+    container.addEventListener('scrollend', handleScrollEnd);
+    return () => container.removeEventListener('scrollend', handleScrollEnd);
+  }, [setScrollActive]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
     if (!container) {
       return;
     }
@@ -210,30 +282,41 @@ export const AdaptiveVirtualList = <T,>({
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
+      if (scrollEndTimerRef.current !== null) {
+        window.clearTimeout(scrollEndTimerRef.current);
+      }
+      scrollActiveRef.current = false;
       assignRef(scrollContainerRef, null);
     },
     [scrollContainerRef]
   );
 
-  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    pendingScrollTopRef.current = event.currentTarget.scrollTop;
-    pendingSampleTimeRef.current = performance.now();
-    if (animationFrameRef.current !== null) {
-      return;
-    }
-
-    animationFrameRef.current = window.requestAnimationFrame((frameTime) => {
-      animationFrameRef.current = null;
-      const previousFrameTime = lastAnimationFrameTimeRef.current;
-      if (previousFrameTime !== null) {
-        const measuredFrameDuration = Math.min(50, Math.max(4, frameTime - previousFrameTime));
-        measuredFrameDurationRef.current =
-          measuredFrameDurationRef.current * 0.75 + measuredFrameDuration * 0.25;
+  const handleScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      pendingScrollTopRef.current = event.currentTarget.scrollTop;
+      pendingSampleTimeRef.current = performance.now();
+      if (performanceSurfaceId) {
+        recordListPerformanceScrollEvent(
+          performanceSurfaceId,
+          pendingSampleTimeRef.current
+        );
       }
-      lastAnimationFrameTimeRef.current = frameTime;
-      commitScrollPosition(pendingScrollTopRef.current, pendingSampleTimeRef.current);
-    });
-  }, [commitScrollPosition]);
+      pendingScrollVersionRef.current += 1;
+      setScrollActive(true);
+      ensureScrollFrame();
+
+      if (!nativeScrollEndSupportedRef.current) {
+        if (scrollEndTimerRef.current !== null) {
+          window.clearTimeout(scrollEndTimerRef.current);
+        }
+        scrollEndTimerRef.current = window.setTimeout(() => {
+          scrollEndTimerRef.current = null;
+          setScrollActive(false);
+        }, scrollEndFallbackDelayMs(cadenceSamplerRef.current.frameDurationMs));
+      }
+    },
+    [ensureScrollFrame, performanceSurfaceId, setScrollActive]
+  );
 
   const virtualWindow = useMemo(
     () =>
@@ -245,6 +328,15 @@ export const AdaptiveVirtualList = <T,>({
       }),
     [items, rowHeight, scrollMetrics, viewportHeight]
   );
+
+  useLayoutEffect(() => {
+    if (performanceSurfaceId) {
+      recordListPerformanceRenderedRows(
+        performanceSurfaceId,
+        virtualWindow.items.length
+      );
+    }
+  }, [performanceSurfaceId, virtualWindow.items.length]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;

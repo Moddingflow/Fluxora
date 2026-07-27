@@ -1218,22 +1218,49 @@ namespace fluxora
 
         [[nodiscard]] std::filesystem::path packageRootWithFomod(const std::filesystem::path& packageDirectory)
         {
-            if (!fomodDirectoryForRoot(packageDirectory).empty())
+            std::vector<std::filesystem::path> currentLevel{packageDirectory};
+            while (!currentLevel.empty())
             {
-                return packageDirectory;
-            }
-
-            for (const auto& entry : std::filesystem::directory_iterator(packageDirectory))
-            {
-                if (!entry.is_directory())
+                for (const std::filesystem::path& candidate : currentLevel)
                 {
-                    continue;
+                    if (!fomodDirectoryForRoot(candidate).empty())
+                    {
+                        return candidate;
+                    }
                 }
 
-                if (!fomodDirectoryForRoot(entry.path()).empty())
+                std::vector<std::filesystem::path> nextLevel;
+                for (const std::filesystem::path& candidate : currentLevel)
                 {
-                    return entry.path();
+                    std::error_code iteratorError;
+                    std::filesystem::directory_iterator iterator(
+                        candidate,
+                        std::filesystem::directory_options::skip_permission_denied,
+                        iteratorError);
+                    const std::filesystem::directory_iterator end;
+                    while (!iteratorError && iterator != end)
+                    {
+                        std::error_code statusError;
+                        const std::filesystem::file_status status = iterator->symlink_status(statusError);
+                        if (!statusError &&
+                            std::filesystem::is_directory(status) &&
+                            !std::filesystem::is_symlink(status))
+                        {
+                            nextLevel.push_back(iterator->path());
+                        }
+                        iterator.increment(iteratorError);
+                    }
                 }
+
+                std::sort(nextLevel.begin(), nextLevel.end(), [](const auto& left, const auto& right)
+                {
+                    const std::wstring leftKey = toLower(left.generic_wstring());
+                    const std::wstring rightKey = toLower(right.generic_wstring());
+                    return leftKey == rightKey
+                        ? left.generic_wstring() < right.generic_wstring()
+                        : leftKey < rightKey;
+                });
+                currentLevel = std::move(nextLevel);
             }
 
             return {};
@@ -2469,9 +2496,15 @@ namespace fluxora
         }
     }
 
+    std::filesystem::path FomodInstallerService::findPackageRoot(
+        const std::filesystem::path& packageDirectory)
+    {
+        return packageRootWithFomod(packageDirectory);
+    }
+
     bool FomodInstallerService::hasXmlInstaller(const std::filesystem::path& packageDirectory)
     {
-        return !packageRootWithFomod(packageDirectory).empty();
+        return !findPackageRoot(packageDirectory).empty();
     }
 
     FomodInstallerDescriptor FomodInstallerService::analyze(
@@ -2484,7 +2517,7 @@ namespace fluxora
         std::wstring_view profileName,
         std::wstring_view profileFingerprint)
     {
-        const std::filesystem::path packageRoot = packageRootWithFomod(packageDirectory);
+        const std::filesystem::path packageRoot = findPackageRoot(packageDirectory);
         if (packageRoot.empty())
         {
             return {};
@@ -2509,7 +2542,7 @@ namespace fluxora
 
     std::vector<std::wstring> FomodInstallerService::install(const FomodInstallContext& context)
     {
-        const std::filesystem::path packageRoot = packageRootWithFomod(context.packageDirectory);
+        const std::filesystem::path packageRoot = findPackageRoot(context.packageDirectory);
         if (packageRoot.empty())
         {
             throw std::invalid_argument("Download does not contain an XML FOMOD installer.");

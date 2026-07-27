@@ -55,12 +55,14 @@ export const FluxoraIpcChannels = {
   downloadsPlanInstall: 'fluxora:downloads:plan-install',
   downloadsInstallFomod: 'fluxora:downloads:install-fomod',
   downloadsInstall: 'fluxora:downloads:install',
+  downloadsGetDelta: 'fluxora:downloads:get-delta',
   downloadsList: 'fluxora:downloads:list',
   downloadsResume: 'fluxora:downloads:resume',
   downloadsResolveDuplicateDecision: 'fluxora:downloads:resolve-duplicate-decision',
   downloadsWatchFolder: 'fluxora:downloads:watch-folder',
   downloadsUnwatchFolder: 'fluxora:downloads:unwatch-folder',
   downloadsFolderChanged: 'fluxora:downloads:folder-changed',
+  downloadsChanged: 'fluxora:downloads:changed',
   buildContentWatch: 'fluxora:build-content:watch',
   buildContentUnwatch: 'fluxora:build-content:unwatch',
   buildContentChanged: 'fluxora:build-content:changed',
@@ -89,6 +91,7 @@ export const FluxoraIpcChannels = {
   modsGetPersistedWorkspace: 'fluxora:mods:get-persisted-workspace',
   modsGetWorkspace: 'fluxora:mods:get-workspace',
   modsInvalidateFileCaches: 'fluxora:mods:invalidate-file-caches',
+  workspaceGetDelta: 'fluxora:workspace:get-delta',
   modsStartNifPreview: 'fluxora:mods:start-nif-preview',
   modsPrepareNifPreviewVariant: 'fluxora:mods:prepare-nif-preview-variant',
   modsPrepareNifPreviewTextures: 'fluxora:mods:prepare-nif-preview-textures',
@@ -1146,6 +1149,36 @@ export interface FluxoraModWorkspaceSnapshot {
   modOrder: FluxoraModOrderItem[];
 }
 
+export interface FluxoraOrderPlacement {
+  orderId: string;
+  beforeOrderId?: string;
+  afterOrderId?: string;
+}
+
+export interface FluxoraRevisionedOrderDelta<T> {
+  baseRevision: string;
+  revision: string;
+  upserts: T[];
+  removedOrderIds: string[];
+  placements: FluxoraOrderPlacement[];
+}
+
+export interface FluxoraWorkspaceDelta {
+  projectDirectory: string;
+  profileName: string;
+  operationId: string;
+  sequence: number;
+  mods: FluxoraRevisionedOrderDelta<FluxoraModOrderItem>;
+  installedModUpserts: FluxoraInstalledModSummary[];
+  removedInstalledModIds: string[];
+  plugins: FluxoraRevisionedOrderDelta<FluxoraPluginOrderItem>;
+  fullResyncRequired: boolean;
+}
+
+export interface FluxoraWorkspaceDeltaRequest extends OperationRequest {
+  templateId?: string;
+}
+
 export interface FluxoraModFileCacheInvalidationResult {
   invalidated: boolean;
   changedPathCount: number;
@@ -1336,7 +1369,7 @@ export interface FluxoraDownloadDuplicateFile {
 
 export interface FluxoraDownloadDuplicateDecision {
   decisionId: string;
-  direction: 'upgrade' | 'downgrade' | 'mixed';
+  direction: 'upgrade' | 'downgrade' | 'mixed' | 'same-file';
   incomingFile: FluxoraDownloadDuplicateFile;
   existingFiles: FluxoraDownloadDuplicateFile[];
 }
@@ -1379,6 +1412,17 @@ export interface FluxoraDownloadEntry {
   canInstall: boolean;
   canDelete: boolean;
   duplicateDecision: FluxoraDownloadDuplicateDecision | null;
+}
+
+export interface FluxoraDownloadsChangedEvent {
+  projectDirectory: string;
+  operationId?: string;
+  revision: string;
+  sequence: number;
+  upserts: FluxoraDownloadEntry[];
+  removedIds: string[];
+  reason: string;
+  fullResyncRequired: boolean;
 }
 
 export interface FluxoraDownloadsFolderWatchResult {
@@ -1847,6 +1891,7 @@ export interface FluxoraInstallOperation {
   errorCode: string;
   errorMessage: string;
   result: FluxoraInstallOperationResult | null;
+  workspaceDelta?: FluxoraWorkspaceDelta | null;
 }
 
 export interface FluxoraInstallSubmitRequest extends FluxoraInstallIdentitySelection {
@@ -1857,6 +1902,8 @@ export interface FluxoraInstallSubmitRequest extends FluxoraInstallIdentitySelec
   isFomod?: boolean;
   modName: string;
   profileName: string;
+  templateId?: string;
+  workspaceRevision?: string;
   existingModMode?: FluxoraExistingModInstallMode;
   selectedOptionIds?: string[];
   placementOverridesJson?: string;
@@ -2422,6 +2469,14 @@ export interface FluxoraApi {
   links: {
     openExternal: (url: string) => Promise<OpenExternalResult>;
   };
+  workspace: {
+    getDelta: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      sinceRevision: string,
+      request?: FluxoraWorkspaceDeltaRequest
+    ) => Promise<FluxoraWorkspaceDelta>;
+  };
   mods: {
     listInstalled: (
       projectDirectory: string,
@@ -2722,6 +2777,12 @@ export interface FluxoraApi {
       projectDirectory: string,
       request?: OperationRequest
     ) => Promise<FluxoraDownloadEntry[]>;
+    getDelta: (
+      projectDirectory: string,
+      sinceRevision: string,
+      reason?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraDownloadsChangedEvent>;
     importFile: (
       projectDirectory: string,
       sourcePath: string,
@@ -2759,6 +2820,9 @@ export interface FluxoraApi {
     ) => Promise<FluxoraDownloadsFolderWatchResult>;
     onFolderChanged: (
       callback: (event: FluxoraDownloadsFolderChangedEvent) => void
+    ) => () => void;
+    onChanged: (
+      callback: (event: FluxoraDownloadsChangedEvent) => void
     ) => () => void;
     analyzeContentLayout: (
       request: FluxoraAnalyzeContentLayoutRequest,

@@ -65,6 +65,7 @@ add_executable(FluxoraCoreTests
     ScopedFileCleanupTests.cpp
     TemplateServiceTests.cpp
     VfsMountPlanTests.cpp
+    WorkspaceRevisionJournalTests.cpp
     TestFilesystem.hpp
     ../src/Services/AppSettingsService.cpp
     ../src/Services/AiRollbackCheckpointStore.cpp
@@ -126,6 +127,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/RootBuilderLaunchCacheReconciler.cpp
     ../src/Services/TemplateService.cpp
     ../src/Services/VfsMountPlan.cpp
+    ../src/Services/WorkspaceRevisionJournal.cpp
     ../src/Storage/AtomicFileStore.cpp
     ../src/Storage/InstanceMetadataStore.cpp
     ../src/Storage/ProjectStateTransaction.cpp
