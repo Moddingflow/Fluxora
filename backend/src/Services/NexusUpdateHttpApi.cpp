@@ -545,7 +545,7 @@ namespace fluxora
             HttpResponse getWithAuth(
                 const std::wstring& pathAndQuery,
                 const NexusModsApiAuthHeader& authHeader,
-                bool allowUnauthorizedRefresh,
+                bool allowUnauthorizedRetry,
                 std::chrono::steady_clock::time_point deadline)
             {
 #ifdef _WIN32
@@ -707,37 +707,52 @@ namespace fluxora
                 if (statusCode == 429)
                 {
                     throw NexusUpdateApiError(
-                        NexusUpdateApiErrorKind::RateLimited,
+                        nexusUpdateApiErrorKindForHttpStatus(statusCode),
                         "NexusMods update request was rate limited.",
                         quota,
                         retryAtFromHeaders(response.headers, quota));
                 }
                 if (statusCode == 401 &&
-                    allowUnauthorizedRefresh &&
-                    authHeader.credentialKind == L"oauth")
+                    allowUnauthorizedRetry)
                 {
-                    const NexusModsApiAuthHeader retryHeader =
-                        auth_.retryApiAuthHeaderAfterUnauthorized(authHeader);
+                    const bool isOAuth = authHeader.credentialKind == L"oauth";
+                    const NexusModsApiAuthHeader retryHeader = isOAuth
+                        ? auth_.retryApiAuthHeaderAfterUnauthorized(authHeader)
+                        : authHeader;
                     if (retryHeader.isAvailable)
                     {
                         logger_.writeOperation(
                             LogLevel::Info,
                             "ModUpdates",
-                            "Nexus request received HTTP 401; retrying once after synchronized OAuth refresh.");
+                            isOAuth
+                                ? "Nexus request received HTTP 401; retrying once after synchronized OAuth refresh."
+                                : "Nexus request received HTTP 401; retrying the current API credential once.");
                         return getWithAuth(pathAndQuery, retryHeader, false, deadline);
                     }
                 }
-                if (statusCode == 401 || statusCode == 403)
+                if (statusCode == 401)
+                {
+                    if (!allowUnauthorizedRetry)
+                    {
+                        static_cast<void>(auth_.retryApiAuthHeaderAfterUnauthorized(authHeader));
+                    }
+                    throw NexusUpdateApiError(
+                        nexusUpdateApiErrorKindForHttpStatus(statusCode),
+                        "NexusMods rejected the current authentication.",
+                        quota);
+                }
+                if (statusCode == 403 || statusCode == 404 || statusCode == 410)
                 {
                     throw NexusUpdateApiError(
-                        NexusUpdateApiErrorKind::AuthenticationUnavailable,
-                        "NexusMods rejected the current authentication.",
+                        nexusUpdateApiErrorKindForHttpStatus(statusCode),
+                        "NexusMods metadata is unavailable for this resource (HTTP " +
+                            std::to_string(statusCode) + ").",
                         quota);
                 }
                 if (statusCode < 200 || statusCode >= 300)
                 {
                     throw NexusUpdateApiError(
-                        NexusUpdateApiErrorKind::Network,
+                        nexusUpdateApiErrorKindForHttpStatus(statusCode),
                         "NexusMods update request returned HTTP " + std::to_string(statusCode) + ".",
                         quota);
                 }
@@ -754,6 +769,24 @@ namespace fluxora
             NexusModsAuthService& auth_;
             std::chrono::milliseconds overallTimeout_;
         };
+    }
+
+    NexusUpdateApiErrorKind nexusUpdateApiErrorKindForHttpStatus(
+        unsigned long statusCode) noexcept
+    {
+        switch (statusCode)
+        {
+        case 401:
+            return NexusUpdateApiErrorKind::AuthenticationUnavailable;
+        case 403:
+        case 404:
+        case 410:
+            return NexusUpdateApiErrorKind::ResourceUnavailable;
+        case 429:
+            return NexusUpdateApiErrorKind::RateLimited;
+        default:
+            return NexusUpdateApiErrorKind::Network;
+        }
     }
 
     std::unique_ptr<NexusUpdateApi> createNexusUpdateApi(

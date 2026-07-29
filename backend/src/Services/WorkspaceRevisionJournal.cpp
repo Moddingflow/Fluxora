@@ -692,36 +692,55 @@ namespace fluxora
             return {unique.begin(), unique.end()};
         }
 
+        template<typename T, typename Key>
+        [[nodiscard]] std::vector<OrderPlacement> placementsFor(
+            const std::vector<T>& items,
+            const std::vector<T>& upserts,
+            Key key)
+        {
+            std::set<std::wstring> changed;
+            for (const auto& item : upserts)
+            {
+                changed.insert(key(item));
+            }
+            std::vector<OrderPlacement> result;
+            for (std::size_t index = 0; index < items.size(); ++index)
+            {
+                const std::wstring orderId = key(items[index]);
+                if (!changed.contains(orderId))
+                {
+                    continue;
+                }
+                OrderPlacement placement;
+                placement.orderId = orderId;
+                if (index > 0)
+                {
+                    placement.afterOrderId = key(items[index - 1]);
+                }
+                else if (index + 1 < items.size())
+                {
+                    const auto unchangedAnchor = std::find_if(
+                        items.begin() + 1,
+                        items.end(),
+                        [&](const T& item)
+                        {
+                            return !changed.contains(key(item));
+                        });
+                    placement.beforeOrderId = unchangedAnchor != items.end()
+                        ? key(*unchangedAnchor)
+                        : key(items[index + 1]);
+                }
+                result.push_back(std::move(placement));
+            }
+            return result;
+        }
+
         template<typename T>
         [[nodiscard]] std::vector<OrderPlacement> placementsFor(
             const std::vector<T>& items,
             const std::vector<T>& upserts)
         {
-            std::set<std::wstring> changed;
-            for (const auto& item : upserts)
-            {
-                changed.insert(item.orderId);
-            }
-            std::vector<OrderPlacement> result;
-            for (std::size_t index = 0; index < items.size(); ++index)
-            {
-                if (!changed.contains(items[index].orderId))
-                {
-                    continue;
-                }
-                OrderPlacement placement;
-                placement.orderId = items[index].orderId;
-                if (index > 0)
-                {
-                    placement.afterOrderId = items[index - 1].orderId;
-                }
-                else if (index + 1 < items.size())
-                {
-                    placement.beforeOrderId = items[index + 1].orderId;
-                }
-                result.push_back(std::move(placement));
-            }
-            return result;
+            return placementsFor(items, upserts, [](const T& item) { return item.orderId; });
         }
 
         template<typename T, typename Key>
@@ -923,6 +942,10 @@ namespace fluxora
             aggregate.downloadsChanged,
             [](const DownloadEntry& item) { return item.id; });
         result.removedIds = finalRemoved(aggregate.downloadsRemoved, state.downloads);
+        result.placements = placementsFor(
+            downloads,
+            result.upserts,
+            [](const DownloadEntry& item) { return item.id; });
         return result;
     }
 }

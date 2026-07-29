@@ -2,6 +2,22 @@ import { useEffect, useMemo, useState, type CSSProperties, type HTMLAttributes, 
 
 import { cx } from './utils';
 
+export type SkeletonProps = HTMLAttributes<HTMLSpanElement>;
+
+export function Skeleton({
+  'aria-hidden': ariaHidden = true,
+  className,
+  ...rest
+}: SkeletonProps) {
+  return (
+    <span
+      aria-hidden={ariaHidden}
+      className={cx('flx-skeleton', className)}
+      {...rest}
+    />
+  );
+}
+
 export interface ProgressBarProps extends HTMLAttributes<HTMLDivElement> {
   height?: number;
   indeterminate?: boolean;

@@ -16,10 +16,11 @@ export type {
 } from './display';
 export { NavItem, Tabs } from './navigation';
 export type { NavItemProps, TabItem, TabsProps } from './navigation';
-export { EmptyState, FacetSpinner, LoadingSplash, ProgressBar } from './feedback';
+export { EmptyState, FacetSpinner, LoadingSplash, ProgressBar, Skeleton } from './feedback';
 export type {
   EmptyStateProps,
   FacetSpinnerProps,
   LoadingSplashProps,
-  ProgressBarProps
+  ProgressBarProps,
+  SkeletonProps
 } from './feedback';

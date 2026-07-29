@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
+#include "FluxoraCore/Services/LodGeneratorIntegrationService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/VfsMountPlan.hpp"
@@ -41,10 +42,11 @@ namespace fluxora
 {
     namespace
     {
+        template <typename TService>
         class ManagedLaunchLeaseGuard final
         {
         public:
-            explicit ManagedLaunchLeaseGuard(BodySlideIntegrationService& service) noexcept
+            explicit ManagedLaunchLeaseGuard(TService& service) noexcept
                 : service_(service)
             {
             }
@@ -68,7 +70,7 @@ namespace fluxora
             }
 
         private:
-            BodySlideIntegrationService& service_;
+            TService& service_;
             std::wstring sessionId_;
         };
 
@@ -818,10 +820,12 @@ namespace fluxora
         Logger& logger,
         ExecutableService& executables,
         BodySlideIntegrationService& bodySlideIntegration,
+        LodGeneratorIntegrationService& lodGeneratorIntegration,
         const BuildPathSettingsService& pathSettings) noexcept
         : logger_(logger),
           executables_(executables),
           bodySlideIntegration_(bodySlideIntegration),
+          lodGeneratorIntegration_(lodGeneratorIntegration),
           pathSettings_(pathSettings)
     {
     }
@@ -861,6 +865,9 @@ namespace fluxora
             executables_.resolveExecutable(configPath, executableId, profileName, additionalArguments);
         const bool isManagedBodySlide =
             resolved.executable.managedToolKind == bodySlideManagedToolKind;
+        const bool isManagedLodGenerator =
+            resolved.executable.managedToolKind == texGenManagedToolKind ||
+            resolved.executable.managedToolKind == dynDoLodManagedToolKind;
         const auto executableResolvedAt = std::chrono::steady_clock::now();
         logger_.writeOperation(
             LogLevel::Info,
@@ -887,12 +894,22 @@ namespace fluxora
                 L"BODYSLIDE_VFS_UNAVAILABLE",
                 "BodySlide requires Fluxora VFS, but VFS support is unavailable on this platform.");
         }
+        if (isManagedLodGenerator)
+        {
+            throw LodGeneratorIntegrationError(
+                L"LOD_GENERATOR_VFS_UNAVAILABLE",
+                "TexGen and DynDOLOD require Fluxora VFS, but VFS support is unavailable on this platform.");
+        }
         throw std::runtime_error(
             "Virtual file system launch failed: " + reason +
             " Rebuild the Windows package with FLUXORA_ENABLE_VFS=ON and FluxoraVfs.dll bundled next to FluxoraCore.dll.");
 #else
         std::optional<BodySlideLaunchPreparation> bodySlidePreparation;
-        ManagedLaunchLeaseGuard managedLease(bodySlideIntegration_);
+        std::optional<LodGeneratorLaunchPreparation> lodGeneratorPreparation;
+        ManagedLaunchLeaseGuard<BodySlideIntegrationService> bodySlideLease(
+            bodySlideIntegration_);
+        ManagedLaunchLeaseGuard<LodGeneratorIntegrationService> lodGeneratorLease(
+            lodGeneratorIntegration_);
         const auto fallbackPlainLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {
             if (isManagedBodySlide)
@@ -900,6 +917,12 @@ namespace fluxora
                 throw BodySlideIntegrationError(
                     L"BODYSLIDE_VFS_UNAVAILABLE",
                     "BodySlide requires a successful VFS launch: " + reason);
+            }
+            if (isManagedLodGenerator)
+            {
+                throw LodGeneratorIntegrationError(
+                    L"LOD_GENERATOR_VFS_UNAVAILABLE",
+                    "TexGen and DynDOLOD require a successful VFS launch: " + reason);
             }
             logger_.write(LogLevel::Warning, "Launching without the virtual file system: " + reason);
             logger_.writeOperation(
@@ -932,6 +955,12 @@ namespace fluxora
                 throw BodySlideIntegrationError(
                     L"BODYSLIDE_VFS_UNAVAILABLE",
                     "BodySlide VFS launch failed: " + reason);
+            }
+            if (isManagedLodGenerator)
+            {
+                throw LodGeneratorIntegrationError(
+                    L"LOD_GENERATOR_VFS_UNAVAILABLE",
+                    "TexGen or DynDOLOD VFS launch failed: " + reason);
             }
             throw std::runtime_error("Virtual file system launch failed: " + reason);
         };
@@ -1002,12 +1031,24 @@ namespace fluxora
                 configPath,
                 resolved,
                 profile);
-            managedLease.arm(bodySlidePreparation->sessionId);
+            bodySlideLease.arm(bodySlidePreparation->sessionId);
+        }
+        else if (isManagedLodGenerator)
+        {
+            lodGeneratorPreparation = lodGeneratorIntegration_.prepareLaunch(
+                configPath,
+                resolved,
+                profile);
+            resolved.commandLine = lodGeneratorPreparation->commandLine;
+            lodGeneratorLease.arm(lodGeneratorPreparation->sessionId);
         }
         std::vector<VfsActiveMod> activeMods;
-        std::vector<ExecutableLaunchMod>& launchMods = bodySlidePreparation.has_value()
+        std::vector<ExecutableLaunchMod>& launchMods =
+            bodySlidePreparation.has_value()
             ? bodySlidePreparation->activeProfileMods
-            : resolved.activeProfileMods;
+            : lodGeneratorPreparation.has_value()
+                ? lodGeneratorPreparation->activeProfileMods
+                : resolved.activeProfileMods;
         activeMods.reserve(launchMods.size());
         for (ExecutableLaunchMod& mod : launchMods)
         {
@@ -1101,6 +1142,12 @@ namespace fluxora
                 mounts,
                 resolved,
                 *bodySlidePreparation);
+        }
+        if (lodGeneratorPreparation.has_value())
+        {
+            lodGeneratorIntegration_.applyVfsPolicy(
+                mounts,
+                *lodGeneratorPreparation);
         }
         const auto finalMountsReadyAt = std::chrono::steady_clock::now();
 
@@ -1307,7 +1354,24 @@ namespace fluxora
                 bodySlideIntegration_.bindProcess(
                     bodySlidePreparation->sessionId,
                     static_cast<std::uint32_t>(processId));
-                managedLease.release();
+                bodySlideLease.release();
+            }
+            catch (...)
+            {
+                TerminateProcess(processInformation.hProcess, ERROR_PROCESS_ABORTED);
+                CloseHandle(processInformation.hThread);
+                CloseHandle(processInformation.hProcess);
+                throw;
+            }
+        }
+        else if (lodGeneratorPreparation.has_value())
+        {
+            try
+            {
+                lodGeneratorIntegration_.bindProcess(
+                    lodGeneratorPreparation->sessionId,
+                    static_cast<std::uint32_t>(processId));
+                lodGeneratorLease.release();
             }
             catch (...)
             {
@@ -1374,6 +1438,14 @@ namespace fluxora
             result.outputMod = bodySlidePreparation->outputMod;
             result.configurationStatus = bodySlidePreparation->configurationStatus;
             result.warnings = bodySlidePreparation->warnings;
+        }
+        else if (lodGeneratorPreparation.has_value())
+        {
+            result.managedSessionId = lodGeneratorPreparation->sessionId;
+            result.managedToolKind = lodGeneratorPreparation->managedToolKind;
+            result.outputMod = lodGeneratorPreparation->outputMod;
+            result.configurationStatus = lodGeneratorPreparation->configurationStatus;
+            result.warnings = lodGeneratorPreparation->warnings;
         }
         return result;
 #endif

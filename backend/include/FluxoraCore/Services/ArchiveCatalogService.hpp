@@ -58,6 +58,7 @@ namespace fluxora
             const std::filesystem::path& archivePath) const;
 
         void removeArchiveSidecar(const std::filesystem::path& archivePath) const;
+        void forgetArchiveIndex(const std::filesystem::path& archivePath) const;
 
         [[nodiscard]] static std::filesystem::path sidecarPathFor(
             const std::filesystem::path& archivePath);

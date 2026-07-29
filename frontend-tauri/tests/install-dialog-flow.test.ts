@@ -123,7 +123,7 @@ describe('install dialog flow', () => {
     expect(fomodBranch).toContain('attachBackgroundInstallPlan');
   });
 
-  it('keeps a standard install skeleton until the identity plan is ready', () => {
+  it('keeps a standard install skeleton until identity and placement are both ready', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const detectionTransition = sliceBetween(
       app,
@@ -135,11 +135,17 @@ describe('install dialog flow', () => {
       'const watchInstallPlan =',
       '  const analyzeInstallLayout = async'
     );
-
-    expect(detectionTransition).toContain(
-      "phase: current.installPlan ? 'options' : 'detecting'"
+    const standardReadyWatcher = sliceBetween(
+      app,
+      'const watchStandardInstallReady =',
+      '  const planInstallSource ='
     );
-    expect(planWatcher).toContain('attachInstallPlanForDisplay(current, plan)');
+
+    expect(detectionTransition).toContain("phase: 'detecting'");
+    expect(planWatcher).toContain('attachBackgroundInstallPlan(current, plan)');
+    expect(standardReadyWatcher).toContain('Promise.all([planPromise, layoutPromise])');
+    expect(standardReadyWatcher).toContain("phase: 'options'");
+    expect(standardReadyWatcher).toContain('layoutPreview');
   });
 
   it('shows a preparation error when the identity plan fails', () => {
@@ -231,7 +237,7 @@ describe('install dialog flow', () => {
     expect(submitInstallDialog).toContain('нажмите «Установить» ещё раз');
   });
 
-  it('keeps Details usable before the background placement preview resolves', () => {
+  it('reveals the placement editor only after the atomic preview resolves', () => {
     const dialog = readText(
       'frontend-tauri',
       'src',
@@ -246,9 +252,10 @@ describe('install dialog flow', () => {
       'const dialogTitle ='
     );
 
-    expect(detailsStep).toContain("className={`archive-tree${preview ? '' : ' archive-tree--pending'}`}");
-    expect(detailsStep).toContain("<small>archive</small>");
-    expect(detailsStep).not.toContain('return null');
+    expect(detailsStep).toContain('return preview ? (');
+    expect(detailsStep).toContain('<InstallPlacementEditor');
+    expect(detailsStep).toContain(': null;');
+    expect(detailsStep).not.toContain('<small>archive</small>');
   });
 
   it('moves existing mod handling into a dedicated install dialog phase', () => {
@@ -314,6 +321,10 @@ describe('install dialog flow', () => {
     );
     expect(submitInstallDialog).toContain("newNamePolicy: 'first-free-copy-suffix' as const");
     expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(1);
+    expect(submitInstallDialog).toContain(
+      'JSON.stringify(submissionDialog.placementEdits)'
+    );
+    expect(submitInstallDialog).toContain('placementOverridesJson,');
     expect(submitInstallDialog).toContain('window.fluxora.installs.submit(');
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('mods.listInstalled');
@@ -412,7 +423,7 @@ describe('install dialog flow', () => {
     expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(1);
   });
 
-  it('reopens needs-review rows with persisted FOMOD and placement decisions', () => {
+  it('reopens interrupted installs automatically without a review status in the mod row', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const progressLabel = readText(
       'frontend-tauri',
@@ -424,7 +435,7 @@ describe('install dialog flow', () => {
     );
     const reopen = sliceBetween(
       app,
-      'const reopenInstallForReview',
+      'function reopenInstallForReview',
       '  const resolveInstallDialogPlan'
     );
     const detectionTransition = sliceBetween(
@@ -434,8 +445,12 @@ describe('install dialog flow', () => {
     );
 
     expect(progressLabel).toContain("progress.state === 'needsReview'");
-    expect(progressLabel).toContain('onNeedsReview(progress.operation!)');
-    expect(app).toContain('onNeedsReview={reopenInstallForReview}');
+    expect(progressLabel).toContain('return null');
+    expect(progressLabel).not.toContain('Требуется проверка');
+    expect(progressLabel).not.toContain('onNeedsReview');
+    expect(app).toContain("operation.state === 'needsReview'");
+    expect(app).toContain('reopenInstallForReview(operation)');
+    expect(app).not.toContain('onNeedsReview={reopenInstallForReview}');
     expect(reopen).toContain('operation.selectedOptionIds ?? []');
     expect(reopen).toContain('operation.manualDecisions ?? []');
     expect(reopen).toContain("JSON.parse(operation.placementOverridesJson || '[]')");

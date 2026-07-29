@@ -220,39 +220,9 @@ namespace fluxora
             return decisions;
         }
 
-        std::vector<PlacementOverride> parsePlacementOverrides(std::wstring_view json)
+        PlacementEdits parsePlacementOverrides(std::wstring_view json)
         {
-            const JsonValue root = JsonReader::parse(json.empty() ? L"[]" : json);
-            if (!root.isArray())
-            {
-                throw std::invalid_argument("Expected persisted placement overrides.");
-            }
-            std::vector<PlacementOverride> overrides;
-            for (const JsonValue& item : root.asArray())
-            {
-                if (!item.isObject())
-                {
-                    throw std::invalid_argument("Persisted placement override must be an object.");
-                }
-                const std::wstring sourcePath = stringField(item, L"sourcePath");
-                const std::wstring target = stringField(item, L"target");
-                if (sourcePath.empty() || target.empty())
-                {
-                    throw std::invalid_argument("Persisted placement override is incomplete.");
-                }
-                std::optional<GameRelativePath> targetRelativePath;
-                const std::wstring relative = stringField(item, L"targetRelativePath");
-                if (!relative.empty())
-                {
-                    targetRelativePath = GameRelativePath::parse(relative).valueOrThrow();
-                }
-                overrides.push_back(PlacementOverride{
-                    GameRelativePath::parse(sourcePath).valueOrThrow(),
-                    parsePlacementTarget(target).valueOrThrow(),
-                    std::move(targetRelativePath)
-                });
-            }
-            return overrides;
+            return parsePlacementEditsJson(json.empty() ? L"[]" : json);
         }
 
         std::optional<ModIdentityInstallSelection> parseIdentitySelection(std::wstring_view json)
@@ -323,7 +293,8 @@ namespace fluxora
             request.modName = record.targetFolder;
             request.existingModMode = static_cast<ExistingModInstallMode>(record.existingModMode);
             request.selectedOptionIds = parseStringArray(record.selectedOptionIdsJson);
-            request.placementOverrides = parsePlacementOverrides(record.placementOverridesJson);
+            request.placementEdits = parsePlacementOverrides(record.placementOverridesJson);
+            request.placementOverrides = request.placementEdits.files;
             request.identitySelection = parseIdentitySelection(record.identityPlanJson);
             request.profileName = record.profileName;
             request.fomodContextId = stringField(resume, L"fomodContextId");
@@ -418,6 +389,20 @@ namespace fluxora
             request.operationId = generatedOperationId();
         }
         request.sourcePath = normalizedSourcePath(request.sourcePath);
+        const PlacementEdits persistedEdits = parsePlacementOverrides(request.placementOverridesJson);
+        if (!persistedEdits.files.empty() ||
+            !persistedEdits.directories.empty() ||
+            !persistedEdits.excludedSourcePaths.empty())
+        {
+            request.placementEdits = persistedEdits;
+        }
+        else if (request.placementEdits.files.empty() &&
+                 request.placementEdits.directories.empty() &&
+                 request.placementEdits.excludedSourcePaths.empty())
+        {
+            request.placementEdits.files = request.placementOverrides;
+        }
+        request.placementOverrides = request.placementEdits.files;
 
         for (const InstallOperationRecord& existing :
              InstallOperationStore::list(request.projectDirectory, false))
@@ -690,7 +675,7 @@ namespace fluxora
                         context->request.sourcePath,
                         context->request.modName,
                         context->request.existingModMode,
-                        context->request.placementOverrides,
+                        context->request.placementEdits,
                         identity,
                         context->request.profileName,
                         context->request.modOrderTargetIndex,
@@ -717,7 +702,7 @@ namespace fluxora
                         context->request.sourcePath,
                         context->request.modName,
                         context->request.existingModMode,
-                        context->request.placementOverrides,
+                        context->request.placementEdits,
                         identity,
                         context->request.profileName,
                         context->request.modOrderTargetIndex,
@@ -771,6 +756,19 @@ namespace fluxora
                 false,
                 L"install.cancelled",
                 L"Install operation was cancelled.");
+        }
+        catch (const InstallTargetBusyError& exception)
+        {
+            publish(
+                context,
+                L"needsReview",
+                L"needsReview",
+                100,
+                false,
+                L"install.targetBusy",
+                std::wstring(
+                    exception.what(),
+                    exception.what() + std::char_traits<char>::length(exception.what())));
         }
         catch (const std::invalid_argument& exception)
         {

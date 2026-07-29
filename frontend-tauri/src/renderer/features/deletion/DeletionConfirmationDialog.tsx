@@ -3,7 +3,7 @@ import { useEffect, useRef, type CSSProperties } from 'react';
 
 import trashIcon from '../../../../../Icons/trash.svg';
 
-export type DeletionConfirmationKind = 'mod' | 'build' | 'download';
+export type DeletionConfirmationKind = 'mod' | 'separator' | 'build' | 'download';
 
 export interface DeletionConfirmationDialogProps {
   description?: string;
@@ -18,18 +18,21 @@ type DeletionConfirmationIconStyle = CSSProperties & { '--delete-confirmation-ic
 
 const titleByKind: Record<DeletionConfirmationKind, string> = {
   mod: 'Удаление мода',
+  separator: 'Удаление разделителя',
   build: 'Удаление сборки',
   download: 'Удаление файла'
 };
 
 const pluralTitleByKind: Record<DeletionConfirmationKind, string> = {
   mod: 'Удаление модов',
+  separator: 'Удаление разделителей',
   build: 'Удаление сборок',
   download: 'Удаление файлов'
 };
 
 const subjectFormsByKind: Record<DeletionConfirmationKind, readonly [string, string, string]> = {
   mod: ['мод', 'мода', 'модов'],
+  separator: ['разделитель', 'разделителя', 'разделителей'],
   build: ['сборка', 'сборки', 'сборок'],
   download: ['файл', 'файла', 'файлов']
 };

@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
 #include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
+#include "FluxoraCore/Services/LodGeneratorIntegrationService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/InstallOperationService.hpp"
@@ -55,6 +56,7 @@ namespace fluxora
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
           bodySlideIntegration_(std::make_unique<BodySlideIntegrationService>(*logger_, *buildPathSettings_)),
+          lodGeneratorIntegration_(std::make_unique<LodGeneratorIntegrationService>(*logger_, *buildPathSettings_)),
           templates_(std::make_unique<TemplateService>(*logger_)),
           projects_(std::make_unique<ProjectService>(
               *logger_,
@@ -66,6 +68,7 @@ namespace fluxora
               *logger_,
               *executables_,
               *bodySlideIntegration_,
+              *lodGeneratorIntegration_,
               *buildPathSettings_)),
           grassCache_(std::make_unique<GrassCacheService>(
               *logger_,
@@ -109,6 +112,7 @@ namespace fluxora
         executableIcons_->initialize();
         executables_->initialize();
         bodySlideIntegration_->initialize();
+        lodGeneratorIntegration_->initialize();
         templates_->initialize();
         projects_->initialize();
         fluxPacks_->initialize();
@@ -133,6 +137,7 @@ namespace fluxora
         fluxPacks_->shutdown();
         projects_->shutdown();
         templates_->shutdown();
+        lodGeneratorIntegration_->shutdown();
         bodySlideIntegration_->shutdown();
         executables_->shutdown();
         executableIcons_->shutdown();
@@ -228,6 +233,11 @@ namespace fluxora
     BodySlideIntegrationService& Core::bodySlideIntegration() noexcept
     {
         return *bodySlideIntegration_;
+    }
+
+    LodGeneratorIntegrationService& Core::lodGeneratorIntegration() noexcept
+    {
+        return *lodGeneratorIntegration_;
     }
 
     FluxPackService& Core::fluxPacks() noexcept

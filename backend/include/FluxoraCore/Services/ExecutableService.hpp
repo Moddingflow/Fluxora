@@ -37,6 +37,16 @@ namespace fluxora
         std::wstring provider;
     };
 
+    struct ManagedLaunchCompletion
+    {
+        std::wstring sessionId;
+        std::wstring outcome;
+        ManagedOutputMod outputMod;
+        bool finalized{false};
+        bool deferred{false};
+        std::vector<std::wstring> warnings;
+    };
+
     struct GameExecutableLaunchResult
     {
         GameExecutable executable;

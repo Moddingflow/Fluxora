@@ -517,6 +517,13 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* modPath);
 
+    FLUXORA_CORE_API int fluxora_rename_installed_mod(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* newName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_create_empty_mod(
         const wchar_t* projectDirectory,
         const wchar_t* modName,
@@ -767,6 +774,13 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath);
 
+    FLUXORA_CORE_API int fluxora_rename_download(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* newBaseName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_cancel_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath);
@@ -849,8 +863,9 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // placementOverridesJson is a JSON array of objects:
-    // { "sourcePath": "archive/file.ext", "target": "data|gameRoot", "targetRelativePath": "folder/file.ext" }.
+    // placementOverridesJson accepts either the legacy file-override array or a
+    // FluxoraPlacementEditsV2 object containing files, directories, and
+    // excludedSourcePaths.
     FLUXORA_CORE_API int fluxora_install_download_with_layout(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -946,6 +961,16 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
         int existingModMode,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Additive V2 entry point. placementEditsJson accepts either the legacy
+    // file-override array or FluxoraPlacementEditsV2.
+    FLUXORA_CORE_API int fluxora_analyze_download_content_layout_with_edits(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        int existingModMode,
+        const wchar_t* placementEditsJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

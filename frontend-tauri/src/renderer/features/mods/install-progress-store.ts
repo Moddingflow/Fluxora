@@ -47,7 +47,7 @@ export const installProgressLabel = (operation: FluxoraInstallOperation): string
     case 'finalizing': return 'Применение';
     case 'recovering': return 'Восстановление';
     case 'cancelled': return 'Отменено';
-    case 'needsReview': return 'Требуется проверка';
+    case 'needsReview': return '';
     case 'failed': return 'Ошибка установки';
     case 'completed': return operation.result?.version || 'Установлен';
   }

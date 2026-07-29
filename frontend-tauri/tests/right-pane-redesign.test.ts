@@ -112,7 +112,8 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('prepareWorkspaceIndexes(opened.projectDirectory');
     expect(app).not.toContain('const rightPaneTabCount');
     expect(app).not.toContain('const rightPaneSummary');
-    expect(rightPaneTabsHeader).toContain('data-active-index={activeRightPaneTabIndex}');
+    expect(rightPaneTabsHeader).not.toContain('data-active-index');
+    expect(rightPaneTabsHeader).toContain('aria-selected={activeRightPane === id}');
     expect(rightPaneTabsHeader).not.toContain('<h3>');
     expect(rightPaneTabsHeader).not.toContain('activeRightPaneSummary');
     expect(rightPaneTabsHeader).not.toContain('<strong>{count}</strong>');
@@ -190,13 +191,20 @@ describe('right pane redesign', () => {
 
   it('keeps the compact right pane styling aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const rightPaneTabsStyles = styles.match(/\.right-pane-tabs \{[\s\S]*?\n\}/)?.[0] ?? '';
+    const activeRightPaneTabStyles =
+      styles.match(/\.right-pane-tabs button\[data-active="true"\] \{[\s\S]*?\n\}/)?.[0] ?? '';
 
     expect(styles).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
-    expect(styles).toContain('.right-pane-tabs::before');
-    expect(styles).toContain('.right-pane-tabs[data-active-index="1"]::before');
-    expect(styles).toContain('transform: translateX(calc(100% + 4px));');
+    expect(rightPaneTabsStyles).toContain('justify-self: stretch;');
+    expect(rightPaneTabsStyles).toContain('width: 100%;');
+    expect(styles).not.toContain('.right-pane-tabs::before');
+    expect(styles).not.toContain('data-active-index');
     expect(styles).toContain('.right-pane-tabs button[data-active="true"]');
-    expect(styles).toContain('color: #fff;');
+    expect(activeRightPaneTabStyles).toContain('color: #fff;');
+    expect(activeRightPaneTabStyles).toContain('background-color: var(--flx-accent-soft);');
+    expect(activeRightPaneTabStyles).not.toContain('box-shadow');
+    expect(styles).toContain('background-color 150ms ease;');
     expect(styles).not.toContain('.right-pane-tabs strong');
     expect(styles).toContain('@keyframes rightPaneContentIn');
     expect(styles).toContain('.right-pane-content--plugins');
@@ -232,6 +240,6 @@ describe('right pane redesign', () => {
     expect(app).toContain('download-table--skeleton');
     expect(app).toContain("downloadsBusyLabel && downloadsWorkspace.loadState !== 'loading'");
     expect(styles).toContain('.download-row--skeleton');
-    expect(styles).toContain('@keyframes downloadSkeletonSweep');
+    expect(styles).toContain('.download-progress__fill-skeleton.flx-skeleton');
   });
 });

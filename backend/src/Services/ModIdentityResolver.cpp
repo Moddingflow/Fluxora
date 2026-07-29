@@ -1411,16 +1411,28 @@ namespace fluxora
             resolution = resolve(requestedNameInput, candidates);
             if (resolution.matchedTarget.has_value())
             {
+                const auto matchedCandidate = std::find_if(
+                    candidates.begin(),
+                    candidates.end(),
+                    [&](const ModIdentityCandidate& candidate)
+                    {
+                        return sameText(
+                            candidate.target.modUuid,
+                            resolution.matchedTarget->modUuid);
+                    });
                 const std::wstring requestedKey = normalizedIdentityText(
                     requestedInstallName,
                     false);
-                exactRequestedNameMatched =
+                const bool exactRequestedName =
                     requestedKey == normalizedIdentityText(
                         resolution.matchedTarget->displayName,
                         false) ||
                     requestedKey == normalizedIdentityText(
                         resolution.matchedTarget->folderName,
                         false);
+                exactRequestedNameMatched = exactRequestedName &&
+                    (matchedCandidate == candidates.end() ||
+                     !conflictsWithStableSource(request.input.source, matchedCandidate->source));
             }
         }
 

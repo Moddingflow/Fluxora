@@ -9,6 +9,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
 #include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
+#include "FluxoraCore/Services/LodGeneratorIntegrationService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
@@ -1373,6 +1374,21 @@ namespace
         return L"unknown";
     }
 
+    std::wstring contentLayoutAssessmentStatusName(
+        fluxora::ContentLayoutAssessmentStatus status)
+    {
+        switch (status)
+        {
+        case fluxora::ContentLayoutAssessmentStatus::Ready:
+            return L"ready";
+        case fluxora::ContentLayoutAssessmentStatus::Warning:
+            return L"warning";
+        case fluxora::ContentLayoutAssessmentStatus::Blocked:
+            return L"blocked";
+        }
+        return L"blocked";
+    }
+
     std::wstring contentAreaName(fluxora::ContentArea area)
     {
         switch (area)
@@ -1461,6 +1477,7 @@ namespace
         writer.field(L"classification", contentLayoutClassificationName(entry.classification));
         writer.field(L"explanation", entry.explanation);
         writer.field(L"manualOverrideAllowed", entry.manualOverrideAllowed);
+        writer.field(L"included", entry.included);
         writer.key(L"safeManualTargets").beginArray();
         for (fluxora::PlacementTarget target : entry.safeManualTargets)
         {
@@ -1503,6 +1520,15 @@ namespace
             writePlacementPlanEntry(writer, entry);
         }
         writer.endArray();
+        writer.key(L"directories").beginArray();
+        for (const fluxora::PlacementDirectory& directory : plan.directories)
+        {
+            writer.beginObject();
+            writer.field(L"target", placementTargetName(directory.target));
+            writer.field(L"targetRelativePath", directory.targetRelativePath.path().generic_wstring());
+            writer.endObject();
+        }
+        writer.endArray();
         writer.key(L"validationFindings").beginArray();
         for (const fluxora::ValidationFinding& finding : plan.validationFindings)
         {
@@ -1511,6 +1537,16 @@ namespace
         writer.endArray();
         writer.field(L"explanationSummary", plan.userExplanation.summary);
         writer.stringArray(L"explanationDetails", plan.userExplanation.details);
+        writer.field(L"archiveContentFingerprint", plan.archiveContentFingerprint);
+        writer.field(L"editFingerprint", plan.editFingerprint);
+        writer.field(L"placementFingerprint", plan.placementFingerprint);
+        if (plan.assessment.has_value())
+        {
+            writer.key(L"assessment").beginObject();
+            writer.field(L"status", contentLayoutAssessmentStatusName(plan.assessment->status));
+            writer.stringArray(L"reasonCodes", plan.assessment->reasonCodes);
+            writer.endObject();
+        }
         writer.endObject();
         return writer.str();
     }
@@ -2735,6 +2771,22 @@ namespace
         }
         writer.endArray();
         writer.stringArray(L"removedIds", delta.removedIds);
+        writer.key(L"placements").beginArray();
+        for (const auto& placement : delta.placements)
+        {
+            writer.beginObject();
+            writer.field(L"orderId", placement.orderId);
+            if (!placement.beforeOrderId.empty())
+            {
+                writer.field(L"beforeOrderId", placement.beforeOrderId);
+            }
+            if (!placement.afterOrderId.empty())
+            {
+                writer.field(L"afterOrderId", placement.afterOrderId);
+            }
+            writer.endObject();
+        }
+        writer.endArray();
         writer.field(L"reason", delta.reason);
         writer.field(L"fullResyncRequired", delta.fullResyncRequired);
         writer.endObject();
@@ -2850,64 +2902,14 @@ namespace
         return writer.str();
     }
 
+    fluxora::PlacementEdits parsePlacementEditsPayload(const wchar_t* json)
+    {
+        return fluxora::parsePlacementEditsJson(isBlank(json) ? L"[]" : json);
+    }
+
     std::vector<fluxora::PlacementOverride> parsePlacementOverridesJson(const wchar_t* json)
     {
-        if (isBlank(json))
-        {
-            return {};
-        }
-
-        const fluxora::JsonValue root = fluxora::JsonReader::parse(json);
-        if (!root.isArray())
-        {
-            throw std::invalid_argument("Expected a JSON placement override array.");
-        }
-
-        std::vector<fluxora::PlacementOverride> values;
-        for (const fluxora::JsonValue& item : root.asArray())
-        {
-            if (!item.isObject())
-            {
-                throw std::invalid_argument("Placement override entry must be an object.");
-            }
-
-            const auto readRequiredString = [&item](std::wstring_view field) -> std::wstring
-            {
-                const fluxora::JsonValue* value = item.find(field);
-                if (value == nullptr || !value->isString())
-                {
-                    throw std::invalid_argument("Placement override has a field with the wrong type.");
-                }
-
-                return value->asString();
-            };
-
-            const std::wstring sourcePath = readRequiredString(L"sourcePath");
-            const std::wstring target = readRequiredString(L"target");
-
-            std::optional<fluxora::GameRelativePath> targetRelativePath;
-            if (const fluxora::JsonValue* value = item.find(L"targetRelativePath"))
-            {
-                if (!value->isString())
-                {
-                    throw std::invalid_argument("Placement override targetRelativePath must be a string.");
-                }
-
-                const std::wstring rawTargetRelativePath = value->asString();
-                if (!rawTargetRelativePath.empty())
-                {
-                    targetRelativePath = fluxora::GameRelativePath::parse(rawTargetRelativePath).valueOrThrow();
-                }
-            }
-
-            values.push_back(fluxora::PlacementOverride{
-                fluxora::GameRelativePath::parse(sourcePath).valueOrThrow(),
-                fluxora::parsePlacementTarget(target).valueOrThrow(),
-                std::move(targetRelativePath)
-            });
-        }
-
-        return values;
+        return parsePlacementEditsPayload(json).files;
     }
 
     std::vector<fluxora::GameExecutable> parseGameExecutablesJson(const wchar_t* json)
@@ -3540,6 +3542,13 @@ namespace
             lastError = L"bodyslide:" + bodySlideError->code() + L":" +
                 messageToWide(std::string_view(message, std::strlen(message)));
         }
+        else if (const auto* lodGeneratorError =
+                     dynamic_cast<const fluxora::LodGeneratorIntegrationError*>(&exception);
+                 lodGeneratorError != nullptr)
+        {
+            lastError = L"lod-generator:" + lodGeneratorError->code() + L":" +
+                messageToWide(std::string_view(message, std::strlen(message)));
+        }
         else
         {
             lastError = isBadAllocation
@@ -3602,8 +3611,8 @@ namespace
                 return FluxoraCoreResultInvalidArgument;
             }
 
-            const std::vector<fluxora::PlacementOverride> placementOverrides =
-                parsePlacementOverridesJson(placementOverridesJson);
+            const fluxora::PlacementEdits placementEdits =
+                parsePlacementEditsPayload(placementOverridesJson);
             logBridge(fluxora::LogLevel::Info, "fluxora_install_download started.");
             logOperation(
                 fluxora::LogLevel::Info,
@@ -3612,15 +3621,18 @@ namespace
                     pathForLog(std::filesystem::path(projectDirectory)) + "\", downloadPath=\"" +
                     pathForLog(std::filesystem::path(downloadPath)) + "\", modName=\"" +
                     textForLog(modName) + "\", existingModMode=\"" +
-                    existingModInstallModeForLog(mode) + "\", placementOverrideCount=" +
-                    std::to_string(placementOverrides.size()));
+                    existingModInstallModeForLog(mode) + "\", placementEditCount=" +
+                    std::to_string(
+                        placementEdits.files.size() +
+                        placementEdits.directories.size() +
+                        placementEdits.excludedSourcePaths.size()));
             const std::wstring json = serializeInstalledMod(
                 core().downloads().installDownload(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(downloadPath),
                     modName,
                     mode,
-                    placementOverrides,
+                    placementEdits,
                     identitySelection,
                     isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
                     modOrderTargetIndex,
@@ -4378,8 +4390,8 @@ namespace
                 return FluxoraCoreResultInvalidArgument;
             }
 
-            const std::vector<fluxora::PlacementOverride> placementOverrides =
-                parsePlacementOverridesJson(placementOverridesJson);
+            const fluxora::PlacementEdits placementEdits =
+                parsePlacementEditsPayload(placementOverridesJson);
             logBridge(fluxora::LogLevel::Info, "fluxora_install_archive started.");
             logOperation(
                 fluxora::LogLevel::Info,
@@ -4388,15 +4400,18 @@ namespace
                     pathForLog(std::filesystem::path(projectDirectory)) + "\", archivePath=\"" +
                     pathForLog(std::filesystem::path(archivePath)) + "\", modName=\"" +
                     textForLog(modName) + "\", existingModMode=\"" +
-                    existingModInstallModeForLog(mode) + "\", placementOverrideCount=" +
-                    std::to_string(placementOverrides.size()));
+                    existingModInstallModeForLog(mode) + "\", placementEditCount=" +
+                    std::to_string(
+                        placementEdits.files.size() +
+                        placementEdits.directories.size() +
+                        placementEdits.excludedSourcePaths.size()));
             const std::wstring json = serializeInstalledMod(
                 core().downloads().installArchive(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(archivePath),
                     modName,
                     mode,
-                    placementOverrides,
+                    placementEdits,
                     identitySelection,
                     isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
                     modOrderTargetIndex,
@@ -4547,7 +4562,8 @@ extern "C"
             request.modName = modName;
             request.existingModMode = mode;
             request.selectedOptionIds = parseStringArrayJson(selectedOptionIdsJson);
-            request.placementOverrides = parsePlacementOverridesJson(placementOverridesJson);
+            request.placementEdits = parsePlacementEditsPayload(placementOverridesJson);
+            request.placementOverrides = request.placementEdits.files;
             request.profileName = isBlank(profileName) ? std::wstring{} : std::wstring(profileName);
             request.fomodContextId = isBlank(fomodContextId) ? std::wstring{} : std::wstring(fomodContextId);
             request.manualDecisions = parseFomodManualDecisionsJson(manualDecisionsJson);
@@ -5661,10 +5677,16 @@ extern "C"
                 lastError = L"Managed launch session id is required.";
                 return FluxoraCoreResultInvalidArgument;
             }
+            const std::wstring_view completionOutcome =
+                isBlank(outcome) ? std::wstring_view(L"completed") : std::wstring_view(outcome);
             const fluxora::ManagedLaunchCompletion completion =
-                core().bodySlideIntegration().completeManagedLaunch(
+                core().lodGeneratorIntegration().ownsSession(sessionId)
+                ? core().lodGeneratorIntegration().completeManagedLaunch(
                     sessionId,
-                    isBlank(outcome) ? L"completed" : std::wstring_view(outcome));
+                    completionOutcome)
+                : core().bodySlideIntegration().completeManagedLaunch(
+                    sessionId,
+                    completionOutcome);
             return writeToBuffer(
                 serializeManagedLaunchCompletion(completion),
                 jsonBuffer,
@@ -6422,6 +6444,44 @@ extern "C"
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Delete installed mod", false);
             logOperation(fluxora::LogLevel::Info, "Mods", "Delete installed mod completed.");
             return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_rename_installed_mod(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* newName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath) || isBlank(newName))
+            {
+                lastError = L"Project directory, mod path, and new name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_rename_installed_mod started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Mods",
+                std::string("Rename installed mod requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", modPath=\"" +
+                    pathForLog(std::filesystem::path(modPath)) + "\", newName=\"" +
+                    textForLog(newName) + "\"");
+            const std::wstring json = serializeInstalledModEntry(
+                core().mods().renameInstalledMod(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(modPath),
+                    newName));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Rename installed mod", true);
+            logOperation(fluxora::LogLevel::Info, "Mods", "Rename installed mod completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -7560,6 +7620,43 @@ extern "C"
         }
     }
 
+    int fluxora_rename_download(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* newBaseName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(newBaseName))
+            {
+                lastError = L"Project directory, download path, and new base name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_rename_download started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Downloads",
+                std::string("Rename download requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", downloadPath=\"" +
+                    pathForLog(std::filesystem::path(downloadPath)) + "\", newBaseName=\"" +
+                    textForLog(newBaseName) + "\"");
+            const std::wstring json = serializeDownload(
+                core().downloads().renameDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    newBaseName));
+            logOperation(fluxora::LogLevel::Info, "Downloads", "Rename download completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_cancel_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath)
@@ -8185,6 +8282,23 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_analyze_download_content_layout_with_edits(
+            projectDirectory,
+            downloadPath,
+            existingModMode,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_analyze_download_content_layout_with_edits(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        int existingModMode,
+        const wchar_t* placementEditsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(projectDirectory) || isBlank(downloadPath))
@@ -8212,7 +8326,9 @@ extern "C"
                 core().downloads().analyzeDownloadContentLayout(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(downloadPath),
-                    mode));
+                    mode,
+                    fluxora::parsePlacementEditsJson(
+                        isBlank(placementEditsJson) ? L"[]" : placementEditsJson)));
             logOperation(fluxora::LogLevel::Info, "Downloads", "Analyze download content layout completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }

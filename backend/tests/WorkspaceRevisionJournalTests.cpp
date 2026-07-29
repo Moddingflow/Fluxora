@@ -244,4 +244,44 @@ TEST(WorkspaceRevisionJournalTests, HandlesFiveThousandEntriesAndDownloadChanges
     EXPECT_EQ(changedDownloads.upserts.front().progressPercent, 55);
     ASSERT_EQ(changedDownloads.removedIds.size(), 1u);
     EXPECT_EQ(changedDownloads.removedIds.front(), L"two");
+
+    std::vector<fluxora::DownloadEntry> reorderedDownloads{
+        download(L"replacement", 100, L"completed"),
+        downloads.front()};
+    const auto reordered = journal.captureDownloads(
+        project.path(),
+        changedDownloads.revision,
+        L"download",
+        L"replacement-completed",
+        reorderedDownloads);
+    ASSERT_EQ(reordered.upserts.size(), 1u);
+    EXPECT_EQ(reordered.upserts.front().id, L"replacement");
+    ASSERT_EQ(reordered.placements.size(), 1u);
+    EXPECT_EQ(reordered.placements.front().orderId, L"replacement");
+    EXPECT_EQ(reordered.placements.front().beforeOrderId, L"one");
+}
+
+TEST(WorkspaceRevisionJournalTests, DownloadPlacementMovesAChangedExistingArchiveToTheFront)
+{
+    fluxora::tests::TempDirectory project;
+    fluxora::WorkspaceRevisionJournal journal;
+    const auto initial = journal.captureDownloads(
+        project.path(),
+        L"",
+        L"download",
+        L"initial",
+        {download(L"newer", 100, L"completed"), download(L"replacement", 100, L"completed")});
+
+    const auto changed = journal.captureDownloads(
+        project.path(),
+        initial.revision,
+        L"download",
+        L"replacement-completed",
+        {download(L"replacement", 99, L"completed"), download(L"newer", 100, L"completed")});
+
+    ASSERT_EQ(changed.upserts.size(), 1u);
+    EXPECT_EQ(changed.upserts.front().id, L"replacement");
+    ASSERT_EQ(changed.placements.size(), 1u);
+    EXPECT_EQ(changed.placements.front().orderId, L"replacement");
+    EXPECT_EQ(changed.placements.front().beforeOrderId, L"newer");
 }

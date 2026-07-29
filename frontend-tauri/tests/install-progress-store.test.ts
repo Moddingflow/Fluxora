@@ -93,7 +93,7 @@ describe('install progress store', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('publishes terminal review state and clears one key without disturbing others', () => {
+  it('keeps terminal review state internal and clears one key without disturbing others', () => {
     const store = createInstallProgressStore();
     store.setOperation(operation('first', 'needsReview', 100));
     store.setOperation(operation('second', 'queued'));
@@ -106,8 +106,6 @@ describe('install progress store', () => {
     expect(listener).toHaveBeenCalledOnce();
     expect(store.getSnapshot('first').operation).toBeNull();
     expect(store.getSnapshot('second')).toBe(secondSnapshot);
-    expect(installProgressLabel(operation('first', 'needsReview'))).toBe(
-      'Требуется проверка'
-    );
+    expect(installProgressLabel(operation('first', 'needsReview'))).toBe('');
   });
 });

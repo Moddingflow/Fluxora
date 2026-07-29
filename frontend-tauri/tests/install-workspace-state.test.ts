@@ -49,7 +49,8 @@ const preview: FluxoraContentLayoutPreview = {
       classification: 'plugin',
       explanation: 'Plugin goes to Data.',
       manualOverrideAllowed: true,
-      safeManualTargets: ['data', 'gameRoot']
+      safeManualTargets: ['data', 'gameRoot'],
+      included: true
     },
     {
       sourcePath: 'tools/helper.exe',
@@ -59,7 +60,8 @@ const preview: FluxoraContentLayoutPreview = {
       classification: 'toolExecutable',
       explanation: 'Unexpected executable.',
       manualOverrideAllowed: true,
-      safeManualTargets: ['gameRoot']
+      safeManualTargets: ['gameRoot'],
+      included: true
     }
   ],
   validationFindings: [

@@ -248,6 +248,14 @@
   --focus-ring: rgba(var(--flx-accent-hover-rgb), 0.72);
   --row-hover: rgba(var(--flx-accent-rgb), 0.07);
 
+  /* Shared loading material. Themes only need to override these tokens. */
+  --flx-skeleton-base: rgba(255, 255, 255, 0.05);
+  --flx-skeleton-outline: rgba(255, 255, 255, 0.028);
+  --flx-skeleton-highlight-soft: rgba(var(--flx-accent-rgb), 0.11);
+  --flx-skeleton-highlight: rgba(255, 246, 221, 0.17);
+  --flx-skeleton-glow: rgba(var(--flx-accent-rgb), 0.045);
+  --flx-skeleton-duration: 2.4s;
+
   /* Spacing scale. */
   --space-1: 4px;
   --space-2: 8px;
@@ -285,4 +293,12 @@
   --dur-slow: 220ms;
   --motion-fast: var(--dur-fast) var(--ease-standard);
   --motion-medium: var(--dur-slow) var(--ease-standard);
+}
+
+:root[data-theme="light"] {
+  --flx-skeleton-base: rgba(64, 82, 60, 0.075);
+  --flx-skeleton-outline: rgba(25, 35, 25, 0.035);
+  --flx-skeleton-highlight-soft: rgba(var(--flx-accent-rgb), 0.1);
+  --flx-skeleton-highlight: rgba(255, 255, 255, 0.68);
+  --flx-skeleton-glow: rgba(25, 35, 25, 0.03);
 }

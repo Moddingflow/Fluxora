@@ -148,6 +148,7 @@ Do not create a new master store. Feature hooks may compose typed facade calls a
 | Drag region | `data-tauri-drag-region` on chrome drag surfaces. |
 | External URL open | `window.fluxora.links.openExternal`. |
 | Open path / show in folder | `window.fluxora.shell.openPath` and `window.fluxora.shell.showItemInFolder`. |
+| Copy raw file path | `window.fluxora.clipboard.writeText`; Rust owns the clipboard plugin and renderer passes the exact unquoted path. |
 | Native file/folder dialogs | `window.fluxora.dialogs.*`. |
 | Main-process UI state | Rust shell only for app lifecycle, windows, dialogs, external links, shell-open, single-instance/deep-link and bridge-host lifecycle. |
 | Domain/main-process state | C++ core through `fluxora.bridge.v1`, never renderer or Rust shell business logic. |

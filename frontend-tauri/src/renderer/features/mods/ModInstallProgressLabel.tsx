@@ -1,6 +1,5 @@
 import { memo } from 'react';
 
-import type { FluxoraInstallOperation } from '../../../shared/fluxora-api';
 import {
   useInstallProgress,
   type InstallProgressStore
@@ -12,36 +11,22 @@ interface ModInstallProgressLabelProps {
   operationId: string;
   orderId: string;
   progressStore: InstallProgressStore;
-  onNeedsReview: (operation: FluxoraInstallOperation) => void;
 }
 
 export const ModInstallProgressLabel = memo(({
   fallbackLabel,
   operationId,
   orderId,
-  progressStore,
-  onNeedsReview
+  progressStore
 }: ModInstallProgressLabelProps) => {
   recordListPerformanceRowCommit('mods', orderId);
   const progress = useInstallProgress(progressStore, operationId);
-  const label = progress.label || fallbackLabel;
 
-  if (progress.state === 'needsReview' && progress.operation) {
-    return (
-      <button
-        className="mod-install-pending-label mod-install-pending-label--action"
-        type="button"
-        title="Повторно проверить установщик"
-        onClick={(event) => {
-          event.stopPropagation();
-          onNeedsReview(progress.operation!);
-        }}
-      >
-        {label}
-      </button>
-    );
+  if (progress.state === 'needsReview') {
+    return null;
   }
 
+  const label = progress.label || fallbackLabel;
   return <span className="mod-install-pending-label">{label}</span>;
 });
 

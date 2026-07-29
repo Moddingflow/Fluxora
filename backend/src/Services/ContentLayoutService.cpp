@@ -3,12 +3,16 @@
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Support/FilesystemPath.hpp"
+#include "FluxoraCore/Support/JsonReader.hpp"
 
 #include <algorithm>
 #include <cwctype>
+#include <cstdint>
+#include <iomanip>
 #include <map>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -177,6 +181,49 @@ namespace fluxora
             return std::to_wstring(static_cast<int>(target)) + L"|" + normalizedRelativeKey(path);
         }
 
+        [[nodiscard]] std::vector<PlacementOverride> effectiveFileEdits(
+            const ContentLayoutAnalysisRequest& request)
+        {
+            std::vector<PlacementOverride> result = request.manualOverrides;
+            result.insert(
+                result.end(),
+                request.placementEdits.files.begin(),
+                request.placementEdits.files.end());
+            return result;
+        }
+
+        [[nodiscard]] std::wstring archiveFileTreeFingerprint(
+            const std::vector<ContentLayoutArchiveEntry>& entries)
+        {
+            std::uint64_t hash = 14695981039346656037ULL;
+            const auto append = [&hash](std::wstring_view value)
+            {
+                for (wchar_t character : value)
+                {
+                    const std::uint32_t scalar = static_cast<std::uint32_t>(character);
+                    for (int shift = 0; shift < 32; shift += 8)
+                    {
+                        hash ^= static_cast<std::uint8_t>((scalar >> shift) & 0xffU);
+                        hash *= 1099511628211ULL;
+                    }
+                }
+                hash ^= 0xffU;
+                hash *= 1099511628211ULL;
+            };
+            append(L"schema=1");
+            for (const ContentLayoutArchiveEntry& entry : entries)
+            {
+                append(entry.isDirectory ? L"d" : L"f");
+                append(normalizePathComparisonKey(
+                    entry.relativePath,
+                    PathCaseSensitivity::CaseInsensitive));
+            }
+
+            std::wostringstream output;
+            output << std::hex << std::setw(16) << std::setfill(L'0') << hash;
+            return output.str();
+        }
+
         [[nodiscard]] std::wstring layoutCacheKey(const ContentLayoutAnalysisRequest& request)
         {
             if (request.archiveContentHash.empty() || request.gameDefinitionVersion.empty())
@@ -189,6 +236,8 @@ namespace fluxora
             key.append(request.gameDefinitionVersion);
             key.append(L"|archive=");
             key.append(request.archiveContentHash);
+            key.append(L"|tree=");
+            key.append(archiveFileTreeFingerprint(request.archiveFileTree));
             key.append(L"|capabilities=");
             key.append(std::to_wstring(request.selectedGameCapabilities.bits()));
             key.append(L"|installMode=");
@@ -202,6 +251,10 @@ namespace fluxora
                     request.userSelectedSubfolder.value(),
                     PathCaseSensitivity::CaseInsensitive));
             }
+            key.append(L"|edits=");
+            PlacementEdits edits = request.placementEdits;
+            edits.files = effectiveFileEdits(request);
+            key.append(placementEditsFingerprint(edits));
 
             return key;
         }
@@ -582,13 +635,16 @@ namespace fluxora
             {
                 const PlacementPlanEntry& entry = plan.entries[index];
                 logger->writeOperation(
-                    entry.target == PlacementTarget::Blocked ? LogLevel::Warning : LogLevel::Info,
+                    entry.included && entry.target == PlacementTarget::Blocked
+                        ? LogLevel::Warning
+                        : LogLevel::Info,
                     "ContentLayout",
                     "contentLayoutEntry index=" + std::to_string(index) +
                         ", source=\"" + toUtf8(entry.sourcePath.path().generic_wstring()) + "\"" +
                         ", target=\"" + toUtf8(targetDisplayName(entry.target)) + "\"" +
                         ", targetPath=\"" + toUtf8(entry.targetRelativePath.path().generic_wstring()) + "\"" +
                         ", classification=\"" + toUtf8(classificationDisplayName(entry.classification)) + "\"" +
+                        ", included=" + std::string(entry.included ? "true" : "false") +
                         ", reason=\"" + toUtf8(entry.explanation) + "\".");
             }
             if (plan.entries.size() > maxLoggedEntries)
@@ -627,6 +683,33 @@ namespace fluxora
             }
         }
 
+        void removeExcludedFindings(
+            PlacementPlan& plan,
+            const std::set<std::wstring>& excludedSourceKeys)
+        {
+            plan.validationFindings.erase(
+                std::remove_if(
+                    plan.validationFindings.begin(),
+                    plan.validationFindings.end(),
+                    [&excludedSourceKeys](const ValidationFinding& finding)
+                    {
+                        return finding.path.has_value() &&
+                            excludedSourceKeys.contains(finding.path->comparisonKey());
+                    }),
+                plan.validationFindings.end());
+            plan.summary.hasBlockers = std::any_of(
+                plan.validationFindings.begin(),
+                plan.validationFindings.end(),
+                [](const ValidationFinding& finding) { return finding.blocksInstall; });
+            plan.summary.hasWarnings = std::any_of(
+                plan.validationFindings.begin(),
+                plan.validationFindings.end(),
+                [](const ValidationFinding& finding)
+                {
+                    return finding.severity == HealthSeverity::Warning;
+                });
+        }
+
         [[nodiscard]] bool containsTarget(
             const std::vector<PlacementTarget>& targets,
             PlacementTarget target)
@@ -640,7 +723,8 @@ namespace fluxora
             PlacementPlan& plan,
             const ContentLayoutAnalysisRequest& request)
         {
-            if (request.manualOverrides.empty())
+            const std::vector<PlacementOverride> fileEdits = effectiveFileEdits(request);
+            if (fileEdits.empty())
             {
                 return;
             }
@@ -652,7 +736,7 @@ namespace fluxora
             }
 
             std::set<std::wstring> seenOverrides;
-            for (const PlacementOverride& manualOverride : request.manualOverrides)
+            for (const PlacementOverride& manualOverride : fileEdits)
             {
                 const std::wstring sourceKey = manualOverride.sourcePath.comparisonKey();
                 if (!seenOverrides.insert(sourceKey).second)
@@ -681,6 +765,10 @@ namespace fluxora
                 }
 
                 PlacementPlanEntry& entry = *entryMatch->second;
+                if (!entry.included)
+                {
+                    continue;
+                }
                 if (!entry.manualOverrideAllowed ||
                     !containsTarget(entry.safeManualTargets, manualOverride.target))
                 {
@@ -735,6 +823,10 @@ namespace fluxora
 
         void countEntry(ContentLayoutSummary& summary, const PlacementPlanEntry& entry)
         {
+            if (!entry.included)
+            {
+                return;
+            }
             if (entry.target != PlacementTarget::Blocked)
             {
                 ++summary.plannedEntries;
@@ -857,6 +949,29 @@ namespace fluxora
             throw std::runtime_error("Blocked content cannot be materialized.");
         }
 
+        [[nodiscard]] std::filesystem::path placementPath(
+            const PlacementDirectory& directory,
+            const PlacementPlan& plan)
+        {
+            switch (directory.target)
+            {
+            case PlacementTarget::Data:
+                return directory.targetRelativePath.path();
+            case PlacementTarget::GameRoot:
+                if (plan.rootFileWrapperDirectory.empty())
+                {
+                    throw std::runtime_error("Content layout root wrapper directory is not defined.");
+                }
+                return std::filesystem::path(plan.rootFileWrapperDirectory) /
+                    directory.targetRelativePath.path();
+            case PlacementTarget::Profile:
+            case PlacementTarget::Overwrite:
+            case PlacementTarget::Blocked:
+                break;
+            }
+            throw std::runtime_error("Placement directory uses an unsupported target.");
+        }
+
         [[nodiscard]] std::filesystem::path uniqueSiblingPath(
             const std::filesystem::path& directory,
             std::wstring_view suffix)
@@ -906,6 +1021,10 @@ namespace fluxora
 
             for (const PlacementPlanEntry& entry : plan.entries)
             {
+                if (!entry.included)
+                {
+                    continue;
+                }
                 if (entry.target == PlacementTarget::Blocked)
                 {
                     throw std::runtime_error("Content layout contains blocked entries.");
@@ -1037,6 +1156,18 @@ namespace fluxora
                     transferFile(transfer);
                     completedTransfers.push_back(transfer);
                 }
+                const PathSafetyService safety;
+                for (const PlacementDirectory& directory : plan.directories)
+                {
+                    const std::filesystem::path destination =
+                        destinationRoot / placementPath(directory, plan);
+                    safety.validateWritePath(
+                        destinationRoot,
+                        destination,
+                        PathSafetyWriteOptions{0, false})
+                        .throwIfUnsafe("Content layout directory path is unsafe");
+                    std::filesystem::create_directories(pathForFilesystemIo(destination));
+                }
             }
             catch (...)
             {
@@ -1044,6 +1175,175 @@ namespace fluxora
                 throw;
             }
         }
+    }
+
+    PlacementEdits parsePlacementEditsJson(std::wstring_view json)
+    {
+        const JsonValue root = JsonReader::parse(json.empty() ? L"[]" : json);
+        const JsonValue::Array* fileItems = nullptr;
+        const JsonValue::Array* directoryItems = nullptr;
+        const JsonValue::Array* excludedSourcePathItems = nullptr;
+        PlacementEdits edits;
+
+        if (root.isArray())
+        {
+            fileItems = &root.asArray();
+        }
+        else if (root.isObject())
+        {
+            const JsonValue* schemaVersion = root.find(L"schemaVersion");
+            if (schemaVersion == nullptr || !schemaVersion->isNumber() || schemaVersion->asNumber() != L"2")
+            {
+                throw std::invalid_argument("Placement edits schemaVersion must be 2.");
+            }
+            const JsonValue* files = root.find(L"files");
+            const JsonValue* directories = root.find(L"directories");
+            const JsonValue* excludedSourcePaths = root.find(L"excludedSourcePaths");
+            if (files != nullptr)
+            {
+                if (!files->isArray())
+                {
+                    throw std::invalid_argument("Placement edits files must be an array.");
+                }
+                fileItems = &files->asArray();
+            }
+            if (directories != nullptr)
+            {
+                if (!directories->isArray())
+                {
+                    throw std::invalid_argument("Placement edits directories must be an array.");
+                }
+                directoryItems = &directories->asArray();
+            }
+            if (excludedSourcePaths != nullptr)
+            {
+                if (!excludedSourcePaths->isArray())
+                {
+                    throw std::invalid_argument("Placement edits excludedSourcePaths must be an array.");
+                }
+                excludedSourcePathItems = &excludedSourcePaths->asArray();
+            }
+        }
+        else
+        {
+            throw std::invalid_argument("Expected legacy placement overrides or placement edits v2.");
+        }
+
+        const auto requiredString = [](const JsonValue& item, std::wstring_view field) -> std::wstring
+        {
+            const JsonValue* value = item.find(field);
+            if (!item.isObject() || value == nullptr || !value->isString() || value->asString().empty())
+            {
+                throw std::invalid_argument("Placement edit has a missing or invalid string field.");
+            }
+            return value->asString();
+        };
+
+        if (fileItems != nullptr)
+        {
+            edits.files.reserve(fileItems->size());
+            for (const JsonValue& item : *fileItems)
+            {
+                const std::wstring sourcePath = requiredString(item, L"sourcePath");
+                const std::wstring targetName = requiredString(item, L"target");
+                std::optional<GameRelativePath> targetRelativePath;
+                if (const JsonValue* path = item.find(L"targetRelativePath"))
+                {
+                    if (!path->isString())
+                    {
+                        throw std::invalid_argument("Placement edit targetRelativePath must be a string.");
+                    }
+                    if (!path->asString().empty())
+                    {
+                        targetRelativePath = GameRelativePath::parse(path->asString()).valueOrThrow();
+                    }
+                }
+                edits.files.push_back(PlacementOverride{
+                    GameRelativePath::parse(sourcePath).valueOrThrow(),
+                    parsePlacementTarget(targetName).valueOrThrow(),
+                    std::move(targetRelativePath)
+                });
+            }
+        }
+
+        if (directoryItems != nullptr)
+        {
+            edits.directories.reserve(directoryItems->size());
+            for (const JsonValue& item : *directoryItems)
+            {
+                edits.directories.push_back(PlacementDirectory{
+                    parsePlacementTarget(requiredString(item, L"target")).valueOrThrow(),
+                    GameRelativePath::parse(requiredString(item, L"targetRelativePath")).valueOrThrow()
+                });
+            }
+        }
+        if (excludedSourcePathItems != nullptr)
+        {
+            edits.excludedSourcePaths.reserve(excludedSourcePathItems->size());
+            for (const JsonValue& item : *excludedSourcePathItems)
+            {
+                if (!item.isString() || item.asString().empty())
+                {
+                    throw std::invalid_argument(
+                        "Placement edits excludedSourcePaths entries must be non-empty strings.");
+                }
+                edits.excludedSourcePaths.push_back(
+                    GameRelativePath::parse(item.asString()).valueOrThrow());
+            }
+        }
+        return edits;
+    }
+
+    std::wstring placementEditsFingerprint(const PlacementEdits& edits)
+    {
+        std::vector<std::wstring> canonical;
+        canonical.reserve(
+            edits.files.size() + edits.directories.size() + edits.excludedSourcePaths.size());
+        for (const PlacementOverride& file : edits.files)
+        {
+            canonical.push_back(
+                L"f|" + file.sourcePath.comparisonKey() + L"|" +
+                std::to_wstring(static_cast<int>(file.target)) + L"|" +
+                (file.targetRelativePath.has_value()
+                    ? file.targetRelativePath->comparisonKey()
+                    : std::wstring{}));
+        }
+        for (const PlacementDirectory& directory : edits.directories)
+        {
+            canonical.push_back(
+                L"d|" + std::to_wstring(static_cast<int>(directory.target)) + L"|" +
+                directory.targetRelativePath.comparisonKey());
+        }
+        for (const GameRelativePath& sourcePath : edits.excludedSourcePaths)
+        {
+            canonical.push_back(L"x|" + sourcePath.comparisonKey());
+        }
+        std::sort(canonical.begin(), canonical.end());
+
+        std::uint64_t hash = 14695981039346656037ULL;
+        const auto append = [&hash](std::wstring_view value)
+        {
+            for (wchar_t character : value)
+            {
+                const std::uint32_t scalar = static_cast<std::uint32_t>(character);
+                for (int shift = 0; shift < 32; shift += 8)
+                {
+                    hash ^= static_cast<std::uint8_t>((scalar >> shift) & 0xffU);
+                    hash *= 1099511628211ULL;
+                }
+            }
+            hash ^= 0xffU;
+            hash *= 1099511628211ULL;
+        };
+        append(L"schema=2");
+        for (const std::wstring& value : canonical)
+        {
+            append(value);
+        }
+
+        std::wostringstream output;
+        output << std::hex << std::setw(16) << std::setfill(L'0') << hash;
+        return output.str();
     }
 
     PlacementPlan ContentLayoutService::analyze(const ContentLayoutAnalysisRequest& request) const
@@ -1063,6 +1363,10 @@ namespace fluxora
 
         const auto cachePlan = [&request, &cacheKey](PlacementPlan plan)
         {
+            if (request.assessmentPolicy != nullptr && !plan.assessment.has_value())
+            {
+                plan.assessment = request.assessmentPolicy->assess(plan);
+            }
             logLayoutDiagnostics(request.logger, plan, request.gameDefinitionVersion, false);
             if (!cacheKey.empty())
             {
@@ -1080,6 +1384,15 @@ namespace fluxora
         PlacementPlan plan;
         plan.gameId = request.selectedGameId;
         plan.gameDisplayName = request.selectedGameDisplayName;
+        plan.archiveContentFingerprint = request.archiveContentHash;
+        PlacementEdits requestedEdits = request.placementEdits;
+        requestedEdits.files = effectiveFileEdits(request);
+        plan.editFingerprint = placementEditsFingerprint(requestedEdits);
+        std::set<std::wstring> excludedSourceKeys;
+        for (const GameRelativePath& sourcePath : request.placementEdits.excludedSourcePaths)
+        {
+            excludedSourceKeys.insert(sourcePath.comparisonKey());
+        }
 
         if (!request.selectedGameCapabilities.has(GameCapability::ContentLayoutRules) ||
             request.rulesProvider == nullptr)
@@ -1445,6 +1758,7 @@ namespace fluxora
                 false,
                 {}
             };
+            entry.included = !excludedSourceKeys.contains(entry.sourcePath.comparisonKey());
             entry.safeManualTargets = safeOverrideTargets(
                 classification,
                 request.selectedGameCapabilities,
@@ -1453,12 +1767,12 @@ namespace fluxora
             entry.manualOverrideAllowed = !entry.safeManualTargets.empty() &&
                 classification != ContentLayoutClassification::ToolExecutable;
             countEntry(plan.summary, entry);
-            if (isRecognizedInstallContent(classification))
+            if (entry.included && isRecognizedInstallContent(classification))
             {
                 ++recognizedContent;
             }
 
-            if (entry.manualOverrideAllowed &&
+            if (entry.included && entry.manualOverrideAllowed &&
                 entry.safeManualTargets.size() > 1)
             {
                 plan.manualOverrideOptions.push_back(ManualOverrideOption{
@@ -1473,11 +1787,41 @@ namespace fluxora
 
         applyManualOverrides(plan, request);
 
+        for (const PlacementPlanEntry& entry : plan.entries)
+        {
+            throwIfCancelled(request);
+            if (!entry.included)
+            {
+                continue;
+            }
+            const bool retainsDataWrapper =
+                entry.target == PlacementTarget::Data &&
+                hasLeadingSegment(entry.targetRelativePath.path(), rules.dataFolder);
+            const bool retainsRootWrapper =
+                entry.target == PlacementTarget::GameRoot &&
+                !plan.rootFileWrapperDirectory.empty() &&
+                hasLeadingSegment(
+                    entry.targetRelativePath.path(),
+                    plan.rootFileWrapperDirectory);
+            if (retainsDataWrapper || retainsRootWrapper)
+            {
+                addFinding(
+                    plan,
+                    HealthSeverity::Blocker,
+                    std::optional<GameRelativePath>{entry.sourcePath},
+                    entry.classification,
+                    retainsDataWrapper
+                        ? L"Placement retains a redundant Data directory. Move its contents directly into Data."
+                        : L"Placement retains a redundant game-root wrapper. Move its contents directly into the game root.",
+                    true);
+            }
+        }
+
         std::map<std::wstring, GameRelativePath> targetPaths;
         for (const PlacementPlanEntry& entry : plan.entries)
         {
             throwIfCancelled(request);
-            if (entry.target == PlacementTarget::Blocked)
+            if (!entry.included || entry.target == PlacementTarget::Blocked)
             {
                 continue;
             }
@@ -1499,15 +1843,85 @@ namespace fluxora
             }
         }
 
-        if (recognizedContent == 0 && !plan.summary.hasBlockers)
+        std::set<std::wstring> directoryTargets;
+        for (const PlacementDirectory& requestedDirectory : request.placementEdits.directories)
+        {
+            throwIfCancelled(request);
+            const std::optional<GameRelativePath> safePath =
+                tryParseSafeRelativePath(requestedDirectory.targetRelativePath.path());
+            const bool supportedTarget =
+                requestedDirectory.target == PlacementTarget::Data ||
+                requestedDirectory.target == PlacementTarget::GameRoot;
+            const bool rootAllowed =
+                requestedDirectory.target != PlacementTarget::GameRoot ||
+                (!plan.rootFileWrapperDirectory.empty() &&
+                 request.selectedGameCapabilities.has(GameCapability::RootFiles));
+            if (!safePath.has_value() || !supportedTarget || !rootAllowed)
+            {
+                addFinding(
+                    plan,
+                    HealthSeverity::Blocker,
+                    std::optional<GameRelativePath>{requestedDirectory.targetRelativePath},
+                    ContentLayoutClassification::Unsafe,
+                    L"A created directory has an unsafe path or unsupported placement target.",
+                    true);
+                continue;
+            }
+
+            const PlacementDirectory directory{requestedDirectory.target, safePath.value()};
+            const std::wstring key = normalizedTargetKey(directory.target, directory.targetRelativePath);
+            if (!directoryTargets.insert(key).second || targetPaths.contains(key))
+            {
+                addFinding(
+                    plan,
+                    HealthSeverity::Blocker,
+                    std::optional<GameRelativePath>{directory.targetRelativePath},
+                    ContentLayoutClassification::Unsafe,
+                    L"A created directory collides with another placement target.",
+                    true);
+                continue;
+            }
+
+            bool fileAncestor = false;
+            for (const PlacementPlanEntry& entry : plan.entries)
+            {
+                if (entry.included &&
+                    entry.target == directory.target &&
+                    entry.target != PlacementTarget::Blocked &&
+                    pathStartsWith(directory.targetRelativePath.path(), entry.targetRelativePath.path()))
+                {
+                    fileAncestor = true;
+                    break;
+                }
+            }
+            if (fileAncestor)
+            {
+                addFinding(
+                    plan,
+                    HealthSeverity::Blocker,
+                    std::optional<GameRelativePath>{directory.targetRelativePath},
+                    ContentLayoutClassification::Unsafe,
+                    L"A created directory would be nested below a file target.",
+                    true);
+                continue;
+            }
+            plan.directories.push_back(directory);
+        }
+
+        removeExcludedFindings(plan, excludedSourceKeys);
+        const bool hasEnabledEntries = std::any_of(
+            plan.entries.begin(),
+            plan.entries.end(),
+            [](const PlacementPlanEntry& entry) { return entry.included; });
+        if (recognizedContent == 0 && hasEnabledEntries && !plan.summary.hasBlockers)
         {
             addFinding(
                 plan,
-                HealthSeverity::Blocker,
+                HealthSeverity::Warning,
                 std::nullopt,
                 ContentLayoutClassification::Unknown,
                 L"Fluxora could not recognize any installable game content in this archive.",
-                true);
+                false);
         }
 
         plan.userExplanation.summary =
@@ -1520,10 +1934,32 @@ namespace fluxora
         {
             throwIfCancelled(request);
             plan.userExplanation.details.push_back(
-                entry.sourcePath.path().generic_wstring() + L" -> " +
-                targetDisplayName(entry.target) + L": " +
-                classificationDisplayName(entry.classification) + L". " +
-                entry.explanation);
+                entry.sourcePath.path().generic_wstring() +
+                (entry.included
+                    ? L" -> " + targetDisplayName(entry.target) + L": " +
+                        classificationDisplayName(entry.classification) + L". " + entry.explanation
+                    : L" -> excluded from installation."));
+        }
+
+        PlacementEdits resolvedEdits;
+        resolvedEdits.directories = plan.directories;
+        resolvedEdits.excludedSourcePaths = request.placementEdits.excludedSourcePaths;
+        resolvedEdits.files.reserve(plan.entries.size());
+        for (const PlacementPlanEntry& entry : plan.entries)
+        {
+            if (entry.included && entry.target != PlacementTarget::Blocked)
+            {
+                resolvedEdits.files.push_back(PlacementOverride{
+                    entry.sourcePath,
+                    entry.target,
+                    std::optional<GameRelativePath>{entry.targetRelativePath}
+                });
+            }
+        }
+        plan.placementFingerprint = placementEditsFingerprint(resolvedEdits);
+        if (request.assessmentPolicy != nullptr)
+        {
+            plan.assessment = request.assessmentPolicy->assess(plan);
         }
 
         (void)request.installMode;

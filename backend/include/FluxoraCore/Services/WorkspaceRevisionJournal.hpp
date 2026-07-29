@@ -58,6 +58,7 @@ namespace fluxora
         std::uint64_t sequence{0};
         std::vector<DownloadEntry> upserts;
         std::vector<std::wstring> removedIds;
+        std::vector<OrderPlacement> placements;
         std::wstring reason;
         bool fullResyncRequired{false};
     };

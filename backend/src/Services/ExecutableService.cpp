@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
+#include "FluxoraCore/Services/LodGeneratorIntegrationService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/RootBuilderLaunchCacheReconciler.hpp"
@@ -3362,6 +3363,13 @@ namespace fluxora
                 executable.managedToolKind = BodySlideIntegrationService::detectManagedToolKind(
                     executable,
                     std::filesystem::path(executable.executablePath));
+                if (executable.managedToolKind.empty())
+                {
+                    executable.managedToolKind =
+                        LodGeneratorIntegrationService::detectManagedToolKind(
+                            executable,
+                            std::filesystem::path(executable.executablePath));
+                }
             }
         }
 

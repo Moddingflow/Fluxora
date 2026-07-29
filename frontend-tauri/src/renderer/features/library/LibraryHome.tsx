@@ -8,7 +8,8 @@ import {
   Icon,
   IconButton,
   Input,
-  SectionLabel
+  SectionLabel,
+  Skeleton
 } from '../../design-system';
 import { projectDisplayPath } from '../../project-catalog-state';
 import { shortPath } from '../../services/path-display-service';
@@ -280,15 +281,15 @@ function LibraryProjectRows({
             role="listitem"
           >
             <div className="library-build-row">
-              <span className="project-row__icon workspace-skeleton library-build-skeleton__icon" />
+              <Skeleton className="project-row__icon library-build-skeleton__icon" />
               <span className="project-row__main library-build-skeleton__copy">
-                <span className="workspace-skeleton library-build-skeleton__title" />
-                <span className="workspace-skeleton library-build-skeleton__meta" />
+                <Skeleton className="library-build-skeleton__title" />
+                <Skeleton className="library-build-skeleton__meta" />
               </span>
             </div>
-            <span className="library-build-open workspace-skeleton library-build-skeleton__button" />
+            <Skeleton className="library-build-open library-build-skeleton__button" />
             <span className="row-actions library-build-actions">
-              <span className="workspace-skeleton library-build-skeleton__action" />
+              <Skeleton className="library-build-skeleton__action" />
             </span>
           </div>
         ))}

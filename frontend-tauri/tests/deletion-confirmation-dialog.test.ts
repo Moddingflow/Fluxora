@@ -36,8 +36,9 @@ const renderDialog = (
   );
 
 describe('deletion confirmation dialog', () => {
-  it('adapts the title for mods, builds and downloaded files', () => {
+  it('adapts the title for mods, separators, builds and downloaded files', () => {
     expect(renderDialog('mod')).toContain('Удаление мода');
+    expect(renderDialog('separator', 'Visual separators')).toContain('Удаление разделителя');
     expect(renderDialog('build', 'Skyrim graphics overhaul')).toContain('Удаление сборки');
     expect(renderDialog('download', 'Texture Pack.7z')).toContain('Удаление файла');
   });
@@ -53,9 +54,11 @@ describe('deletion confirmation dialog', () => {
     expect(markup).toContain('Удалить');
   });
 
-  it('uses Russian count labels for bulk mod and download deletion', () => {
+  it('uses Russian count labels for bulk mod, separator and download deletion', () => {
     expect(renderDialog('mod', 'SkyUI 5.2', 5)).toContain('5 модов');
     expect(renderDialog('mod', 'SkyUI 5.2', 10)).toContain('10 модов');
+    expect(renderDialog('separator', 'Visual separators', 3)).toContain('3 разделителя');
+    expect(renderDialog('separator', 'Visual separators', 5)).toContain('5 разделителей');
     expect(renderDialog('download', 'Texture Pack.7z', 2)).toContain('2 файла');
     expect(renderDialog('download', 'Texture Pack.7z', 5)).toContain('5 файлов');
   });
@@ -70,20 +73,27 @@ describe('deletion confirmation dialog', () => {
     expect(app).toContain('Уже установленные моды останутся на месте');
   });
 
-  it('routes destructive mod, build and download actions through the in-app confirmation', () => {
+  it('routes destructive mod, separator, build and download actions through the in-app confirmation', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain('<DeletionConfirmationDialog');
     expect(app).toContain('itemCount={deletionConfirmation.itemCount}');
     expect(app).toContain('requestDeleteInstalledMod(item)');
+    expect(app).toContain('requestDeleteModSeparatorSelection(item)');
+    expect(app).toContain('requestDeletePluginSeparatorSelection(item)');
     expect(app).toContain('requestDeleteProject(project)');
     expect(app).toContain('requestDeleteDownload(entry)');
     expect(app).toContain('itemCount: targets.length');
+    expect(app).toContain('onConfirm: () => deleteModSeparators(separatorOrderIds)');
+    expect(app).toContain('onConfirm: () => deletePluginSeparators(separatorOrderIds)');
     expect(app).toContain('onConfirm: () => deleteInstalledMods(targets)');
     expect(app).toContain('onConfirm: () => deleteDownloads(targets)');
     expect(app).toContain("kind: 'mod'");
+    expect(app).toContain("kind: 'separator'");
     expect(app).toContain("kind: 'build'");
     expect(app).toContain("kind: 'download'");
+    expect(app).not.toContain("'Deleting mod separator'");
+    expect(app).not.toContain("'Deleting plugin separator'");
     expect(app).not.toContain('window.confirm(`Удалить установленный мод');
     expect(app).not.toContain('window.confirm(`Удалить файл из загрузок');
     expect(app).not.toContain('window.confirm(`Delete build');

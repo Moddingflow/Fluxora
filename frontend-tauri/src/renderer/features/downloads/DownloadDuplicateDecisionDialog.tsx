@@ -72,6 +72,7 @@ export function DownloadDuplicateDecisionDialog({
   }
   const isSameFile = decision.direction === 'same-file';
   const cancelLabel = isSameFile ? 'Закрыть' : 'Отменить загрузку';
+  const dialogTitleId = isSameFile ? 'download-duplicate-title' : 'download-duplicate-status';
   const sameFileArchiveName =
     decision.incomingFile.fileName.trim() || entry.fileName.trim() || 'Файл Nexus';
 
@@ -79,27 +80,31 @@ export function DownloadDuplicateDecisionDialog({
     <div className="download-duplicate-backdrop" role="presentation">
       <section
         aria-describedby="download-duplicate-summary"
-        aria-labelledby="download-duplicate-title"
+        aria-labelledby={dialogTitleId}
         aria-modal="true"
         className="download-duplicate-dialog"
         role="dialog"
       >
         <header className="download-duplicate-dialog__header">
-          <div>
-            <strong id="download-duplicate-title">
-              {isSameFile ? 'Повторная установка мода' : 'Обновление архива Nexus'}
+          {isSameFile ? (
+            <strong className="download-duplicate-dialog__title" id="download-duplicate-title">
+              Повторная установка мода
             </strong>
-            {!isSameFile ? (
-              <span>
+          ) : (
+            <div className="download-duplicate-dialog__status" id="download-duplicate-status">
+              <span aria-hidden="true" className="download-duplicate-dialog__status-dot" />
+              <strong>
                 {decision.direction === 'upgrade'
                   ? 'Найдена новая версия'
                   : 'Нужно подтвердить версию'}
-              </span>
-            ) : null}
-          </div>
+              </strong>
+            </div>
+          )}
           <button
             aria-label={cancelLabel}
-            className="icon-button"
+            className="flx-icon-button download-duplicate-dialog__close"
+            data-size="md"
+            data-variant="bare"
             disabled={isResolving}
             title={cancelLabel}
             type="button"
@@ -139,7 +144,9 @@ export function DownloadDuplicateDecisionDialog({
 
         <footer className="download-duplicate-dialog__actions">
           <button
-            className="primary-button"
+            className="flx-button download-duplicate-dialog__action"
+            data-size="md"
+            data-variant="primary"
             disabled={isResolving}
             ref={replaceButtonRef}
             type="button"
@@ -149,22 +156,14 @@ export function DownloadDuplicateDecisionDialog({
           </button>
           {!isSameFile ? (
             <button
-              className="secondary-button"
+              className="flx-button download-duplicate-dialog__action"
+              data-size="md"
+              data-variant="secondary"
               disabled={isResolving}
               type="button"
               onClick={() => onResolve('keepBoth')}
             >
               Сохранить оба
-            </button>
-          ) : null}
-          {!isSameFile ? (
-            <button
-              className="ghost-button"
-              disabled={isResolving}
-              type="button"
-              onClick={() => onResolve('cancel')}
-            >
-              Отмена
             </button>
           ) : null}
         </footer>

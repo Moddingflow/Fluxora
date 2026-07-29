@@ -38,7 +38,7 @@ describe('mods pane redesign', () => {
     expect(app).toContain('className="mod-list-row__status mod-separator-status"');
     expect(app).toContain('className="mod-list__head-priority"');
     expect(app).toContain('className="mod-list-row__priority"');
-    expect(app).toContain('className="workspace-skeleton workspace-skeleton--priority"');
+    expect(app).toContain('<Skeleton className="workspace-skeleton--priority"');
     expect(app).toContain('buildModRowViewIndex(');
     expect(app).toContain('modRowViewIndex.byOrderId.get(item.orderId)');
     expect(app).toContain('className="separator-toggle-button mod-separator-toggle-button"');
@@ -118,7 +118,9 @@ describe('mods pane redesign', () => {
     expect(app).toContain('<span>Создать пустой мод</span>');
     expect(app).toContain("openModCreationDialog('separator')");
     expect(app).toContain("openModCreationDialog('empty-mod')");
-    expect(app).toContain('const targetIndex = modsWorkspace.items.length;');
+    expect(app).toContain('createModSeparatorAtEnd({');
+    expect(app).toContain("createRendererOperationId('mods_create_separator')");
+    expect(app).not.toContain("runModMutation('Creating separator'");
     expect(app).toContain('<ModCreationDialog');
     expect(app).not.toContain("window.prompt('New mod name')");
     expect(app).toContain('<span>Упаковать</span>');

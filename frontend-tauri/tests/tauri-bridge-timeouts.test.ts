@@ -427,6 +427,24 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('routes installed-mod rename through the typed bridge with a long file-mutation timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_mods_rename_installed' };
+    const projectDirectory = project().projectDirectory;
+    const modPath = 'E:\\Fluxora Builds\\Foundation Edition\\mods\\Old Armor';
+    const newName = 'New Armor';
+    invokeMock.mockResolvedValue({ id: `${projectDirectory}\\mods\\${newName}`, name: newName });
+
+    const api = createTauriFluxoraApi();
+    await api.mods.renameInstalled(projectDirectory, modPath, newName, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.renameInstalled',
+      params: { projectDirectory, modPath, newName },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
   it('routes effective game-root file tree snapshots through the typed native bridge', async () => {
     const request: OperationRequest = { operationId: 'op_effective_tree' };
     invokeMock.mockResolvedValue({
@@ -920,6 +938,40 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('routes download rename through the typed bridge with a long file-mutation timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_downloads_rename' };
+    const projectDirectory = project().projectDirectory;
+    const downloadPath = `${projectDirectory}\\downloads\\Old Archive.7z`;
+    const newBaseName = 'New Archive';
+    invokeMock.mockResolvedValue({
+      id: `${projectDirectory}\\downloads\\${newBaseName}.7z`,
+      localPath: `${projectDirectory}\\downloads\\${newBaseName}.7z`,
+      fileName: `${newBaseName}.7z`
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.downloads.rename(projectDirectory, downloadPath, newBaseName, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'downloads.rename',
+      params: { projectDirectory, downloadPath, newBaseName },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('writes the exact unquoted download path through the native clipboard command', async () => {
+    const rawPath = 'E:\\Fluxora Builds\\Загрузки\\New Archive.7z';
+    invokeMock.mockResolvedValue(undefined);
+
+    const api = createTauriFluxoraApi();
+    await api.clipboard.writeText(rawPath);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_clipboard_write_text', {
+      text: rawPath
+    });
+  });
+
   it('keeps archive extraction and mod installation on a long file-mutation timeout', async () => {
     const request: OperationRequest = { operationId: 'op_downloads_install' };
     const installRequest = {
@@ -977,7 +1029,13 @@ describe('Tauri bridge request timeouts', () => {
       modName: 'Queued Mod',
       profileName: 'Default',
       selectedOptionIds: ['main-option'],
-      manualDecisions: [{ optionId: 'main-option', selected: true }]
+      manualDecisions: [{ optionId: 'main-option', selected: true }],
+      placementOverridesJson: JSON.stringify({
+        schemaVersion: 2,
+        files: [],
+        directories: [],
+        excludedSourcePaths: ['Data/Scripts/Disabled.pex']
+      })
     };
     invokeMock.mockResolvedValue({
       operationId: operation.operationId,
@@ -1003,7 +1061,7 @@ describe('Tauri bridge request timeouts', () => {
         existingModMode: 0,
         selectedOptionIdsJson: '["main-option"]',
         manualDecisionsJson: '[{"optionId":"main-option","selected":true}]',
-        placementOverridesJson: ''
+        placementOverridesJson: install.placementOverridesJson
       },
       request: operation
     });

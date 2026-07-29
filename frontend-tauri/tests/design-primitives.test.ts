@@ -21,6 +21,7 @@ import {
   ProgressBar,
   SectionLabel,
   Select,
+  Skeleton,
   StatusDot,
   Switch,
   Tabs
@@ -67,12 +68,90 @@ describe('redesign primitives', () => {
       ProgressBar,
       SectionLabel,
       Select,
+      Skeleton,
       StatusDot,
       Switch,
       Tabs
     ]) {
       expect(typeof primitive).toBe('function');
     }
+  });
+
+  it('exports one decorative skeleton primitive for every loading surface', () => {
+    const skeleton = renderToStaticMarkup(
+      React.createElement(Skeleton, {
+        className: 'install-detecting-skeleton__input',
+        style: { width: '72%' }
+      })
+    );
+
+    expect(skeleton).toContain('class="flx-skeleton install-detecting-skeleton__input"');
+    expect(skeleton).toContain('aria-hidden="true"');
+    expect(skeleton).toContain('style="width:72%"');
+  });
+
+  it('uses one slow themeable shimmer that resets fully outside the visible shape', () => {
+    const tokens = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'tokens',
+      'foundations.css'
+    );
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+
+    expect(tokens).toContain('--flx-skeleton-duration: 2.4s;');
+    expect(tokens).toContain('--flx-skeleton-base:');
+    expect(tokens).toContain('--flx-skeleton-highlight:');
+    expect(tokens).toContain(':root[data-theme="light"]');
+    expect(primitiveCss).toMatch(
+      /\.flx-skeleton::after\s*\{[^}]*transform:\s*translate3d\(-100%, 0, 0\);[^}]*animation:\s*flx-skeleton-shimmer var\(--flx-skeleton-duration\) linear infinite;/s
+    );
+    expect(primitiveCss).toMatch(
+      /@keyframes flx-skeleton-shimmer\s*\{[^}]*to\s*\{[^}]*transform:\s*translate3d\(100%, 0, 0\);/s
+    );
+    const reducedMotionCss = primitiveCss.slice(
+      primitiveCss.indexOf('@media (prefers-reduced-motion: reduce)')
+    );
+    expect(reducedMotionCss).toContain('.flx-skeleton::after,');
+    expect(reducedMotionCss).toContain('animation: none;');
+  });
+
+  it('routes every existing skeleton surface through the shared primitive', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const library = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'library',
+      'LibraryHome.tsx'
+    );
+    const installer = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'install',
+      'InstallDialog.tsx'
+    );
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    for (const source of [app, library, installer]) {
+      expect(source).toContain('<Skeleton');
+      expect(source).not.toMatch(/className="(?:workspace|download)-skeleton(?:\s|")/);
+    }
+
+    expect(styles).not.toMatch(/\.(?:workspace|download)-skeleton\s*\{/);
+    expect(styles).not.toContain('@keyframes downloadSkeletonSweep');
   });
 
   it('keeps icon-only controls labeled and icons on currentColor', () => {
@@ -174,6 +253,36 @@ describe('redesign primitives', () => {
     expect(mixedStatus).toContain('aria-label="Mixed overwrite conflicts"');
     expect(spinner).toContain('stroke-width="6"');
     expect(empty).toContain('role="alert"');
+  });
+
+  it('uses the compact thick checkbox mark without an external focus halo', () => {
+    const checkbox = renderToStaticMarkup(
+      React.createElement(Checkbox, {
+        checked: true,
+        label: 'Enable selected mod',
+        onChange: noop
+      })
+    );
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+
+    expect(checkbox).toContain('class="flx-checkbox__native"');
+    expect(checkbox).toContain('class="flx-checkbox__box"');
+    expect(primitiveCss).toMatch(
+      /\.flx-checkbox__box\s*\{[^}]*width:\s*16px;[^}]*height:\s*16px;[^}]*border-radius:\s*4px;/s
+    );
+    expect(primitiveCss).toMatch(
+      /\.flx-checkbox__box::after\s*\{[^}]*width:\s*10px;[^}]*height:\s*10px;[^}]*stroke-width='3'/s
+    );
+    expect(primitiveCss).toMatch(
+      /\.flx-checkbox__native:focus-visible \+ \.flx-checkbox__box\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*inset 0 0 0 1px var\(--focus-ring\);/s
+    );
   });
 
   it('keeps mod conflict indicators as filled downloaded SVG masks', () => {

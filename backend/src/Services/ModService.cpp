@@ -136,6 +136,11 @@ namespace fluxora
                 throw std::invalid_argument("Mod name is too long.");
             }
 
+            if (name == L"." || name == L".." || name.back() == L'.')
+            {
+                throw std::invalid_argument("Mod name cannot end with a dot.");
+            }
+
             if (containsInvalidFileNameCharacter(name))
             {
                 throw std::invalid_argument("Mod name contains invalid path characters.");
@@ -1449,6 +1454,77 @@ namespace fluxora
                     "\", reason=\"" + exception.what() + "\"");
             std::error_code cleanupError;
             std::filesystem::remove_all(targetDirectory, cleanupError);
+            throw;
+        }
+    }
+
+    InstalledModEntry ModService::renameInstalledMod(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view newName) const
+    {
+        if (projectDirectory.empty() || modPath.empty())
+        {
+            throw std::invalid_argument("Project directory and mod path are required.");
+        }
+
+        const std::wstring safeName = validateModFolderName(newName);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        if (!std::filesystem::is_directory(modPath))
+        {
+            throw std::invalid_argument("Mod does not exist.");
+        }
+        if (!std::filesystem::is_directory(modsDirectory) || !isPathInsideDirectory(modPath, modsDirectory))
+        {
+            throw std::invalid_argument("Mod path is outside the project mods directory.");
+        }
+        if (activeInstallTargetsMod(projectDirectory, modPath))
+        {
+            throw std::runtime_error(
+                "Installed mod cannot be renamed while its install or update is active.");
+        }
+
+        InstallProjectGate projectGate(projectDirectory, std::try_to_lock);
+        if (!projectGate.ownsLock())
+        {
+            throw std::runtime_error(
+                "Installed mod cannot be renamed while another project commit is active.");
+        }
+        if (activeInstallTargetsMod(projectDirectory, modPath))
+        {
+            throw std::runtime_error(
+                "Installed mod cannot be renamed while its install or update is active.");
+        }
+
+        const std::filesystem::path targetPath = modsDirectory / std::filesystem::path(safeName);
+        const PathSafetyService safety;
+        safety.validateDirectoryWriteRoot(modsDirectory)
+            .throwIfUnsafe("Mods directory is unsafe");
+        safety.validateWritePath(modsDirectory, targetPath)
+            .throwIfUnsafe("Mod rename target path is unsafe");
+
+        try
+        {
+            const InstalledModRecord record = InstanceMetadataStore::renameInstalledMod(
+                projectDirectory,
+                modPath,
+                targetPath,
+                safeName);
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ModRename",
+                "Renamed installed mod sourcePath=\"" + toUtf8(modPath.wstring()) +
+                    "\", targetPath=\"" + toUtf8(targetPath.wstring()) + "\"");
+            return entryFromRecord(record, deferredFileSummary());
+        }
+        catch (const std::exception& exception)
+        {
+            logger_.writeOperation(
+                LogLevel::Error,
+                "ModRename",
+                "Failed to rename installed mod sourcePath=\"" + toUtf8(modPath.wstring()) +
+                    "\", targetPath=\"" + toUtf8(targetPath.wstring()) +
+                    "\", reason=\"" + exception.what() + "\"");
             throw;
         }
     }

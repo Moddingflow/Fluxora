@@ -247,6 +247,26 @@ if ($managedCompletionResponse.id -ne 'bodyslide_missing_session' -or
     throw 'Managed executable completion response lost request envelope correlation.'
 }
 
+$lodManagedCompletionResponse = Invoke-BridgeHostRequest `
+    -EnvironmentVariables @{ FLUXORA_APP_ROOT = $repositoryRoot } `
+    -Request @{
+        jsonrpc = '2.0'
+        id = 'lod_missing_session'
+        method = 'executables.completeManagedLaunch'
+        params = @{
+            sessionId = 'lodgen-texGen-missing'
+            outcome = 'completed'
+        }
+        meta = $requestMeta
+    }
+if ($lodManagedCompletionResponse.error.code -ne 'LOD_GENERATOR_SESSION_NOT_FOUND') {
+    throw "Expected typed LOD generator session error, received: $($lodManagedCompletionResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+if ($lodManagedCompletionResponse.id -ne 'lod_missing_session' -or
+    $lodManagedCompletionResponse.meta.operationId -ne 'op_bridge_protocol_test') {
+    throw 'LOD generator completion response lost request envelope correlation.'
+}
+
 $incompatibleResponse = Invoke-BridgeHostRequest -Request @{
     jsonrpc = '2.0'
     id = 'handshake_incompatible'

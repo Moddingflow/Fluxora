@@ -38,7 +38,7 @@ describe('build refresh loading', () => {
     expect(styles).toContain('.mod-list-row--skeleton,');
     expect(styles).toContain('.plugin-row--skeleton {');
     expect(styles).toContain('min-height: 48px;');
-    expect(styles).toContain('.workspace-skeleton');
+    expect(styles).toContain('.flx-skeleton');
   });
 
   it('uses table-shaped first paint and keeps generic loading strips out of workspace refreshes', () => {

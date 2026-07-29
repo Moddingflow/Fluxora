@@ -862,6 +862,53 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(InstanceMetadataStoreTests, CreateProfileOrderSeparatorAppendsAfterTheLastModForNegativeTarget)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path firstMod = mods / L"First Mod";
+        const std::filesystem::path lastMod = mods / L"Last Mod";
+
+        writeTextFile(firstMod / L"Data" / L"First.esp", "plugin");
+        writeTextFile(lastMod / L"Data" / L"Last.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{firstMod, L"First Mod", {}, true, {}},
+                InstalledModImportRecord{lastMod, L"Last Mod", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"separator", {}, L"Existing Group"},
+                ProfileOrderImportItemRecord{L"mod", L"First Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Last Mod", {}}
+            });
+
+        const std::vector<ProfileOrderItemRecord> order =
+            InstanceMetadataStore::createProfileOrderSeparator(
+                project,
+                L"Default",
+                L"New Empty Group",
+                -1,
+                mods);
+
+        ASSERT_EQ(order.size(), 4U);
+        EXPECT_EQ(order[0].kind, L"separator");
+        EXPECT_EQ(order[1].mod.folderName, L"First Mod");
+        EXPECT_EQ(order[2].mod.folderName, L"Last Mod");
+        EXPECT_EQ(order[3].kind, L"separator");
+        EXPECT_EQ(order[3].separatorTitle, L"New Empty Group");
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, SetAllInstalledModsEnabledKeepsPortableManifestsCurrent)
     {
 #ifndef _WIN32
@@ -2100,7 +2147,9 @@ namespace fluxora::tests
         EXPECT_EQ(InstallOperationStore::list(project, false).size(), 1U);
     }
 
-    TEST(InstanceMetadataStoreTests, VersionEightMigrationAddsFileUpdateStateAndBaselineSweep)
+    TEST(
+        InstanceMetadataStoreTests,
+        VersionEightMigrationSeedsMissingBaselineWithoutOverwritingKnownLatest)
     {
 #if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
         GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
@@ -2122,6 +2171,21 @@ namespace fluxora::tests
                 L"100",
                 L"200",
                 L"nxm://skyrimspecialedition/mods/100/files/200"});
+        const std::filesystem::path knownLatestPath = mods / L"Known Latest Nexus Mod";
+        writeTextFile(knownLatestPath / L"Data" / L"known.bin", "known");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            knownLatestPath,
+            L"Known Latest Nexus Mod",
+            L"2.3",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"101",
+                L"201",
+                L"nxm://skyrimspecialedition/mods/101/files/201",
+                {},
+                L"2.3.1"});
 
         const std::filesystem::path database = project / L"instance.db";
         sqliteExec(database, "DROP TABLE mod_update_sweeps;");
@@ -2147,6 +2211,11 @@ namespace fluxora::tests
         EXPECT_EQ(mod->source.latestVersion, L"opaque-v1");
         EXPECT_EQ(mod->source.latestFileId, L"200");
         EXPECT_EQ(mod->source.updateCheckState, L"baseline_pending");
+        const InstalledModRecord* knownLatest =
+            findInstalledMod(records, L"Known Latest Nexus Mod");
+        ASSERT_NE(knownLatest, nullptr);
+        EXPECT_EQ(knownLatest->source.latestVersion, L"2.3.1");
+        EXPECT_EQ(knownLatest->source.updateCheckState, L"baseline_pending");
 #endif
     }
 
@@ -2385,6 +2454,87 @@ namespace fluxora::tests
         EXPECT_EQ(after[2].id, before[2].id);
         EXPECT_EQ(after[3].id, before[3].id);
         EXPECT_EQ(after[4].id, finalized.orderId);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ReplacementPreservesStableOrderIdentityBesideEmptySeparator)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Replacement Order";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path target = mods / L"Target Mod";
+        const std::filesystem::path trailing = mods / L"Trailing Mod";
+        writeTextFile(target / L"Data" / L"Target.esp", "old");
+        writeTextFile(trailing / L"Data" / L"Trailing.esp", "trailing");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{target, L"Target Mod", L"1.0.0", true, {}},
+                InstalledModImportRecord{trailing, L"Trailing Mod", L"1.0.0", true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"separator", {}, L"Empty Section"},
+                ProfileOrderImportItemRecord{L"separator", {}, L"Target Section"},
+                ProfileOrderImportItemRecord{L"mod", L"Target Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Trailing Mod", {}}
+            });
+        const std::vector<ProfileOrderItemRecord> before =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        ASSERT_EQ(before.size(), 4U);
+        ASSERT_TRUE(before[2].hasMod);
+
+        InstanceMetadataStore::beginPendingInstallSession(
+            project,
+            L"op_replace_stable_order",
+            L"Default",
+            InstallConflictPreviewMode::Replace,
+            L"pending-install:op_replace_stable_order",
+            before[2].mod.uuid,
+            2,
+            before[1].id,
+            before[2].id);
+        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+            project,
+            L"op_replace_stable_order",
+            {InstallConflictFile{L"Data/Target.esp", 3, L"1"}}));
+        writeTextFile(target / L"Data" / L"Target.esp", "new");
+
+        const FinalizedPendingInstallRecord finalized =
+            InstanceMetadataStore::finalizePendingInstalledMod(
+                project,
+                L"op_replace_stable_order",
+                target,
+                L"Target Mod",
+                L"2.0.0",
+                ModSourceRecord{L"local"});
+        const PendingInstallSessionRecord delayedRebase =
+            InstanceMetadataStore::rebasePendingInstallSession(
+                project,
+                L"op_replace_stable_order",
+                before[0].id,
+                before[1].id,
+                1);
+        const std::vector<ProfileOrderItemRecord> after =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+
+        EXPECT_EQ(finalized.mod.uuid, before[2].mod.uuid);
+        EXPECT_EQ(finalized.orderId, before[2].id);
+        EXPECT_EQ(delayedRebase.state, L"completed");
+        EXPECT_EQ(delayedRebase.finalOrderId, before[2].id);
+        ASSERT_EQ(after.size(), before.size());
+        for (std::size_t index = 0; index < before.size(); ++index)
+        {
+            EXPECT_EQ(after[index].id, before[index].id);
+        }
 #endif
     }
 }

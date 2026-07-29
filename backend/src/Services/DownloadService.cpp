@@ -31,6 +31,7 @@
 #include <cwctype>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -167,6 +168,7 @@ namespace fluxora
             std::wstring fileId;
             std::wstring nexusModName;
             std::wstring version;
+            std::wstring downloadedFileVersion;
             std::wstring latestVersion;
             std::wstring installedModName;
             std::wstring installedAtUtc;
@@ -678,6 +680,152 @@ namespace fluxora
             return trim(std::move(sanitized));
         }
 
+        bool isReservedDownloadFileName(std::wstring_view value)
+        {
+            std::wstring name(value);
+            const std::size_t dot = name.find(L'.');
+            if (dot != std::wstring::npos)
+            {
+                name.resize(dot);
+            }
+            name = toLower(std::move(name));
+            if (name == L"con" || name == L"prn" || name == L"aux" || name == L"nul")
+            {
+                return true;
+            }
+            if (name.size() != 4 || (name.rfind(L"com", 0) != 0 && name.rfind(L"lpt", 0) != 0))
+            {
+                return false;
+            }
+            return name[3] >= L'1' && name[3] <= L'9';
+        }
+
+        std::wstring validateDownloadRenameBaseName(
+            std::wstring_view value,
+            std::wstring_view archiveSuffix)
+        {
+            constexpr std::wstring_view invalidCharacters = L"<>:\"/\\|?*";
+            std::wstring name = trimWhitespace(std::wstring(value));
+            if (name.empty())
+            {
+                throw std::invalid_argument("Download name is required.");
+            }
+            if (name == L"." || name == L".." || name.back() == L'.' || name.back() == L' ')
+            {
+                throw std::invalid_argument("Download name cannot end with a dot or space.");
+            }
+            if (std::any_of(name.begin(), name.end(), [](wchar_t character)
+                {
+                    return character < 32 || invalidCharacters.find(character) != std::wstring_view::npos;
+                }))
+            {
+                throw std::invalid_argument("Download name contains invalid path characters.");
+            }
+            if (isReservedDownloadFileName(name))
+            {
+                throw std::invalid_argument("Download name is reserved by Windows.");
+            }
+            if (name.size() + archiveSuffix.size() > 255)
+            {
+                throw std::invalid_argument("Download name is too long.");
+            }
+            return name;
+        }
+
+        bool isResolutionQualifierToken(std::wstring_view token)
+        {
+            if (token.size() >= 2 && token.back() == L'k')
+            {
+                return std::all_of(
+                    token.begin(),
+                    token.end() - 1,
+                    [](wchar_t character)
+                    {
+                        return std::iswdigit(character) != 0;
+                    });
+            }
+
+            const auto isPowerOfTwoTextureSize = [](std::wstring_view value)
+            {
+                if (value.empty() || !std::all_of(
+                        value.begin(),
+                        value.end(),
+                        [](wchar_t character)
+                        {
+                            return std::iswdigit(character) != 0;
+                        }))
+                {
+                    return false;
+                }
+
+                std::uint64_t size = 0;
+                for (const wchar_t character : value)
+                {
+                    size = size * 10 + static_cast<std::uint64_t>(character - L'0');
+                    if (size > 65'536)
+                    {
+                        return false;
+                    }
+                }
+                return size >= 256 && (size & (size - 1)) == 0;
+            };
+
+            const std::size_t dimensionsSeparator = token.find(L'x');
+            if (dimensionsSeparator != std::wstring_view::npos)
+            {
+                return dimensionsSeparator > 0 &&
+                    dimensionsSeparator + 1 < token.size() &&
+                    isPowerOfTwoTextureSize(token.substr(0, dimensionsSeparator)) &&
+                    isPowerOfTwoTextureSize(token.substr(dimensionsSeparator + 1));
+            }
+            return isPowerOfTwoTextureSize(token);
+        }
+
+        bool hasMeaningfulInstallQualifier(std::wstring_view value)
+        {
+            const std::vector<std::wstring> tokens =
+                ModIdentityResolver::meaningfulTokens(value);
+            return std::any_of(tokens.begin(), tokens.end(), [](const std::wstring& token)
+            {
+                return !isResolutionQualifierToken(token);
+            });
+        }
+
+        std::wstring preferredNexusInstallName(
+            std::wstring_view archiveName,
+            std::wstring_view nexusModName)
+        {
+            const std::wstring cleanArchiveName = trim(std::wstring(archiveName));
+            const std::wstring cleanNexusModName = trim(std::wstring(nexusModName));
+            if (cleanNexusModName.empty())
+            {
+                return cleanArchiveName;
+            }
+
+            const std::wstring normalizedArchiveName =
+                ModIdentityResolver::normalizedName(cleanArchiveName);
+            const std::wstring normalizedNexusModName =
+                ModIdentityResolver::normalizedName(cleanNexusModName);
+            if (normalizedArchiveName == normalizedNexusModName)
+            {
+                return cleanNexusModName;
+            }
+
+            const std::wstring prefix = normalizedNexusModName + L' ';
+            if (normalizedNexusModName.empty() ||
+                !normalizedArchiveName.starts_with(prefix))
+            {
+                return cleanArchiveName;
+            }
+
+            const std::wstring_view qualifier(
+                normalizedArchiveName.data() + prefix.size(),
+                normalizedArchiveName.size() - prefix.size());
+            return hasMeaningfulInstallQualifier(qualifier)
+                ? cleanArchiveName
+                : cleanNexusModName;
+        }
+
         std::wstring preferredFomodInstallName(
             std::wstring_view archiveName,
             std::wstring_view moduleName)
@@ -703,7 +851,7 @@ namespace fluxora
                 const std::wstring_view suffix(
                     cleanArchiveName.data() + prefix.size(),
                     cleanArchiveName.size() - prefix.size());
-                if (!ModIdentityResolver::meaningfulTokens(suffix).empty())
+                if (hasMeaningfulInstallQualifier(suffix))
                 {
                     return cleanArchiveName;
                 }
@@ -2028,6 +2176,7 @@ namespace fluxora
             writer.field(L"fileId", metadata.fileId);
             writer.field(L"nexusModName", metadata.nexusModName);
             writer.field(L"version", metadata.version);
+            writer.field(L"downloadedFileVersion", metadata.downloadedFileVersion);
             writer.field(L"latestVersion", metadata.latestVersion);
             writer.field(L"destinationFileName", metadata.destinationFileName);
             writer.field(L"partialPath", metadata.partialPath.wstring());
@@ -2094,6 +2243,11 @@ namespace fluxora
                 if (const JsonValue* value = root.find(L"version"); value != nullptr && value->isString())
                 {
                     metadata.version = value->asString();
+                }
+                if (const JsonValue* value = root.find(L"downloadedFileVersion");
+                    value != nullptr && value->isString())
+                {
+                    metadata.downloadedFileVersion = value->asString();
                 }
                 if (const JsonValue* value = root.find(L"latestVersion"); value != nullptr && value->isString())
                 {
@@ -2270,6 +2424,10 @@ namespace fluxora
             if (!completedMetadata.version.empty())
             {
                 retained.version = completedMetadata.version;
+            }
+            if (!completedMetadata.downloadedFileVersion.empty())
+            {
+                retained.downloadedFileVersion = completedMetadata.downloadedFileVersion;
             }
             if (!completedMetadata.latestVersion.empty())
             {
@@ -3212,53 +3370,6 @@ namespace fluxora
             }
         }
 
-        bool isSameModFolderName(std::wstring_view actualName, std::wstring_view expectedName)
-        {
-            return toLower(sanitizeFileName(actualName)) == toLower(std::wstring(expectedName));
-        }
-
-        std::filesystem::path redundantRootDirectory(
-            const std::filesystem::path& stagingDirectory,
-            std::wstring_view modFolderName)
-        {
-            std::filesystem::path rootDirectory;
-            bool foundRoot = false;
-            for (const auto& entry : std::filesystem::directory_iterator(stagingDirectory))
-            {
-                if (foundRoot || !entry.is_directory())
-                {
-                    return {};
-                }
-
-                rootDirectory = entry.path();
-                foundRoot = true;
-            }
-
-            if (!foundRoot ||
-                !isSameModFolderName(rootDirectory.filename().wstring(), modFolderName))
-            {
-                return {};
-            }
-
-            return rootDirectory;
-        }
-
-        void moveDirectoryContents(
-            const std::filesystem::path& sourceDirectory,
-            const std::filesystem::path& destinationDirectory)
-        {
-            std::vector<std::filesystem::path> children;
-            for (const auto& entry : std::filesystem::directory_iterator(sourceDirectory))
-            {
-                children.push_back(entry.path());
-            }
-
-            for (const std::filesystem::path& child : children)
-            {
-                std::filesystem::rename(child, destinationDirectory / child.filename());
-            }
-        }
-
         void copyDirectoryContentsOverwriting(
             const std::filesystem::path& sourceDirectory,
             const std::filesystem::path& destinationDirectory)
@@ -3313,6 +3424,102 @@ namespace fluxora
             }
         }
 
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        using InstalledDirectoryRenameHook = std::function<std::error_code(
+            const std::filesystem::path&,
+            const std::filesystem::path&)>;
+        std::mutex installedDirectoryRenameHookMutex;
+        InstalledDirectoryRenameHook installedDirectoryRenameHook;
+#endif
+
+        [[nodiscard]] std::error_code renameInstalledDirectoryOnce(
+            const std::filesystem::path& source,
+            const std::filesystem::path& destination)
+        {
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            InstalledDirectoryRenameHook hook;
+            {
+                std::lock_guard hookLock(installedDirectoryRenameHookMutex);
+                hook = installedDirectoryRenameHook;
+            }
+            if (hook)
+            {
+                return hook(source, destination);
+            }
+#endif
+            std::error_code error;
+            std::filesystem::rename(source, destination, error);
+            return error;
+        }
+
+        [[nodiscard]] bool isTransientInstalledDirectoryRenameError(
+            const std::error_code& error) noexcept
+        {
+            if (error == std::errc::permission_denied ||
+                error == std::errc::device_or_resource_busy)
+            {
+                return true;
+            }
+#ifdef _WIN32
+            return error.category() == std::system_category() &&
+                (error.value() == ERROR_ACCESS_DENIED ||
+                 error.value() == ERROR_SHARING_VIOLATION ||
+                 error.value() == ERROR_LOCK_VIOLATION);
+#else
+            return false;
+#endif
+        }
+
+        void renameInstalledDirectoryWithRetry(
+            const std::filesystem::path& source,
+            const std::filesystem::path& destination,
+            Logger* logger)
+        {
+            constexpr std::array<std::chrono::milliseconds, 7> retryDelays{
+                std::chrono::milliseconds{25},
+                std::chrono::milliseconds{50},
+                std::chrono::milliseconds{100},
+                std::chrono::milliseconds{200},
+                std::chrono::milliseconds{400},
+                std::chrono::milliseconds{800},
+                std::chrono::milliseconds{1000}
+            };
+
+            for (std::size_t attempt = 0;; ++attempt)
+            {
+                const std::error_code error = renameInstalledDirectoryOnce(source, destination);
+                if (!error)
+                {
+                    return;
+                }
+                const bool transient = isTransientInstalledDirectoryRenameError(error);
+                if (!transient)
+                {
+                    throw std::filesystem::filesystem_error(
+                        "rename",
+                        source,
+                        destination,
+                        error);
+                }
+                if (attempt >= retryDelays.size())
+                {
+                    throw InstallTargetBusyError{};
+                }
+                if (logger != nullptr)
+                {
+                    logger->writeOperation(
+                        LogLevel::Warning,
+                        "InstallTransaction",
+                        "Transient directory rename lock; retry=" +
+                            std::to_string(attempt + 1) +
+                            ", source=\"" + toUtf8(source.wstring()) +
+                            "\", destination=\"" + toUtf8(destination.wstring()) +
+                            "\", reason=\"" + error.message() + "\".");
+                }
+                std::this_thread::sleep_for(retryDelays[attempt]);
+            }
+        }
+
         class InstalledDirectoryCommit final
         {
         public:
@@ -3356,24 +3563,36 @@ namespace fluxora
                 writeJournal(L"prepared", stagingDirectory);
                 if (targetExisted_)
                 {
-                    std::filesystem::rename(targetDirectory, backupDirectory_);
+                    renameInstalledDirectoryWithRetry(
+                        targetDirectory,
+                        backupDirectory_,
+                        logger_);
+                    recoveryPending_ = true;
                     writeJournal(L"targetBackedUp", stagingDirectory);
                 }
 
                 try
                 {
-                    std::filesystem::rename(stagingDirectory, targetDirectory);
+                    renameInstalledDirectoryWithRetry(
+                        stagingDirectory,
+                        targetDirectory,
+                        logger_);
                     active_ = true;
+                    recoveryPending_ = false;
                     writeJournal(L"promoted", stagingDirectory);
                 }
                 catch (const std::exception&)
                 {
+                    const std::exception_ptr promotionFailure = std::current_exception();
                     if (!backupDirectory_.empty() && !std::filesystem::exists(targetDirectory))
                     {
-                        std::error_code restoreError;
-                        std::filesystem::rename(backupDirectory_, targetDirectory, restoreError);
+                        renameInstalledDirectoryWithRetry(
+                            backupDirectory_,
+                            targetDirectory_,
+                            logger_);
+                        recoveryPending_ = false;
                     }
-                    throw;
+                    std::rethrow_exception(promotionFailure);
                 }
             }
 
@@ -3397,6 +3616,7 @@ namespace fluxora
                 }
                 InstallTransactionJournal::remove(projectDirectory_, operationId_);
                 active_ = false;
+                recoveryPending_ = false;
             }
 
         private:
@@ -3432,7 +3652,10 @@ namespace fluxora
             {
                 if (!active_)
                 {
-                    InstallTransactionJournal::remove(projectDirectory_, operationId_);
+                    if (!recoveryPending_)
+                    {
+                        InstallTransactionJournal::remove(projectDirectory_, operationId_);
+                    }
                     return;
                 }
                 try
@@ -3463,6 +3686,7 @@ namespace fluxora
             std::filesystem::path backupDirectory_;
             bool targetExisted_{false};
             bool active_{false};
+            bool recoveryPending_{false};
         };
 
         void replaceDirectoryWithStaging(
@@ -3562,33 +3786,6 @@ namespace fluxora
                         InstallConflictPreviewService::normalizedPathKey(right.relativePath);
                 });
             return files;
-        }
-
-        void flattenRedundantModRootDirectory(
-            const std::filesystem::path& stagingDirectory,
-            std::wstring_view modFolderName)
-        {
-            const std::filesystem::path rootDirectory = redundantRootDirectory(stagingDirectory, modFolderName);
-            if (rootDirectory.empty())
-            {
-                return;
-            }
-
-            const std::filesystem::path temporaryRootDirectory = uniquePath(
-                stagingDirectory.parent_path(),
-                L"." + std::wstring(modFolderName) + L".root");
-            std::filesystem::rename(rootDirectory, temporaryRootDirectory);
-
-            try
-            {
-                moveDirectoryContents(temporaryRootDirectory, stagingDirectory);
-                std::filesystem::remove(temporaryRootDirectory);
-            }
-            catch (const std::exception&)
-            {
-                std::filesystem::remove_all(temporaryRootDirectory);
-                throw;
-            }
         }
 
         std::wstring readXmlElementText(std::wstring_view text, std::wstring_view elementName)
@@ -3720,15 +3917,41 @@ namespace fluxora
             return {};
         }
 
+        std::wstring downloadedFileVersionFromMetadata(const DownloadMetadata& metadata)
+        {
+            if (std::wstring version = trim(metadata.downloadedFileVersion); !version.empty())
+            {
+                return version;
+            }
+
+            // Legacy completed Nexus sidecars did not persist an immutable file-version
+            // field. At download completion both version fields were sourced from the
+            // exact file response; the old installer could later overwrite only
+            // `version` with stale embedded FOMOD metadata.
+            if (metadata.lastRequestedUnixMs != 0 &&
+                !metadata.isDownloading &&
+                !trim(metadata.gameDomain).empty() &&
+                !trim(metadata.modId).empty() &&
+                !trim(metadata.fileId).empty())
+            {
+                if (std::wstring version = trim(metadata.latestVersion); !version.empty())
+                {
+                    return version;
+                }
+            }
+
+            return trim(metadata.version);
+        }
+
         std::wstring detectInstalledModVersion(
             const std::filesystem::path& stagingDirectory,
             const std::filesystem::path& archivePath,
             const DownloadMetadata& metadata,
             std::wstring_view installName)
         {
-            if (!trim(metadata.version).empty())
+            if (std::wstring version = downloadedFileVersionFromMetadata(metadata); !version.empty())
             {
-                return trim(metadata.version);
+                return version;
             }
 
             if (std::wstring version = versionFromFomodInfo(stagingDirectory); !version.empty())
@@ -3783,7 +4006,10 @@ namespace fluxora
             }
             const std::wstring stem = path.stem().wstring();
 
-            std::wstring name = std::filesystem::path(fileName).stem().wstring();
+            const std::wstring displaySuffix = archiveExtensionFromFileName(fileName);
+            std::wstring name = !displaySuffix.empty() && fileName.size() > displaySuffix.size()
+                ? fileName.substr(0, fileName.size() - displaySuffix.size())
+                : std::filesystem::path(fileName).stem().wstring();
             if (name.empty())
             {
                 name = stem;
@@ -4639,6 +4865,15 @@ namespace fluxora
                 return handle_;
             }
 
+            void reset(HANDLE handle = nullptr) noexcept
+            {
+                if (handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE)
+                {
+                    CloseHandle(handle_);
+                }
+                handle_ = handle;
+            }
+
         private:
             HANDLE handle_{nullptr};
         };
@@ -4929,6 +5164,108 @@ namespace fluxora
                 return false;
             }
             return true;
+        }
+
+        [[nodiscard]] std::string captureHiddenProcessOutput(
+            std::wstring commandLine,
+            std::wstring_view processName,
+            const Logger& logger)
+        {
+            wchar_t temporaryDirectory[MAX_PATH + 1]{};
+            wchar_t temporaryFile[MAX_PATH + 1]{};
+            if (GetTempPathW(MAX_PATH, temporaryDirectory) == 0 ||
+                GetTempFileNameW(temporaryDirectory, L"flx", 0, temporaryFile) == 0)
+            {
+                throw std::runtime_error("Failed to create archive index output file.");
+            }
+            const std::filesystem::path outputPath(temporaryFile);
+
+            try
+            {
+                SECURITY_ATTRIBUTES security{};
+                security.nLength = sizeof(security);
+                security.bInheritHandle = TRUE;
+                OwnedWinHandle outputHandle(CreateFileW(
+                    outputPath.c_str(),
+                    GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_DELETE,
+                    &security,
+                    CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_TEMPORARY,
+                    nullptr));
+                if (outputHandle.get() == INVALID_HANDLE_VALUE)
+                {
+                    throw std::runtime_error("Failed to open archive index output file.");
+                }
+
+                STARTUPINFOW startupInfo{};
+                startupInfo.cb = sizeof(startupInfo);
+                startupInfo.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+                startupInfo.wShowWindow = SW_HIDE;
+                startupInfo.hStdOutput = outputHandle.get();
+                startupInfo.hStdError = outputHandle.get();
+                startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+                PROCESS_INFORMATION processInfo{};
+                std::vector<wchar_t> buffer(commandLine.begin(), commandLine.end());
+                buffer.push_back(L'\0');
+                if (!CreateProcessW(
+                        nullptr,
+                        buffer.data(),
+                        nullptr,
+                        nullptr,
+                        TRUE,
+                        CREATE_NO_WINDOW,
+                        nullptr,
+                        nullptr,
+                        &startupInfo,
+                        &processInfo))
+                {
+                    throw std::runtime_error("Failed to launch archive indexer.");
+                }
+
+                const OwnedWinHandle threadHandle(processInfo.hThread);
+                const OwnedWinHandle processHandle(processInfo.hProcess);
+                const DWORD waitResult = WaitForSingleObject(
+                    processHandle.get(),
+                    static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        externalProcessTimeout).count()));
+                if (waitResult != WAIT_OBJECT_0)
+                {
+                    (void)TerminateProcess(processHandle.get(), ERROR_TIMEOUT);
+                    throw std::runtime_error("Archive indexer timed out.");
+                }
+                DWORD exitCode = ERROR_GEN_FAILURE;
+                if (GetExitCodeProcess(processHandle.get(), &exitCode) == FALSE || exitCode != ERROR_SUCCESS)
+                {
+                    logger.writeOperation(
+                        LogLevel::Warning,
+                        "ArchiveIndex",
+                        "Archive indexer returned a failure. process=\"" +
+                            toUtf8(std::wstring(processName)) + "\", exitCode=" +
+                            std::to_string(exitCode) + ".");
+                    throw std::runtime_error("Archive indexer could not read the archive.");
+                }
+
+                (void)FlushFileBuffers(outputHandle.get());
+                outputHandle.reset();
+                std::error_code sizeError;
+                const std::uintmax_t outputSize = std::filesystem::file_size(outputPath, sizeError);
+                constexpr std::uintmax_t maxIndexOutputBytes = 128ULL * 1024ULL * 1024ULL;
+                if (sizeError || outputSize > maxIndexOutputBytes)
+                {
+                    throw std::runtime_error("Archive index output is too large.");
+                }
+                const std::string output = readTextFile(outputPath);
+                std::filesystem::remove(outputPath);
+                return output;
+            }
+            catch (...)
+            {
+                std::error_code cleanupError;
+                std::filesystem::remove(outputPath, cleanupError);
+                throw;
+            }
         }
 #endif
 
@@ -5456,6 +5793,196 @@ namespace fluxora
                 offset = nextOffset;
             }
 
+            return entries;
+        }
+
+        [[nodiscard]] std::vector<ContentLayoutArchiveEntry> indexArchiveWith7Zip(
+            const std::filesystem::path& archivePath,
+            const Logger& logger)
+        {
+#ifdef _WIN32
+            std::filesystem::path executable;
+            for (const std::wstring_view candidate : {L"7z.exe", L"7za.exe", L"7zz.exe"})
+            {
+                executable = findExtractorExecutable(candidate);
+                if (!executable.empty())
+                {
+                    break;
+                }
+            }
+            if (executable.empty())
+            {
+                throw std::runtime_error("7-Zip is required to index this archive format.");
+            }
+
+            const std::wstring command =
+                quoteCommandArgument(executable.wstring()) +
+                L" l -slt -ba -sccUTF-8 " + quoteCommandArgument(archivePath.wstring());
+            const std::wstring listing = fromUtf8(captureHiddenProcessOutput(command, L"7-Zip", logger));
+
+            std::set<std::wstring> seenEntryKeys;
+            std::vector<ContentLayoutArchiveEntry> entries;
+            std::wistringstream lines(listing);
+            std::wstring line;
+            std::wstring path;
+            bool isDirectory = false;
+            const auto finishEntry = [&]()
+            {
+                if (path.empty())
+                {
+                    isDirectory = false;
+                    return;
+                }
+                const std::filesystem::path safePath =
+                    validateSafeArchiveEntryPath(path, isDirectory, seenEntryKeys);
+                entries.push_back(ContentLayoutArchiveEntry{safePath, isDirectory});
+                path.clear();
+                isDirectory = false;
+            };
+
+            while (std::getline(lines, line))
+            {
+                if (!line.empty() && line.back() == L'\r')
+                {
+                    line.pop_back();
+                }
+                if (line.empty())
+                {
+                    finishEntry();
+                    continue;
+                }
+                constexpr std::wstring_view pathPrefix = L"Path = ";
+                constexpr std::wstring_view folderPrefix = L"Folder = ";
+                constexpr std::wstring_view attributesPrefix = L"Attributes = ";
+                if (line.rfind(pathPrefix, 0) == 0)
+                {
+                    if (!path.empty())
+                    {
+                        finishEntry();
+                    }
+                    path = line.substr(pathPrefix.size());
+                }
+                else if (line.rfind(folderPrefix, 0) == 0)
+                {
+                    isDirectory = line.substr(folderPrefix.size()) == L"+";
+                }
+                else if (line.rfind(attributesPrefix, 0) == 0)
+                {
+                    const std::wstring attributes = line.substr(attributesPrefix.size());
+                    isDirectory = isDirectory || (!attributes.empty() && attributes.front() == L'D');
+                }
+            }
+            finishEntry();
+            if (entries.empty())
+            {
+                throw std::runtime_error("Archive index does not contain entries.");
+            }
+            return entries;
+#else
+            (void)archivePath;
+            (void)logger;
+            throw std::runtime_error("7-Zip archive indexing is unavailable on this platform.");
+#endif
+        }
+
+        [[nodiscard]] bool supportsContentLayoutIndex(const std::filesystem::path& archivePath)
+        {
+            const std::wstring extension = archiveExtension(archivePath);
+            return extension == L".zip" || extension == L".fomod" || extension == L".omod" ||
+                extension == L".7z" || extension == L".7z.001" || extension == L".rar";
+        }
+
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        using ContentLayoutIndexProducerHook = std::function<void(
+            const std::filesystem::path&,
+            std::wstring_view)>;
+        std::mutex contentLayoutIndexProducerHookMutex;
+        ContentLayoutIndexProducerHook contentLayoutIndexProducerHook;
+
+        void runContentLayoutIndexProducerHook(
+            const std::filesystem::path& archivePath,
+            std::wstring_view archiveFingerprint)
+        {
+            ContentLayoutIndexProducerHook hook;
+            {
+                std::lock_guard lock(contentLayoutIndexProducerHookMutex);
+                hook = contentLayoutIndexProducerHook;
+            }
+            if (hook)
+            {
+                hook(archivePath, archiveFingerprint);
+            }
+        }
+#endif
+
+        [[nodiscard]] std::vector<ContentLayoutArchiveEntry> cachedArchiveContentIndex(
+            const std::filesystem::path& archivePath,
+            std::wstring_view archiveFingerprint,
+            const Logger& logger)
+        {
+            struct CachedIndex
+            {
+                std::vector<ContentLayoutArchiveEntry> entries;
+                std::uint64_t lastUse{0};
+            };
+            static std::mutex cacheMutex;
+            static std::map<std::wstring, CachedIndex> cache;
+            static std::uint64_t useCounter = 0;
+            constexpr std::size_t maxCachedIndexes = 32;
+
+            const std::wstring key = std::wstring(archiveFingerprint) +
+                L"|format=" + archiveExtension(archivePath);
+            {
+                std::lock_guard lock(cacheMutex);
+                const auto found = cache.find(key);
+                if (found != cache.end())
+                {
+                    found->second.lastUse = ++useCounter;
+                    return found->second.entries;
+                }
+            }
+
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            runContentLayoutIndexProducerHook(archivePath, archiveFingerprint);
+#endif
+            std::vector<ContentLayoutArchiveEntry> entries;
+            const std::wstring extension = archiveExtension(archivePath);
+            if (extension == L".zip" || extension == L".fomod" || extension == L".omod")
+            {
+                const std::vector<ZipArchiveEntry> zipEntries = indexZipArchive(archivePath);
+                entries.reserve(zipEntries.size());
+                for (const ZipArchiveEntry& entry : zipEntries)
+                {
+                    entries.push_back(ContentLayoutArchiveEntry{entry.relativePath, entry.isDirectory});
+                }
+            }
+            else if (extension == L".7z" || extension == L".7z.001" || extension == L".rar")
+            {
+                entries = indexArchiveWith7Zip(archivePath, logger);
+            }
+            else
+            {
+                throw std::invalid_argument("Content layout preview supports ZIP, 7z, and RAR archives.");
+            }
+
+            {
+                std::lock_guard lock(cacheMutex);
+                cache[key] = CachedIndex{entries, ++useCounter};
+                if (cache.size() > maxCachedIndexes)
+                {
+                    const auto oldest = std::min_element(
+                        cache.begin(),
+                        cache.end(),
+                        [](const auto& left, const auto& right)
+                        {
+                            return left.second.lastUse < right.second.lastUse;
+                        });
+                    if (oldest != cache.end())
+                    {
+                        cache.erase(oldest);
+                    }
+                }
+            }
             return entries;
         }
 
@@ -7130,7 +7657,6 @@ namespace fluxora
         void materializeArchiveInstallCachePayload(
             const std::filesystem::path& archivePath,
             const std::filesystem::path& destinationDirectory,
-            std::wstring_view safeName,
             const Logger& logger)
         {
             const bool extracted = extractArchiveToDirectory(archivePath, destinationDirectory, logger);
@@ -7139,8 +7665,6 @@ namespace fluxora
                 std::filesystem::copy_file(archivePath, destinationDirectory / archivePath.filename());
                 return;
             }
-
-            flattenRedundantModRootDirectory(destinationDirectory, safeName);
         }
 
         [[nodiscard]] std::wstring archiveInstallStagingCacheKey(
@@ -7379,7 +7903,7 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             bool hasFomodOutput,
             std::wstring archiveContentHash,
-            const std::vector<PlacementOverride>& placementOverrides,
+            const PlacementEdits& placementEdits,
             Logger& logger)
         {
             const std::wstring gameId = InstanceMetadataStore::gameId(projectDirectory);
@@ -7408,16 +7932,119 @@ namespace fluxora
             request.selectedGameDisplayName = lookup.support->identity().displayName;
             request.selectedGameCapabilities = lookup.support->capabilities();
             request.rulesProvider = components.contentLayoutRulesProvider;
+            request.assessmentPolicy = components.contentLayoutAssessmentPolicy;
             request.installMode = contentLayoutInstallMode(existingModMode);
             request.hasFomodOutput = hasFomodOutput;
             request.archiveContentHash = std::move(archiveContentHash);
             request.gameDefinitionVersion = lookup.definition->definitionVersion;
-            request.manualOverrides = placementOverrides;
+            request.placementEdits = placementEdits;
             request.logger = &logger;
 
             const PlacementPlan plan = layout.analyzeDirectory(stagingDirectory, request);
             logContentLayoutPlan(logger, plan);
             return plan;
+        }
+
+        [[nodiscard]] PlacementPlan analyzeContentLayoutForStaging(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& stagingDirectory,
+            ExistingModInstallMode existingModMode,
+            bool hasFomodOutput,
+            std::wstring archiveContentHash,
+            const std::vector<PlacementOverride>& placementOverrides,
+            Logger& logger)
+        {
+            PlacementEdits edits;
+            edits.files = placementOverrides;
+            return analyzeContentLayoutForStaging(
+                projectDirectory,
+                stagingDirectory,
+                existingModMode,
+                hasFomodOutput,
+                std::move(archiveContentHash),
+                edits,
+                logger);
+        }
+
+        [[nodiscard]] PlacementPlan analyzeContentLayoutForEntries(
+            const std::filesystem::path& projectDirectory,
+            std::vector<ContentLayoutArchiveEntry> entries,
+            ExistingModInstallMode existingModInstallMode,
+            std::wstring archiveContentFingerprint,
+            const PlacementEdits& placementEdits,
+            Logger& logger)
+        {
+            const std::wstring gameId = InstanceMetadataStore::gameId(projectDirectory);
+            if (gameId.empty())
+            {
+                throw std::invalid_argument("Project does not have a selected game for content layout rules.");
+            }
+            const GameSupportRegistry& registry = GameSupportRegistry::embedded();
+            const GameSupportLookupResult lookup = registry.lookupById(gameId);
+            if (!lookup.supported || lookup.support == nullptr || lookup.definition == nullptr)
+            {
+                throw std::invalid_argument("Selected game is not supported by Fluxora content layout rules.");
+            }
+            const GameSupportComponents& components = lookup.support->components();
+            if (components.contentLayoutRulesProvider == nullptr ||
+                !lookup.support->capabilities().has(GameCapability::ContentLayoutRules))
+            {
+                throw std::invalid_argument("Selected game does not support content layout rules.");
+            }
+
+            ContentLayoutAnalysisRequest request;
+            request.selectedGameId = lookup.support->identity().id;
+            request.selectedGameDisplayName = lookup.support->identity().displayName;
+            request.selectedGameCapabilities = lookup.support->capabilities();
+            request.rulesProvider = components.contentLayoutRulesProvider;
+            request.assessmentPolicy = components.contentLayoutAssessmentPolicy;
+            request.archiveFileTree = std::move(entries);
+            request.installMode = contentLayoutInstallMode(existingModInstallMode);
+            request.archiveContentHash = std::move(archiveContentFingerprint);
+            request.gameDefinitionVersion = lookup.definition->definitionVersion;
+            request.placementEdits = placementEdits;
+            request.logger = &logger;
+
+            ContentLayoutService layout;
+            PlacementPlan plan = layout.analyze(request);
+            logContentLayoutPlan(logger, plan);
+            return plan;
+        }
+
+        void applyContentLayoutToStaging(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& stagingDirectory,
+            ExistingModInstallMode existingModMode,
+            bool hasFomodOutput,
+            std::wstring archiveContentHash,
+            const PlacementEdits& placementEdits,
+            Logger& logger,
+            std::wstring_view expectedPlacementFingerprint = {},
+            std::wstring_view expectedEditFingerprint = {})
+        {
+            ContentLayoutService layout;
+            const PlacementPlan plan = analyzeContentLayoutForStaging(
+                projectDirectory,
+                stagingDirectory,
+                existingModMode,
+                hasFomodOutput,
+                std::move(archiveContentHash),
+                placementEdits,
+                logger);
+            if (!plan.canInstall())
+            {
+                throw std::invalid_argument(contentLayoutBlockerMessage(plan));
+            }
+            if ((!expectedPlacementFingerprint.empty() &&
+                 plan.placementFingerprint != expectedPlacementFingerprint) ||
+                (!expectedEditFingerprint.empty() &&
+                 plan.editFingerprint != expectedEditFingerprint))
+            {
+                throw std::runtime_error(
+                    "The extracted archive layout no longer matches the validated placement plan.");
+            }
+
+            layout.applyPlanToDirectory(stagingDirectory, plan);
         }
 
         void applyContentLayoutToStaging(
@@ -7429,21 +8056,18 @@ namespace fluxora
             const std::vector<PlacementOverride>& placementOverrides,
             Logger& logger)
         {
-            ContentLayoutService layout;
-            const PlacementPlan plan = analyzeContentLayoutForStaging(
+            PlacementEdits edits;
+            edits.files = placementOverrides;
+            applyContentLayoutToStaging(
                 projectDirectory,
                 stagingDirectory,
                 existingModMode,
                 hasFomodOutput,
                 std::move(archiveContentHash),
-                placementOverrides,
-                logger);
-            if (!plan.canInstall())
-            {
-                throw std::invalid_argument(contentLayoutBlockerMessage(plan));
-            }
-
-            layout.applyPlanToDirectory(stagingDirectory, plan);
+                edits,
+                logger,
+                {},
+                {});
         }
 
         InstalledMod installedModFromRecord(
@@ -7705,10 +8329,10 @@ namespace fluxora
             archiveCatalog.removeArchiveSidecar(path);
         }
 
-        class SameFileArchiveReplacement final
+        class DuplicateArchivePathReplacement final
         {
         public:
-            SameFileArchiveReplacement(
+            DuplicateArchivePathReplacement(
                 Logger& logger,
                 const std::filesystem::path& originalPath)
                 : logger_(logger),
@@ -7722,14 +8346,14 @@ namespace fluxora
                 logger_.writeOperation(
                     LogLevel::Info,
                     "NxmDuplicate",
-                    "choice=replace; phase=staged-existing-same-file; file=" +
+                    "choice=replace; phase=staged-existing-target; file=" +
                         toUtf8(originalPath_.filename().wstring()) + ".");
             }
 
-            SameFileArchiveReplacement(const SameFileArchiveReplacement&) = delete;
-            SameFileArchiveReplacement& operator=(const SameFileArchiveReplacement&) = delete;
+            DuplicateArchivePathReplacement(const DuplicateArchivePathReplacement&) = delete;
+            DuplicateArchivePathReplacement& operator=(const DuplicateArchivePathReplacement&) = delete;
 
-            ~SameFileArchiveReplacement()
+            ~DuplicateArchivePathReplacement()
             {
                 rollbackNoThrow();
             }
@@ -7752,7 +8376,7 @@ namespace fluxora
                     std::filesystem::exists(originalPath_))
                 {
                     throw std::runtime_error(
-                        "The identical Nexus archive could not be promoted to its original name.");
+                        "The replacement Nexus archive could not be promoted to its clean name.");
                 }
 
                 std::filesystem::rename(downloadedPath, originalPath_);
@@ -7766,13 +8390,13 @@ namespace fluxora
                 if (error || !removed)
                 {
                     throw std::runtime_error(
-                        "The staged identical Nexus archive could not be removed after replacement.");
+                        "The staged Nexus archive could not be removed after replacement.");
                 }
                 active_ = false;
                 logger_.writeOperation(
                     LogLevel::Info,
                     "NxmDuplicate",
-                    "choice=replace; phase=committed-same-file-name.");
+                    "choice=replace; phase=committed-clean-name.");
             }
 
         private:
@@ -7793,8 +8417,8 @@ namespace fluxora
                         error ? LogLevel::Error : LogLevel::Warning,
                         "NxmDuplicate",
                         error
-                            ? "choice=replace; phase=rollback-same-file-failed; error=" + error.message() + "."
-                            : "choice=replace; phase=rolled-back-same-file.");
+                            ? "choice=replace; phase=rollback-clean-name-failed; error=" + error.message() + "."
+                            : "choice=replace; phase=rolled-back-clean-name.");
                 }
                 catch (...)
                 {
@@ -8212,13 +8836,28 @@ namespace fluxora
             DownloadMetadata metadata,
             bool persistMetadata,
             const char* logKind,
-            const std::vector<PlacementOverride>& placementOverrides,
+            const PlacementEdits& placementEdits,
             const ModIdentityInstallSelection* identitySelection,
             std::wstring_view profileName,
             int modOrderTargetIndex,
             const InstallConflictSnapshotCallback& conflictProgress)
         {
             const std::wstring archiveFingerprint = fileCacheFingerprint(archivePath);
+            std::optional<PlacementPlan> validatedIndexPlan;
+            if (supportsContentLayoutIndex(archivePath))
+            {
+                validatedIndexPlan = analyzeContentLayoutForEntries(
+                    projectDirectory,
+                    cachedArchiveContentIndex(archivePath, archiveFingerprint, logger),
+                    existingModMode,
+                    archiveFingerprint,
+                    placementEdits,
+                    logger);
+                if (!validatedIndexPlan->canInstall())
+                {
+                    throw std::invalid_argument(contentLayoutBlockerMessage(*validatedIndexPlan));
+                }
+            }
             const std::wstring requestedName = trim(std::wstring(modName));
             std::wstring installName = requestedName.empty()
                 ? metadata.nexusModName
@@ -8288,6 +8927,8 @@ namespace fluxora
                 safeName);
 
             const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
+            const std::wstring requestedFileVersion =
+                downloadedFileVersionFromMetadata(metadata);
             logger.writeOperation(
                 LogLevel::Info,
                 "ModInstall",
@@ -8304,13 +8945,18 @@ namespace fluxora
                         : "legacy") +
                     "\", identityTargetUuid=\"" +
                     (identitySelection == nullptr ? std::string{} : toUtf8(identitySelection->targetModUuid)) +
-                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    "\", placementEditCount=" + std::to_string(
+                        placementEdits.files.size() +
+                        placementEdits.directories.size() +
+                        placementEdits.excludedSourcePaths.size()) +
                     ", source=\"" + toUtf8(metadata.source) +
                     "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
-                    "\", modId=\"" + toUtf8(metadata.modId) +
-                    "\", fileId=\"" + toUtf8(metadata.fileId) +
-                    "\", versionResult=\"" +
-                    (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
+                     "\", modId=\"" + toUtf8(metadata.modId) +
+                     "\", fileId=\"" + toUtf8(metadata.fileId) +
+                     "\", versionResult=\"" +
+                    (requestedFileVersion.empty()
+                        ? std::string("metadata-unavailable")
+                        : toUtf8(requestedFileVersion)) + "\".");
 
             const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
             const bool targetExists = std::filesystem::exists(targetDirectory);
@@ -8377,7 +9023,7 @@ namespace fluxora
                 }
                 if (!copiedFromCachedPayload)
                 {
-                    materializeArchiveInstallCachePayload(archivePath, stagingDirectory, safeName, logger);
+                    materializeArchiveInstallCachePayload(archivePath, stagingDirectory, logger);
                 }
 
                 applyContentLayoutToStaging(
@@ -8386,8 +9032,14 @@ namespace fluxora
                     effectiveInstallMode,
                     false,
                     archiveFingerprint,
-                    placementOverrides,
-                    logger);
+                    placementEdits,
+                    logger,
+                    validatedIndexPlan.has_value()
+                        ? std::wstring_view(validatedIndexPlan->placementFingerprint)
+                        : std::wstring_view{},
+                    validatedIndexPlan.has_value()
+                        ? std::wstring_view(validatedIndexPlan->editFingerprint)
+                        : std::wstring_view{});
                 detectedVersion = detectInstalledModVersion(stagingDirectory, archivePath, metadata, safeName);
                 if (identitySelection != nullptr)
                 {
@@ -8457,7 +9109,10 @@ namespace fluxora
                     std::string("installMod failed kind=\"") + logKind +
                     "\", selectedGameId=\"" + toUtf8(selectedGameId) +
                     "\", safeName=\"" + toUtf8(safeName) +
-                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    "\", placementEditCount=" + std::to_string(
+                        placementEdits.files.size() +
+                        placementEdits.directories.size() +
+                        placementEdits.excludedSourcePaths.size()) +
                     ", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
                         "\", reason=\"" + exception.what() + "\".");
                 std::filesystem::remove_all(stagingDirectory);
@@ -8469,6 +9124,10 @@ namespace fluxora
             }
 
             metadata.version = detectedVersion;
+            if (trim(metadata.downloadedFileVersion).empty())
+            {
+                metadata.downloadedFileVersion = detectedVersion;
+            }
             if (metadata.latestVersion.empty())
             {
                 metadata.latestVersion = detectedVersion;
@@ -8539,7 +9198,10 @@ namespace fluxora
                     "\", installMode=\"" + installModeName(effectiveInstallMode) +
                     "\", targetWaitMs=" + std::to_string(targetLock.waitDuration().count()) +
                     ", commitWaitMs=" + std::to_string(commitWait.count()) +
-                    ", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    ", placementEditCount=" + std::to_string(
+                        placementEdits.files.size() +
+                        placementEdits.directories.size() +
+                        placementEdits.excludedSourcePaths.size()) +
                     ", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
@@ -8660,6 +9322,8 @@ namespace fluxora
                 safeName);
 
             const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
+            const std::wstring requestedFileVersion =
+                downloadedFileVersionFromMetadata(metadata);
             logger.writeOperation(
                 LogLevel::Info,
                 "ModInstall",
@@ -8683,7 +9347,9 @@ namespace fluxora
                     "\", selectedOptionCount=" + std::to_string(selectedOptionIds.size()) +
                     ", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                     ", versionResult=\"" +
-                    (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
+                    (requestedFileVersion.empty()
+                        ? std::string("metadata-unavailable")
+                        : toUtf8(requestedFileVersion)) + "\".");
 
             const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
             const bool targetExists = std::filesystem::exists(targetDirectory);
@@ -8791,7 +9457,11 @@ namespace fluxora
                         descriptor.profileContext.get()
                     });
 
-                    detectedVersion = trim(descriptor.moduleVersion);
+                    detectedVersion = downloadedFileVersionFromMetadata(metadata);
+                    if (detectedVersion.empty())
+                    {
+                        detectedVersion = trim(descriptor.moduleVersion);
+                    }
                     if (detectedVersion.empty())
                     {
                         detectedVersion = detectInstalledModVersion(packageDirectory, archivePath, metadata, safeName);
@@ -8892,6 +9562,10 @@ namespace fluxora
             }
 
             metadata.version = detectedVersion;
+            if (trim(metadata.downloadedFileVersion).empty())
+            {
+                metadata.downloadedFileVersion = detectedVersion;
+            }
             if (metadata.latestVersion.empty())
             {
                 metadata.latestVersion = detectedVersion;
@@ -9960,6 +10634,7 @@ namespace fluxora
                 result.latestVersion = result.version;
                 progressMetadata.nexusModName = result.nexusModName;
                 progressMetadata.version = result.version;
+                progressMetadata.downloadedFileVersion = result.version;
                 progressMetadata.latestVersion = result.latestVersion;
                 progressMetadata.destinationFileName =
                     L"nexus-fixture-" + request.fileId + L".zip";
@@ -9999,6 +10674,7 @@ namespace fluxora
                 result.latestVersion = fileInfo.version;
                 result.filePayloadJson = fileInfo.payloadJson;
                 progressMetadata.version = fileInfo.version;
+                progressMetadata.downloadedFileVersion = fileInfo.version;
                 progressMetadata.latestVersion = fileInfo.version;
 
                 if (!fileInfo.fileName.empty() || !fileInfo.displayName.empty())
@@ -10127,6 +10803,12 @@ namespace fluxora
                 requestedName);
             std::filesystem::create_directories(modsDirectory / allocated.folderName);
             return {allocated.displayName, allocated.folderName};
+        }
+
+        void setInstalledDirectoryRenameHook(InstalledDirectoryRenameHook hook)
+        {
+            std::lock_guard hookLock(installedDirectoryRenameHookMutex);
+            installedDirectoryRenameHook = std::move(hook);
         }
 
         void replaceDirectoryWithStagingForTest(
@@ -10271,6 +10953,13 @@ namespace fluxora
         {
             std::lock_guard<std::mutex> hookLock(installStagingCacheProducerHookMutex);
             installStagingCacheProducerHook = std::move(hook);
+        }
+
+        void setContentLayoutIndexProducerHook(
+            std::function<void(const std::filesystem::path&, std::wstring_view)> hook)
+        {
+            std::lock_guard hookLock(contentLayoutIndexProducerHookMutex);
+            contentLayoutIndexProducerHook = std::move(hook);
         }
 
         void setExternalFomodMetadataProbeHook(
@@ -10610,7 +11299,7 @@ namespace fluxora
 
             std::unique_ptr<DuplicateLineageGuard> lineageGuard;
             std::vector<std::unique_ptr<ArchiveUseGuard>> archiveGuards;
-            std::unique_ptr<SameFileArchiveReplacement> sameFileReplacement;
+            std::unique_ptr<DuplicateArchivePathReplacement> reclaimedDestination;
             if (job.duplicateChoice == DownloadDuplicateChoice::Replace)
             {
                 if (!job.duplicateDecision.has_value())
@@ -10632,6 +11321,7 @@ namespace fluxora
                     progressMetadata,
                     *job.duplicateDecision,
                     archiveCatalog_);
+                std::filesystem::path destinationToReclaim;
                 if (toLower(trim(job.duplicateDecision->direction)) == L"same-file")
                 {
                     if (validated.size() != 1U)
@@ -10639,12 +11329,36 @@ namespace fluxora
                         throw std::invalid_argument(
                             "An identical Nexus archive replacement requires one existing archive.");
                     }
-                    progressMetadata.destinationFileName =
-                        validated.front().path.filename().wstring();
+                    destinationToReclaim = validated.front().path;
+                }
+                else
+                {
+                    const std::wstring cleanFileName = sanitizeFileName(
+                        trim(progressMetadata.destinationFileName));
+                    if (!cleanFileName.empty())
+                    {
+                        const std::wstring cleanPathKey = normalizedPathText(
+                            job.directory / std::filesystem::path(cleanFileName));
+                        const auto matching = std::find_if(
+                            validated.begin(),
+                            validated.end(),
+                            [&](const ValidatedDuplicateArchive& archive)
+                            {
+                                return normalizedPathText(archive.path) == cleanPathKey;
+                            });
+                        if (matching != validated.end())
+                        {
+                            destinationToReclaim = matching->path;
+                        }
+                    }
+                }
+                if (!destinationToReclaim.empty())
+                {
+                    progressMetadata.destinationFileName = destinationToReclaim.filename().wstring();
                     writeMetadata(job.pendingPath, progressMetadata);
-                    sameFileReplacement = std::make_unique<SameFileArchiveReplacement>(
+                    reclaimedDestination = std::make_unique<DuplicateArchivePathReplacement>(
                         logger_,
-                        validated.front().path);
+                        destinationToReclaim);
                 }
             }
 
@@ -10674,8 +11388,8 @@ namespace fluxora
                 progressMetadata,
                 transferLimiter_,
                 duplicatePreflight,
-                sameFileReplacement
-                    ? sameFileReplacement->originalPath().filename().wstring()
+                reclaimedDestination
+                    ? reclaimedDestination->originalPath().filename().wstring()
                     : std::wstring());
             if (downloadedFile.awaitingDecision)
             {
@@ -10683,23 +11397,20 @@ namespace fluxora
             }
             if (!downloadedFile.path.empty())
             {
-                if (sameFileReplacement)
+                if (reclaimedDestination)
                 {
                     downloadedFile.path =
-                        sameFileReplacement->adoptDownloadedArchive(downloadedFile.path);
+                        reclaimedDestination->adoptDownloadedArchive(downloadedFile.path);
                 }
                 DownloadMetadata completedMetadata = metadataForRequest(link, L"", request, downloadedFile.nexusModName);
                 completedMetadata.version = downloadedFile.version;
+                completedMetadata.downloadedFileVersion = downloadedFile.version;
                 completedMetadata.latestVersion = downloadedFile.latestVersion;
                 completedMetadata.lastRequestedUnixMs = currentUnixMilliseconds();
                 ArchiveCatalogEntry retained;
                 {
                     const std::lock_guard completionLock(completedArchiveMetadataMutex);
-                    const bool replacingIdenticalArchive =
-                        job.duplicateChoice == DownloadDuplicateChoice::Replace &&
-                        job.duplicateDecision.has_value() &&
-                        toLower(trim(job.duplicateDecision->direction)) == L"same-file";
-                    retained = replacingIdenticalArchive
+                    retained = reclaimedDestination
                         ? archiveCatalog_.identifyArchive(job.projectDirectory, downloadedFile.path)
                         : archiveCatalog_.consolidateArchive(job.projectDirectory, downloadedFile.path);
                     persistCompletedArchiveMetadata(
@@ -10721,9 +11432,9 @@ namespace fluxora
                             }
                         }
                     }
-                    if (sameFileReplacement)
+                    if (reclaimedDestination)
                     {
-                        sameFileReplacement->commit();
+                        reclaimedDestination->commit();
                     }
                 }
                 removePendingNxmFile(job.pendingPath);
@@ -11392,6 +12103,7 @@ namespace fluxora
             DownloadMetadata completedMetadata =
                 metadataForRequest(link, L"", request, downloadedFile.nexusModName);
             completedMetadata.version = downloadedFile.version;
+            completedMetadata.downloadedFileVersion = downloadedFile.version;
             completedMetadata.latestVersion = downloadedFile.latestVersion;
             ArchiveCatalogEntry retained;
             {
@@ -11449,6 +12161,188 @@ namespace fluxora
             writeMetadata(imported.path, metadata);
         }
         return buildCatalogEntry(projectDirectory, imported.path);
+    }
+
+    DownloadEntry DownloadService::renameDownload(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& downloadPath,
+        std::wstring_view newBaseName) const
+    {
+        if (projectDirectory.empty() || downloadPath.empty())
+        {
+            throw std::invalid_argument("Project directory and download path are required.");
+        }
+
+        const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
+        if (!std::filesystem::is_regular_file(downloadPath))
+        {
+            throw std::invalid_argument("Download file does not exist.");
+        }
+        if (!std::filesystem::is_directory(directory) || !isPathInsideDirectory(downloadPath, directory))
+        {
+            throw std::invalid_argument("Download path is outside the project downloads directory.");
+        }
+
+        const DownloadMetadata metadata = readMetadata(downloadPath, true);
+        if (metadata.isDownloading)
+        {
+            throw std::invalid_argument("Download cannot be renamed while it is in progress.");
+        }
+
+        const std::wstring suffix = archiveExtension(downloadPath);
+        if (suffix.empty() || !ArchiveCatalogService::isSupportedArchiveFile(downloadPath))
+        {
+            throw std::invalid_argument("Only completed archive downloads can be renamed.");
+        }
+        const std::wstring safeBaseName = validateDownloadRenameBaseName(newBaseName, suffix);
+        const std::filesystem::path targetPath =
+            directory / std::filesystem::path(safeBaseName + suffix);
+        if (downloadPath == targetPath)
+        {
+            throw std::invalid_argument("Download rename requires a different name.");
+        }
+        std::error_code equivalenceError;
+        const bool caseOnlyRename =
+            std::filesystem::exists(targetPath) &&
+            std::filesystem::equivalent(downloadPath, targetPath, equivalenceError) &&
+            !equivalenceError;
+        if (std::filesystem::exists(targetPath) && !caseOnlyRename)
+        {
+            throw std::invalid_argument("A download with that name already exists.");
+        }
+
+        const PathSafetyService safety;
+        safety.validateDirectoryWriteRoot(directory)
+            .throwIfUnsafe("Downloads directory is unsafe");
+        safety.validateWritePath(directory, targetPath)
+            .throwIfUnsafe("Download rename target path is unsafe");
+
+        const ArchiveCatalogEntry archive = archiveCatalog_.identifyArchive(
+            projectDirectory,
+            downloadPath);
+        ArchiveUseGuard archiveUse(archive.sha256, false);
+
+        struct RenamePath
+        {
+            std::filesystem::path source;
+            std::filesystem::path target;
+            std::filesystem::path staging;
+            bool staged{false};
+            bool moved{false};
+        };
+
+        std::vector<RenamePath> paths{
+            {downloadPath, targetPath},
+            {metadataPath(downloadPath), metadataPath(targetPath)},
+            {progressSidecarPath(downloadPath), progressSidecarPath(targetPath)},
+            {cancelMarkerPath(downloadPath), cancelMarkerPath(targetPath)},
+            {ArchiveCatalogService::sidecarPathFor(downloadPath),
+             ArchiveCatalogService::sidecarPathFor(targetPath)},
+            {AtomicFileStore::backupPathFor(metadataPath(downloadPath)),
+             AtomicFileStore::backupPathFor(metadataPath(targetPath))},
+            {AtomicFileStore::backupPathFor(cancelMarkerPath(downloadPath)),
+             AtomicFileStore::backupPathFor(cancelMarkerPath(targetPath))},
+            {AtomicFileStore::backupPathFor(ArchiveCatalogService::sidecarPathFor(downloadPath)),
+             AtomicFileStore::backupPathFor(ArchiveCatalogService::sidecarPathFor(targetPath))}
+        };
+
+        for (const RenamePath& path : paths)
+        {
+            std::error_code pathEquivalenceError;
+            const bool sameExistingPath =
+                std::filesystem::exists(path.source) &&
+                std::filesystem::exists(path.target) &&
+                std::filesystem::equivalent(path.source, path.target, pathEquivalenceError) &&
+                !pathEquivalenceError;
+            if (std::filesystem::exists(path.source) &&
+                std::filesystem::exists(path.target) &&
+                !sameExistingPath)
+            {
+                throw std::invalid_argument("Download rename target state already exists.");
+            }
+        }
+
+        try
+        {
+            if (caseOnlyRename)
+            {
+                const std::wstring stagingPrefix =
+                    L".fluxora-download-rename-" + archive.sha256.substr(0, 12) + L"-";
+                for (std::size_t index = 0; index < paths.size(); ++index)
+                {
+                    RenamePath& path = paths[index];
+                    if (!std::filesystem::exists(path.source))
+                    {
+                        continue;
+                    }
+                    path.staging = directory /
+                        std::filesystem::path(stagingPrefix + std::to_wstring(index) + L".tmp");
+                    if (std::filesystem::exists(path.staging))
+                    {
+                        throw std::runtime_error("Download rename staging path already exists.");
+                    }
+                    std::filesystem::rename(path.source, path.staging);
+                    path.staged = true;
+                }
+                for (RenamePath& path : paths)
+                {
+                    if (!path.staged)
+                    {
+                        continue;
+                    }
+                    std::filesystem::rename(path.staging, path.target);
+                    path.staged = false;
+                    path.moved = true;
+                }
+            }
+            else
+            {
+                for (RenamePath& path : paths)
+                {
+                    if (!std::filesystem::exists(path.source))
+                    {
+                        continue;
+                    }
+                    std::filesystem::rename(path.source, path.target);
+                    path.moved = true;
+                }
+            }
+        }
+        catch (...)
+        {
+            bool rollbackFailed = false;
+            for (auto path = paths.rbegin(); path != paths.rend(); ++path)
+            {
+                if (!path->moved)
+                {
+                    if (!path->staged)
+                    {
+                        continue;
+                    }
+                    std::error_code rollbackError;
+                    std::filesystem::rename(path->staging, path->source, rollbackError);
+                    rollbackFailed = rollbackFailed || static_cast<bool>(rollbackError);
+                    continue;
+                }
+                std::error_code rollbackError;
+                std::filesystem::rename(path->target, path->source, rollbackError);
+                rollbackFailed = rollbackFailed || static_cast<bool>(rollbackError);
+            }
+            if (rollbackFailed)
+            {
+                throw std::runtime_error("Download rename failed and could not be rolled back completely.");
+            }
+            throw;
+        }
+
+        archiveCatalog_.forgetArchiveIndex(downloadPath);
+        static_cast<void>(archiveCatalog_.identifyArchive(projectDirectory, targetPath));
+        logger_.writeOperation(
+            LogLevel::Info,
+            "DownloadRename",
+            "Renamed download sourcePath=\"" + toUtf8(downloadPath.wstring()) +
+                "\", targetPath=\"" + toUtf8(targetPath.wstring()) + "\"");
+        return buildCatalogEntry(projectDirectory, targetPath);
     }
 
     void DownloadService::deleteDownload(
@@ -11776,14 +12670,16 @@ namespace fluxora
         const auto buildPlan = [&](const NexusMd5Identity* onlineIdentity)
         {
             const std::wstring archiveName = trim(downloadPath.stem().wstring());
+            const std::wstring nexusModName = onlineIdentity != nullptr &&
+                    !onlineIdentity->modName.empty()
+                ? onlineIdentity->modName
+                : trim(metadata.nexusModName);
             std::wstring sourceName = fomodInstaller.isFomod
                 ? preferredFomodInstallName(archiveName, fomodInstaller.moduleName)
-                : archiveName;
+                : preferredNexusInstallName(archiveName, nexusModName);
             if (sourceName.empty())
             {
-                sourceName = onlineIdentity != nullptr && !onlineIdentity->modName.empty()
-                    ? onlineIdentity->modName
-                    : trim(metadata.nexusModName);
+                sourceName = nexusModName;
             }
 
             ModIdentityPlanRequest request;
@@ -11954,7 +12850,6 @@ namespace fluxora
                         materializeArchiveInstallCachePayload(
                             downloadPath,
                             payloadDirectory,
-                            safeName,
                             logger_);
                     });
                 return ModIdentityResolver::collectContentAnchors(payload.payloadDirectory());
@@ -12054,7 +12949,7 @@ namespace fluxora
         const std::filesystem::path& downloadPath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<PlacementOverride>& placementOverrides,
+        const PlacementEdits& placementEdits,
         const ModIdentityInstallSelection* identitySelection,
         std::wstring_view profileName,
         int modOrderTargetIndex,
@@ -12091,7 +12986,7 @@ namespace fluxora
             std::move(metadata),
             true,
             "archive",
-            placementOverrides,
+            placementEdits,
             identitySelection,
             profileName,
             modOrderTargetIndex,
@@ -12103,7 +12998,7 @@ namespace fluxora
         const std::filesystem::path& archivePath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<PlacementOverride>& placementOverrides,
+        const PlacementEdits& placementEdits,
         const ModIdentityInstallSelection* identitySelection,
         std::wstring_view profileName,
         int modOrderTargetIndex,
@@ -12115,7 +13010,7 @@ namespace fluxora
             imported.localPath,
             modName,
             existingModMode,
-            placementOverrides,
+            placementEdits,
             identitySelection,
             profileName,
             modOrderTargetIndex,
@@ -12125,7 +13020,8 @@ namespace fluxora
     PlacementPlan DownloadService::analyzeDownloadContentLayout(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& downloadPath,
-        ExistingModInstallMode existingModMode) const
+        ExistingModInstallMode existingModMode,
+        const PlacementEdits& placementEdits) const
     {
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -12143,6 +13039,27 @@ namespace fluxora
             throw std::invalid_argument("Download is still in progress.");
         }
 
+        const std::wstring archiveFingerprint = fileCacheFingerprint(downloadPath);
+        if (supportsContentLayoutIndex(downloadPath))
+        {
+            const std::vector<ContentLayoutArchiveEntry> entries =
+                cachedArchiveContentIndex(downloadPath, archiveFingerprint, logger_);
+            if (fileCacheFingerprint(downloadPath) != archiveFingerprint)
+            {
+                throw std::runtime_error("The archive changed while its content index was being read.");
+            }
+            return analyzeContentLayoutForEntries(
+                projectDirectory,
+                entries,
+                existingModMode,
+                archiveFingerprint,
+                placementEdits,
+                logger_);
+        }
+
+        // Legacy non-container sources (for example FluxPack single-file payloads)
+        // retain their established staging behavior. Standard ZIP/7z/RAR previews
+        // always take the index-only branch above.
         const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
         const std::wstring fallbackName = trim(metadata.nexusModName).empty()
             ? downloadPath.stem().wstring()
@@ -12157,16 +13074,15 @@ namespace fluxora
             logger_,
             [&](const std::filesystem::path& payloadDirectory)
             {
-                materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName, logger_);
+                materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, logger_);
             });
-
         return analyzeContentLayoutForStaging(
             projectDirectory,
             cachedPayload.payloadDirectory(),
             existingModMode,
             false,
-            fileCacheFingerprint(downloadPath),
-            {},
+            archiveFingerprint,
+            placementEdits,
             logger_);
     }
 
@@ -12534,7 +13450,7 @@ namespace fluxora
                 existingModMode,
                 true,
                 fomodOutputCacheFingerprint(downloadPath, selectedOptionIds),
-                {},
+                std::vector<PlacementOverride>{},
                 logger_);
             cleanupTemporaryDirectory(stagingDirectory, logger_, "FOMOD");
             return plan;

@@ -49,6 +49,7 @@ const event = (
   sequence,
   upserts: [entry],
   removedIds: [],
+  placements: [{ orderId: entry.id, beforeOrderId: 'older-archive' }],
   reason: 'modified',
   fullResyncRequired: false
 });
@@ -123,7 +124,8 @@ describe('workspace and downloads delta facade contract', () => {
     expect(callback.mock.calls[0][0]).toMatchObject({
       revision: 'downloads-3',
       sequence: 3,
-      upserts: [{ id: 'archive', progressPercent: 25 }]
+      upserts: [{ id: 'archive', progressPercent: 25 }],
+      placements: [{ orderId: 'archive', beforeOrderId: 'older-archive' }]
     });
 
     listener({}, event(4, download('archive', 'idle', 100)));
@@ -131,7 +133,8 @@ describe('workspace and downloads delta facade contract', () => {
     expect(callback.mock.calls[1][0]).toMatchObject({
       revision: 'downloads-4',
       sequence: 4,
-      upserts: [{ id: 'archive', transferState: 'idle', progressPercent: 100 }]
+      upserts: [{ id: 'archive', transferState: 'idle', progressPercent: 100 }],
+      placements: [{ orderId: 'archive', beforeOrderId: 'older-archive' }]
     });
 
     unsubscribe();

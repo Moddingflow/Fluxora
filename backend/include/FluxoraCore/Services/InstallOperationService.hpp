@@ -27,6 +27,7 @@ namespace fluxora
         ExistingModInstallMode existingModMode{ExistingModInstallMode::FailIfExists};
         std::vector<std::wstring> selectedOptionIds;
         std::vector<PlacementOverride> placementOverrides;
+        PlacementEdits placementEdits;
         std::optional<ModIdentityInstallSelection> identitySelection;
         std::wstring profileName;
         std::wstring fomodContextId;

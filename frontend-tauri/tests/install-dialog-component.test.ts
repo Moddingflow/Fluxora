@@ -8,7 +8,10 @@ import {
   type InstallDialogState
 } from '../src/renderer/features/install/InstallDialog';
 import { evaluateFomodWizard } from '../src/renderer/install-workspace-state';
-import type { FluxoraFomodInstaller } from '../src/shared/fluxora-api';
+import type {
+  FluxoraContentLayoutPreview,
+  FluxoraFomodInstaller
+} from '../src/shared/fluxora-api';
 
 const detectingDialog = (): InstallDialogState => ({
   phase: 'detecting',
@@ -31,6 +34,8 @@ const detectingDialog = (): InstallDialogState => ({
   modOrderPlacement: null,
   existingModMode: 0,
   placementOverrides: {},
+  placementEdits: { schemaVersion: 2, files: [], directories: [], excludedSourcePaths: [] },
+  placementValidationPending: false,
   draggedSourcePath: null,
   validationMessage: null,
   errorMessage: null,
@@ -68,29 +73,96 @@ describe('InstallDialog', () => {
     expect(markup).toContain('install-dialog-actions install-dialog-actions--detecting');
     expect(markup).toContain('install-detecting-skeleton__action--details');
     expect(markup).toContain('install-detecting-skeleton__action--install');
+    expect(markup.match(/class="flx-skeleton/g)).toHaveLength(4);
     expect(markup).not.toContain('Mod name');
     expect(markup).not.toContain('Подробнее');
     expect(markup).not.toContain('Установить');
   });
 
-  it('keeps every skeleton shimmer loop visually continuous', () => {
+  it('shows a binary red incompatibility result without inventing a review status', () => {
+    const layoutPreview: FluxoraContentLayoutPreview = {
+      gameId: 'skyrimse',
+      gameDisplayName: 'Skyrim Special Edition',
+      rootFileWrapperDirectory: 'root',
+      canInstall: true,
+      summary: {
+        supported: true,
+        hasWarnings: true,
+        hasBlockers: false,
+        totalEntries: 1,
+        plannedEntries: 1,
+        gameDataEntries: 0,
+        gameRootEntries: 0,
+        pluginEntries: 0,
+        archiveEntries: 0,
+        scriptExtenderEntries: 0,
+        unknownEntries: 1,
+        unsafeEntries: 0
+      },
+      entries: [{
+        sourcePath: 'Data/тестовая папка/New.txt',
+        target: 'data',
+        contentArea: 'data',
+        targetRelativePath: 'тестовая папка/New.txt',
+        classification: 'unknown',
+        explanation: '',
+        manualOverrideAllowed: true,
+        safeManualTargets: ['data', 'gameRoot'],
+        included: true
+      }],
+      validationFindings: [{
+        severity: 'warning',
+        path: '',
+        classification: 'unknown',
+        message: 'Fluxora could not recognize any installable game content in this archive.',
+        blocksInstall: false
+      }],
+      explanationSummary: '',
+      explanationDetails: [],
+      assessment: { status: 'warning', reasonCodes: ['skyrimse.layout.warning'] }
+    };
+    const markup = renderToStaticMarkup(
+      createElement(InstallDialog, {
+        archiveTreeScrollTop: 0,
+        evaluation: null,
+        existingModName: null,
+        installDialog: {
+          ...detectingDialog(),
+          phase: 'details',
+          installerKind: 'standard',
+          layoutPreview
+        },
+        onArchiveTreeScrollTopChange: vi.fn(),
+        onClose: vi.fn(),
+        onContinueFromFomod: vi.fn(),
+        onMoveFomodStep: vi.fn(),
+        onOpenDetails: vi.fn(),
+        onPatch: vi.fn(),
+        onPlacementEditsChange: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
+        onResolveExistingMod: vi.fn(),
+        onSubmitInstallOptions: vi.fn()
+      })
+    );
+
+    expect(markup).toContain('data-status="blocked"');
+    expect(markup).toContain('Архив не подходит под структуру игры');
+    expect(markup).not.toContain('требует внимания');
     const styles = readFileSync(
       new URL('../src/renderer/styles.css', import.meta.url),
       'utf8'
     );
-
     expect(styles).toMatch(
-      /\.workspace-skeleton\s*\{[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.55s linear infinite;/s
+      /\.install-placement-assessment\[data-status="blocked"\]\s*\{\s*color: var\(--placement-error\);/
     );
-    expect(styles).toMatch(
-      /\.download-skeleton\s*\{[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.55s linear infinite;/s
+    const installButtonStart = markup.lastIndexOf('<button class="primary-button"');
+    const installButton = markup.slice(
+      installButtonStart,
+      markup.indexOf('</button>', installButtonStart)
     );
-    expect(styles).toMatch(
-      /\.download-progress__bar--skeleton span\s*\{[^}]*background-size:\s*240% 100%;[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.35s linear infinite;/s
-    );
-    expect(styles).toMatch(
-      /@keyframes downloadSkeletonSweep\s*\{\s*from\s*\{\s*background-position:\s*200% 0;\s*\}\s*to\s*\{\s*background-position:\s*-200% 0;/s
-    );
+    expect(installButton).toContain('Установить');
+    expect(installButton).not.toContain('disabled');
   });
 
   it('renders explainable Smart Select status, actions and accessible option labels', () => {
@@ -297,7 +369,7 @@ describe('InstallDialog', () => {
     );
   });
 
-  it('renders one check inside a selected checkbox and keeps the radio dot separate', () => {
+  it('reuses the compact thick checkbox visual and keeps the radio dot separate', () => {
     const installer: FluxoraFomodInstaller = {
       isFomod: true,
       moduleName: 'Checkbox FOMOD',
@@ -386,13 +458,16 @@ describe('InstallDialog', () => {
     const radioLabel = markup.slice(radioLabelStart, markup.indexOf('</label>', radioLabelStart));
 
     expect(checkboxLabel).toContain('fomod-option__control');
-    expect(checkboxLabel.match(/lucide-check/g)).toHaveLength(1);
+    expect(checkboxLabel).toContain('class="flx-checkbox__native"');
+    expect(checkboxLabel).toContain('class="flx-checkbox__box"');
+    expect(checkboxLabel).not.toContain('lucide-check');
     expect(checkboxLabel).not.toContain('lucide-check-circle');
     expect(radioLabel).toContain('type="radio"');
+    expect(radioLabel).not.toContain('flx-checkbox__box');
     expect(radioLabel).not.toContain('lucide-check');
   });
 
-  it('keeps repeated FOMOD groups distinct and renders one ink-colored checkbox check', () => {
+  it('keeps repeated FOMOD groups distinct and uses the shared thick checkbox check', () => {
     const option = (id: string, name: string) => ({
       id,
       name,
@@ -479,21 +554,28 @@ describe('InstallDialog', () => {
       new URL('../src/renderer/styles.css', import.meta.url),
       'utf8'
     );
+    const primitiveStyles = readFileSync(
+      new URL('../src/renderer/design-system/primitives/primitives.css', import.meta.url),
+      'utf8'
+    );
 
     expect(markup.match(/<section class="fomod-group"/g)).toHaveLength(3);
     expect(markup).toContain('First radio choice');
     expect(markup).toContain('Second radio choice');
     expect(markup).toContain('Selected checkbox choice');
     expect(radioNames).toEqual(['fomod-step-0-group-0', 'fomod-step-0-group-1']);
-    expect(checkboxControl.match(/lucide-check/g)).toHaveLength(1);
+    expect(checkboxControl).toContain('class="flx-checkbox__native"');
+    expect(checkboxControl).toContain('class="flx-checkbox__box"');
+    expect(checkboxControl).not.toContain('lucide-check');
+    expect(styles).toMatch(/\.fomod-option \.flx-checkbox__box\s*\{/);
     expect(styles).toMatch(
-      /\.fomod-option__control > svg\s*\{[^}]*color:\s*var\(--flx-ink-on-accent\);/s
+      /\.fomod-option input\[type="radio"\]:focus,[\s\S]*?box-shadow:\s*inset 0 0 0 1px var\(--focus-ring\);/
     );
-    expect(styles).toMatch(
-      /\.fomod-option input\[type="checkbox"\]\s*\{[^}]*border-radius:\s*4px;/s
+    expect(primitiveStyles).toMatch(
+      /\.flx-checkbox__box::after\s*\{[^}]*width:\s*10px;[^}]*height:\s*10px;[^}]*mask: url\([^}]*stroke-width='3'/s
     );
-    expect(styles).toMatch(
-      /\.fomod-option input\[type="checkbox"\]:checked\s*\{[^}]*border-color:\s*rgba\(var\(--flx-accent-rgb\), 0\.8\);[^}]*background:\s*var\(--accent\);/s
+    expect(primitiveStyles).toMatch(
+      /\.flx-checkbox__native:focus-visible \+ \.flx-checkbox__box\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*inset 0 0 0 1px var\(--focus-ring\);/s
     );
   });
 });

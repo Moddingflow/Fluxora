@@ -110,6 +110,7 @@ Tauri target:
 | `CreateModSeparatorCommand`, `CreateModSeparatorAtEndCommand` | Name dialog, create separator at target/end. | `bridge.mods.createSeparator`. | UI dialog; C++ core order mutation. |
 | `CreateEmptyModCommand` | Name dialog, create empty mod. | `bridge.mods.createEmpty`. | UI dialog; C++ core filesystem mutation. |
 | `OpenModInExplorerCommand` | Shell-open installed mod folder. | `facade.shell.openPath`. | Tauri Rust shell/facade. |
+| Installed-mod row rename | Rename the selected installed-mod directory while retaining its durable UUID/profile order identity. | `bridge.mods.renameInstalled`. | Install-style renderer dialog + C++ core mutation. |
 | `ToggleModSeparatorCommand` | Collapse/expand separator locally. | Renderer state. | Tauri UI. |
 | `MoveSelectedModUpCommand`, `MoveSelectedModDownCommand`, drag drop move | Move selected mods/separator spans in order. | `bridge.mods.moveOrderItem`. | Renderer drag/selection; C++ core order mutation. |
 | `DeleteSelectedModCommand` | Confirm delete selected mods/separators; delete mods from disk or separators from order. | `bridge.mods.deleteInstalled`, `bridge.mods.deleteSeparator`. | UI confirm; C++ core mutation. |
@@ -123,6 +124,7 @@ Tauri target:
 | `DeleteSelectedDownloadCommand` | Confirm and delete selected downloads. | `bridge.downloads.delete`. | UI confirm; C++ core mutation. |
 | `CancelDownloadCommand`, `ResumeDownloadCommand` | Cancel/resume active download with live refresh. | `bridge.downloads.cancel`, `bridge.downloads.resume`. | C++ core; UI progress/state. |
 | `OpenDownloadInExplorerCommand` | Shell-open file or downloads folder. | `facade.shell.showItemInFolder/openPath`. | Tauri Rust shell/facade. |
+| Download row rename / copy as path | Rename a completed archive while preserving its full archive suffix and sidecars, or copy its exact unquoted path. | `bridge.downloads.rename`, `facade.clipboard.writeText`. | Install-style renderer dialog + C++ core mutation; Rust clipboard. |
 | `RegisterNxmProtocolCommand` | Registers current user NXM handler. | `main.protocol.registerNxm` plus core capability if retained. | Tauri Rust shell/facade, C++ core if existing API remains source. |
 | `LaunchSelectedExecutableCommand` | Core launch, process tracking, expected child process handoff, launch overlay. | `bridge.executables.launch` + `ExecutableLaunchOverlay`. | C++ core launches; main/bridge may track process; renderer visual. |
 | `CloseTransferPanelCommand`, `CloseBuildCreationProcessCommand`, `CloseBuildDeletionProcessCommand`, `CloseFluxPackPackageProcessCommand`, `CloseFluxPackInstallProcessCommand`, `CloseExecutableLaunchProcessCommand` | Close overlays when allowed. | Overlay store commands. | Tauri UI. |

@@ -48,7 +48,7 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, the interactive aggregate read `mods.getPersistedWorkspace`, the reconciling aggregate read `mods.getWorkspace`, watcher-driven `mods.invalidateFileCaches`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getModDetailsContent`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.startNifPreview`, `mods.prepareNifPreviewVariant` and `mods.prepareNifPreviewTextures` to C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, the interactive aggregate read `mods.getPersistedWorkspace`, the reconciling aggregate read `mods.getWorkspace`, watcher-driven `mods.invalidateFileCaches`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.renameInstalled`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getModDetailsContent`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.startNifPreview`, `mods.prepareNifPreviewVariant` and `mods.prepareNifPreviewTextures` to C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
@@ -92,7 +92,7 @@ Phase 7 extends `fluxora.bridge.v1` to the plugin/load-order workspace:
 
 Phase 8 extends `fluxora.bridge.v1` to downloads and simple archive install:
 
-- Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision`, `downloads.planInstall`, `downloads.install`, `archives.planInstall`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to C++ C ABI functions backed by `DownloadService`.
+- Native host routes `downloads.list`, `downloads.importFile`, `downloads.rename`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision`, `downloads.planInstall`, `downloads.install`, `archives.planInstall`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to C++ C ABI functions backed by `DownloadService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.downloads.*`, `window.fluxora.archives.*` and `window.fluxora.nxm.*` calls only; renderer still has no Node.js, filesystem, shell or raw command access.
 - Tauri Rust shell owns `nxm://` app activation handling through startup argv and Windows/Linux/macOS `second-instance`, forwards links to the bridge inbound queue, then emits `fluxora:nxm:inbound-links-captured` so the renderer can import the queued links into the active build.
 - Renderer auto-registers the Windows `nxm://` handler once per session when a Nexus account is linked, while the Downloads workspace still exposes the manual `Register NXM` fallback.
@@ -110,7 +110,8 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - C++ core remains the owner of archive extraction, FOMOD descriptor evaluation inputs, content-layout analysis, placement override validation, existing-mod replace/merge behavior and final filesystem mutation.
 - After a successful FOMOD install, C++ persists the applied option ids in `<project>/.flow/fomod-memory.json`; the next analysis returns those ids and the renderer restores them before applying required/default coercion. Preview files are copied by C++ only when the referenced package image exists, under the dedicated `.fomod-previews` cache. The typed facade converts those native paths to Tauri asset URLs, while `assetProtocol.scope` exposes only `**/.fomod-previews/**/*`; missing or failed images render no placeholder surface.
 - FOMOD detection is index-first and payload-size independent for ordinary archives. ZIP uses its validated native central-directory index; externally handled formats such as 7z use a bounded 7-Zip include probe for `fomod/ModuleConfig.xml`. A conclusive negative probe persists as an empty fingerprinted metadata cache entry, so neither the initial analysis nor the background identity plan extracts the archive. Positive FOMOD archives retain the existing full descriptor, declared-plugin-header, preview, Smart Select and safety behavior and materialize metadata at most once. Strong archive identity comes from the catalog SHA-256 sidecar only while its file-id/size/write/change identity still matches; the core hashes again when that durable proof is absent or stale.
-- Placement details send only `{ sourcePath, target, targetRelativePath }` override records back to core. Renderer never moves archive files directly.
+- Placement details send the additive v2 edit DTO `{ schemaVersion, files, directories, excludedSourcePaths }` back to core. File moves remain `{ sourcePath, target, targetRelativePath }` records, while disabled tree branches serialize their archive source paths in `excludedSourcePaths`. C++ keeps excluded rows in the preview, validates the final enabled layout and omits excluded payloads during materialization; the renderer never moves or deletes archive files directly.
+- Skyrim placement assessment is `ready`, `warning` or `blocked`. A safe but unrecognized/non-standard layout is a conspicuous non-blocking warning and installs exactly as shown; only unsafe paths, collisions or other concrete blockers disable Install.
 - `downloads.planInstall` and `archives.planInstall` accept additive optional `profileName` and `modName` fields and return a `FluxoraInstallPlan` with `suggestedModName`, `resolutionKind`, optional `matchedTarget { modUuid, displayName, folderName }`, opaque `resolutionId`, the FOMOD descriptor, bounded evidence codes and score. The C++ `ModIdentityResolver` owns all source/FOMOD/name/content scoring, stable-id conflict handling, threshold/margin decisions and the indexed top-five candidate lookup. A unique exact final-name collision remains a `Probable` prompt target even when stable Nexus mod ids differ; it never auto-merges or auto-replaces.
 - The renderer tracks the mod-name source as `source | fomod | identity | user`. An asynchronous plan may replace the value only before the user edits it. Before mutation, a user-edited name that is not covered by the background plan is replanned once through the native core with the same `operationId`; this catches collisions with another installed mod while keeping domain matching out of the renderer. FOMOD module names remain authoritative and skip the generic verification screen; a matched identity opens only the existing-mod choice with `Заменить`, `Объединить` and `Это другой мод`.
 - All four install mutations carry the opaque `resolutionId`, `identityDecision: use-match | install-new`, optional target mod UUID and `newNamePolicy: first-free-copy-suffix`. C++ validates archive fingerprint, catalog revision and target UUID immediately before mutation and again before commit. A stale plan maps to retryable `install.identityPlanStale`; the renderer replans without overwriting a user-edited name.
@@ -127,6 +128,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - `mods.rebasePendingInstall` accepts stable neighbor anchors plus a fallback index. One missing neighbor uses the other; Replace/Merge retain the original mod UUID and profile-order row id, and metadata finalization aborts if either identity changes.
 - Regular and FOMOD Merge build a complete replacement staging directory while holding the target lock. Directory publication and SQLite finalization share a cross-process project gate with inventory/order mutations. The fixed acquisition order is target lock, project gate, then SQLite storage lock.
 - `.flow/install-transactions/<operationId>.json` records prepared, target-backed-up, promoted and committed stages. Restore removes only journal-confirmed staging, rolls back a confirmed backup/promotion when needed, preserves committed targets, and returns unknown or unsafe paths as `needsReview` without deleting them.
+- Atomic target publication retries transient Windows access/sharing/lock failures with bounded backoff. If the target remains busy, the original mod and persisted installer decisions remain intact and the durable operation becomes `needsReview` with `install.targetBusy`, so the same session can be retried instead of ending as a generic failure.
 - If the process exits after SQLite/order finalization but before the terminal operation result is published, restore reconstructs the installed-mod result from the completed pending session and persisted profile row. A committed target that cannot be matched safely becomes `needsReview`; the renderer never creates a pending projection for a terminal restored operation, so restart cannot leave a ghost row or duplicate the matched mod.
 - While an install is `committing` or `finalizing`, the Tauri watcher accumulates changed paths. Release schedules one deduplicated reconciliation. The Rust bridge process has a permanent stdout reader and synchronized line writer, so install progress continues without an active request.
 - Deleting a renderer row owned by a pending install first retires its optimistic projection and calls `installs.cancel` on the install lane. Queued work is removed before execution; running work observes cooperative cancellation before commit and persists the terminal `cancelled` state. If cancellation arrives after the directory was committed, the terminal operation retains its authoritative install result so the delete flow can remove that exact target before reconciliation. Replace/Merge deletion falls back to the original target only when cancellation stopped before a new result was committed.
@@ -138,7 +140,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - `workspace.getDelta(projectDirectory, profileName, sinceRevision, request)` is an additive `fluxora.bridge.v1` read owned by `WorkspaceRevisionJournal` in the C++ core. The returned `FluxoraWorkspaceDelta` carries project/profile scope, `operationId`, monotonic `sequence`, matching mod/plugin `baseRevision` and `revision`, upserts, removals, stable before/after placements, installed-mod summaries and `fullResyncRequired`.
 - The journal persists a bounded history under the build-local `.fluxora/revision-journal` directory with atomic replacement. A process restart can continue from a retained revision; an unknown, stale, corrupt or unavailable history returns `fullResyncRequired` instead of guessing a delta. Workspace and download revision streams are scope-separated and Unicode-safe.
 - Terminal `installs.progress` includes the authoritative workspace delta produced after native commit/finalization. The renderer removes the keyed pending projection and applies that delta in one non-urgent transition; it does not issue `mods.getWorkspace` or `plugins.list` merely to discover the committed mod or generated plugins. The original install `operationId` is validated through C++ core, bridge host, Rust shell/facade and renderer.
-- `downloads.getDelta(projectDirectory, sinceRevision, reason, request)` runs on the Download lane. The Tauri folder watcher establishes a baseline once, debounces filesystem notifications for 100 ms, advances the native revision, and emits typed `fluxora:downloads:changed` events. The facade coalesces non-terminal upserts by download id on the next display frame, while removals, terminal states and `fullResyncRequired` flush immediately. This replaces the former 500 ms `downloads.list` loop; full list reads remain only for initial load and recovery.
+- `downloads.getDelta(projectDirectory, sinceRevision, reason, request)` runs on the Download lane. The Tauri folder watcher establishes a baseline once, debounces filesystem notifications for 100 ms, advances the native revision, and emits typed `fluxora:downloads:changed` events. Each changed row carries an authoritative native placement so a completed or replaced download can move to its activity-sorted position without a full list read. The facade coalesces non-terminal upserts and placements by download id on the next display frame, while removals, terminal states and `fullResyncRequired` flush immediately. This replaces the former 500 ms `downloads.list` loop; full list reads remain only for initial load and recovery.
 - Renderer delta application validates scope, operation identity when supplied, base revision, shared mod/plugin revision and exact next sequence. Duplicate revision/sequence pairs are ignored. A gap queues exactly one compatibility full resync, and that resync is retained but deferred until both adaptive lists report scroll-ended.
 - Watcher reconciliation invalidates affected native caches first, requests one workspace delta, and deduplicates by scope/sequence/revision. The terminal install delta is installed before the Rust watcher releases its accumulated paths, so the following watcher delta is incremental rather than a second full snapshot.
 - Renderer list state preserves unchanged DTO and row-view identities. `ModsListSurface`, `PluginsListSurface`, `ModRow` and `PluginRow` are explicitly memoized; install presentation is held in an `operationId`-keyed `useSyncExternalStore` store. Authoritative deltas use one-pass `orderId` indexes and non-urgent React transitions, while the adaptive virtualizer keeps scroll/window state urgent and local.
@@ -159,8 +161,8 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 
 Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and executable launch configuration:
 
-- Native host routes `profiles.list`, `profiles.create`, `profiles.clone`, `profiles.rename`, `profiles.delete`, `executables.list`, `executables.save`, `executables.getIcon` and `executables.launch` to existing C++ C ABI functions backed by `ProfileService` and `ExecutableService`.
-- Managed BodySlide launches additionally route `executables.completeManagedLaunch` to the background bridge lane. The C++ `BodySlideIntegrationService` owns the config overlay, generated output identity, lease recovery, and BodySlide-specific VFS mount policy; see [BodySlide integration](../integrations/bodyslide.md).
+- Native host routes `profiles.list`, `profiles.create`, `profiles.clone`, `profiles.rename`, `profiles.delete`, `executables.list`, `executables.save`, `executables.getIcon`, `executables.launch` and `executables.completeManagedLaunch` to existing C++ C ABI functions backed by `ProfileService`, `ExecutableService`, `BodySlideIntegrationService` and `LodGeneratorIntegrationService`.
+- Managed BodySlide, TexGen and DynDOLOD launches route `executables.completeManagedLaunch` to the background bridge lane. BodySlide owns its config overlay and single generated output; see [BodySlide integration](../integrations/bodyslide.md). TexGen/DynDOLOD automatically create and order `TexGen Output` before `DynDOLOD Output`, enforce `-sse` and a safe virtual `-o`, stage writes through VFS, and atomically publish only a successful non-empty run; see [TexGen and DynDOLOD integration](../integrations/dyndolod-texgen.md).
 - Tauri Rust shell/facade expose typed `window.fluxora.profiles.*` and `window.fluxora.executables.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
 - Tauri Rust shell owns `window.fluxora.processes.waitForLaunchReady` and `waitForExit`. On Windows, process exit uses the signaled process handle as the primary path (`WaitForSingleObject` with an infinite wait on a dedicated native-wait thread); a 250 ms process-presence poll is retained only when the native wait cannot be established. After each exit, the shell enumerates live processes with `FluxoraVfs.dll` loaded and returns the next holder as `trackedKind: "vfsHolder"`, so the renderer keeps the launch splash attached to the process that still owns the active VFS session.
 - Renderer owns profile/executable search, selected-row state, in-app edit controls, two-step destructive confirmation state, icon/launch status display and capability explanations only.
@@ -278,6 +280,7 @@ Implemented MVP methods:
 - `mods.moveOrderItem`
 - `mods.rebasePendingInstall`
 - `mods.deleteInstalled`
+- `mods.renameInstalled`
 - `mods.createEmpty`
 - `mods.setEnabled`
 - `mods.setAllEnabled`
@@ -308,6 +311,7 @@ Implemented MVP methods:
 - `executables.save`
 - `executables.getIcon`
 - `executables.launch`
+- `executables.completeManagedLaunch`
 - `nexus.getAuthStatus`
 - `apiLimits.list`
 - `nexus.connect`
@@ -319,6 +323,7 @@ Implemented MVP methods:
 - `downloads.getDelta`
 - `downloads.importFile`
 - `downloads.delete`
+- `downloads.rename`
 - `downloads.cancel`
 - `downloads.resume`
 - `downloads.resolveDuplicateDecision`
@@ -343,6 +348,10 @@ Implemented MVP methods:
 - `operations.clearContext`
 - `operations.progress`
 - `operations.cancel`
+
+`mods.createSeparator` treats a negative `targetIndex` as an append request resolved against the
+current native profile order. The renderer uses this form for “create at end” so a stale renderer
+snapshot cannot place a newly discovered last mod beneath the new separator.
 
 `nxm.captureLinks` / `nxm.importInboundDownloads` return a download row as soon
 as the pending request is durably captured. `FluxoraDownloadEntry.hasResolvedFileName`
@@ -899,6 +908,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `executables.save`
 - `executables.launch`
 - `executables.getIcon`
+- `executables.completeManagedLaunch`
 
 ### Nexus and NXM
 
@@ -929,6 +939,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.deleteSeparator`
 - `mods.moveOrderItem`
 - `mods.deleteInstalled`
+- `mods.renameInstalled`
 - `mods.createEmpty`
 - `mods.setEnabled`
 - `mods.setAllEnabled`
@@ -979,6 +990,7 @@ metadata before the text plugin state is refreshed.
 - `downloads.list`
 - `downloads.importFile`
 - `downloads.delete`
+- `downloads.rename` with `{ projectDirectory, downloadPath, newBaseName }`
 - `downloads.cancel`
 - `downloads.resume`
 - `downloads.resolveDuplicateDecision` with `{ projectDirectory, downloadPath, decisionId, choice }`
@@ -1157,13 +1169,13 @@ cannot prevent bridge startup.
 
 Bridge v1 keeps unsafe project mutations serialized while separating independent work into seven lazy, process-affine lanes. The additive generic connection methods keep the same `fluxora.bridge.v1` envelope and operation/error contracts.
 
-- `Download`: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.getDelta`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision` and `downloads.delete`. Tauri activation and the downloads-folder watcher send work directly to this lane. The NXM queue, active-download registry, durable download revision stream and complete NXM lifecycle stay in this one host. C++ accepts the pending row before metadata reconciliation, resolves file-info and any duplicate decision before acquiring a transfer permit, yields the worker while a decision is pending, and limits active transfers to five. Replace decisions are additionally serialized per Nexus lineage without blocking unrelated downloads or the Install lane.
+- `Download`: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.getDelta`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision`, `downloads.rename` and `downloads.delete`. Tauri activation and the downloads-folder watcher send work directly to this lane. The NXM queue, active-download registry, durable download revision stream and complete NXM lifecycle stay in this one host. C++ accepts the pending row before metadata reconciliation, resolves file-info and any duplicate decision before acquiring a transfer permit, yields the worker while a decision is pending, and limits active transfers to five. Replace and rename decisions are additionally serialized by the native archive-use lock without blocking unrelated downloads or the Install lane.
 - `Install`: install analysis/planning, `installs.submit`, `installs.cancel`, `installs.restore`, `installs.list`, `installs.get` and the synchronous download/archive install compatibility adapters. Planning, resolution/session state and the two-worker `InstallScheduler` stay in this one host; a third operation is durably accepted and remains queued. Cancellation stays on the same process-affine lane so it can reach the active native operation context; cancel requests use the original install `operationId` as their target and keep the user-triggered delete `operationId` in request metadata and logs.
 - `Plugin`: `plugins.list` and `plugins.listPersisted`. Read isolation prevents a long `mods.getWorkspace` on Main from delaying generated-plugin visibility. Plugin mutations remain serialized on Main, while the renderer snapshot gate prevents list publication during a multi-step reorder transaction.
 - `Interactive`: only independently safe user-driven file, text, mod-detail/effective-tree and NIF reads. Text/file saves and project metadata mutations remain on `Main`.
 - `Connection`: `connections.*` plus compatible `nexus.getAuthStatus`, `nexus.connect`, `nexus.connectWithApiKey` and `nexus.disconnect`. Native-only `nexus.getApiAuthHeader` remains on Main because it is not renderer-callable.
 - `Background`: `mods.checkUpdates` and `apiLimits.list`.
-- `Main`: every other bridge method, including read-only `workspace.getDelta`, project/workspace mutations, local archive import, FluxPack, MO2, project lifecycle and destructive `mods.deleteInstalled`.
+- `Main`: every other bridge method, including read-only `workspace.getDelta`, project/workspace mutations, local archive import, FluxPack, MO2, project lifecycle and installed-mod `mods.renameInstalled` / `mods.deleteInstalled` mutations.
 
 Each `BridgeProcess` owns its own child, stdin, response map, reader task and handshake. A timeout or process exit resets only the selected lane; another lane's install workers, NXM queue and main workspace session remain alive. Shutdown walks all seven lanes even when one lane was never started or failed, and each lane is restarted lazily on its next request.
 

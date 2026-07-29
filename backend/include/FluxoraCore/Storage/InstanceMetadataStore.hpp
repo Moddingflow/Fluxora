@@ -173,6 +173,8 @@ namespace fluxora
         std::wstring latestFileId;
         std::wstring lastCheckState;
         std::wstring lastAttemptedAt;
+        std::wstring expectedInstalledVersion;
+        std::wstring confirmedInstalledVersion;
     };
 
     struct ModUpdateSweepRecord
@@ -628,6 +630,13 @@ namespace fluxora
         static void recordRemoteCheck(
             const std::filesystem::path& projectDirectory,
             const RemoteCheckRecord& check,
+            const std::filesystem::path& modsDirectory = {});
+
+        static bool repairInstalledModVersion(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view folderName,
+            std::wstring_view expectedVersion,
+            std::wstring_view confirmedVersion,
             const std::filesystem::path& modsDirectory = {});
 
         [[nodiscard]] static std::optional<ModUpdateSweepRecord> modUpdateSweep(

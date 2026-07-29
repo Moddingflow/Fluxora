@@ -24,6 +24,7 @@ use tauri::{
     ipc::Response, AppHandle, Emitter, Manager, UserAttentionType, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
@@ -7109,13 +7110,13 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "nxm.importInboundDownloads"
         | "downloads.cancel"
         | "downloads.delete"
+        | "downloads.rename"
         | "downloads.getDelta"
         | "downloads.list"
         | "downloads.resolveDuplicateDecision"
         | "downloads.resume" => BridgeLane::Download,
         "downloads.analyzeFomod"
         | "downloads.planInstall"
-        | "downloads.analyzeContentLayout"
         | "downloads.analyzeFomodContentLayout"
         | "downloads.install"
         | "downloads.installFomod"
@@ -7127,7 +7128,8 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "installs.restore"
         | "installs.list"
         | "installs.get" => BridgeLane::Install,
-        "profiles.previewTextFile"
+        "downloads.analyzeContentLayout"
+        | "profiles.previewTextFile"
         | "mods.getFileTree"
         | "mods.getModDetailsContent"
         | "mods.getModConflictTree"
@@ -8687,6 +8689,17 @@ async fn fluxora_shell_show_item_in_folder(
             message: Some(error.to_string()),
         }),
     }
+}
+
+#[tauri::command]
+fn fluxora_clipboard_write_text(app: AppHandle, text: String) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("Clipboard text must not be empty.".to_string());
+    }
+
+    app.clipboard()
+        .write_text(text)
+        .map_err(|error| format!("Failed to write clipboard text: {error}"))
 }
 
 #[tauri::command]
@@ -10792,6 +10805,7 @@ pub fn run() {
         .manage(DownloadsFolderWatchState::default())
         .manage(BuildContentWatchState::default())
         .manage(NifPreviewSessionState::default())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -10910,6 +10924,7 @@ pub fn run() {
             fluxora_open_external,
             fluxora_shell_open_path,
             fluxora_shell_show_item_in_folder,
+            fluxora_clipboard_write_text,
             fluxora_show_main_window,
             fluxora_transfer_open_mo2_in_main,
             fluxora_transfer_start_mo2_in_main,
@@ -11888,6 +11903,7 @@ mod tests {
             ("mods.moveOrderItem", BridgeLane::Main),
             ("mods.rebasePendingInstall", BridgeLane::Main),
             ("mods.deleteInstalled", BridgeLane::Main),
+            ("mods.renameInstalled", BridgeLane::Main),
             ("mods.createEmpty", BridgeLane::Main),
             ("mods.setEnabled", BridgeLane::Main),
             ("mods.setAllEnabled", BridgeLane::Main),
@@ -11936,9 +11952,10 @@ mod tests {
             ("downloads.resolveDuplicateDecision", BridgeLane::Download),
             ("downloads.importFile", BridgeLane::Main),
             ("downloads.delete", BridgeLane::Download),
+            ("downloads.rename", BridgeLane::Download),
             ("downloads.cancel", BridgeLane::Download),
             ("downloads.resume", BridgeLane::Download),
-            ("downloads.analyzeContentLayout", BridgeLane::Install),
+            ("downloads.analyzeContentLayout", BridgeLane::Interactive),
             ("downloads.planInstall", BridgeLane::Install),
             ("downloads.analyzeFomod", BridgeLane::Install),
             ("downloads.analyzeFomodContentLayout", BridgeLane::Install),
@@ -12025,7 +12042,6 @@ mod tests {
         for method in [
             "downloads.analyzeFomod",
             "downloads.planInstall",
-            "downloads.analyzeContentLayout",
             "downloads.analyzeFomodContentLayout",
             "downloads.install",
             "downloads.installFomod",
@@ -12040,6 +12056,10 @@ mod tests {
         ] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Install);
         }
+        assert_eq!(
+            bridge_lane_for_method("downloads.analyzeContentLayout"),
+            BridgeLane::Interactive
+        );
     }
 
     #[test]

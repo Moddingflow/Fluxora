@@ -4,8 +4,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  File,
-  FolderOpen,
   FolderTree,
   Play,
   RefreshCw,
@@ -14,9 +12,8 @@ import {
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
 import installModIcon from '../../../../../Icons/package-plus.svg';
+import { Skeleton } from '../../design-system';
 import {
-  buildArchivePlacementRows,
-  createPlacementOverrideForDrop,
   normalizeInstallModName,
   toggleFomodOption,
   updateFomodManualDecisions,
@@ -26,15 +23,17 @@ import {
   type InstallSource,
   type PlacementOverrideMap
 } from '../../install-workspace-state';
-import { createVirtualWindow } from '../../ui-performance';
 import type { InstallNameSource } from './install-name-state';
+import { InstallPlacementEditor } from './InstallPlacementEditor';
+import { placementAssessmentMessage } from './install-placement-editor-state';
 import type {
   FluxoraContentLayoutPreview,
   FluxoraExistingModInstallMode,
   FluxoraFomodDecisionEvidence,
   FluxoraFomodInstaller,
   FluxoraFomodOptionDecision,
-  FluxoraInstallPlan
+  FluxoraInstallPlan,
+  FluxoraPlacementEditsV2
 } from '../../../shared/fluxora-api';
 
 export type InstallDialogPhase =
@@ -65,6 +64,8 @@ export interface InstallDialogState {
   modOrderPlacement: InstallModOrderPlacement | null;
   existingModMode: FluxoraExistingModInstallMode;
   placementOverrides: PlacementOverrideMap;
+  placementEdits: FluxoraPlacementEditsV2;
+  placementValidationPending: boolean;
   draggedSourcePath: string | null;
   validationMessage: string | null;
   errorMessage: string | null;
@@ -76,21 +77,20 @@ interface InstallDialogProps {
   evaluation: EvaluatedFomodWizard | null;
   existingModName: string | null;
   installDialog: InstallDialogState | null;
+  language?: string;
   onArchiveTreeScrollTopChange: (scrollTop: number) => void;
   onClose: () => void;
   onContinueFromFomod: () => void;
   onMoveFomodStep: (direction: 1 | -1) => void;
   onOpenDetails: () => void;
   onPatch: (patch: Partial<InstallDialogState>) => void;
+  onPlacementEditsChange?: (edits: FluxoraPlacementEditsV2) => void;
   onRecalculateFomod: () => void;
   onResetFomod: () => void;
   onResolveExistingMod: (decision: 1 | 2 | 'installNew') => void;
   onSubmitInstallOptions: () => void;
 }
 
-const archiveTreeRowHeight = 32;
-const archiveTreeVisibleRows = 32;
-const archiveTreeOverscanRows = 10;
 type InstallIconStyle = CSSProperties & { '--install-icon': string };
 
 const fomodEvidenceText = (evidence: FluxoraFomodDecisionEvidence): string => {
@@ -224,12 +224,14 @@ export function InstallDialog({
   evaluation,
   existingModName,
   installDialog,
+  language = 'ru-RU',
   onArchiveTreeScrollTopChange,
   onClose,
   onContinueFromFomod,
   onMoveFomodStep,
   onOpenDetails,
   onPatch,
+  onPlacementEditsChange = () => undefined,
   onRecalculateFomod,
   onResetFomod,
   onResolveExistingMod,
@@ -526,6 +528,7 @@ export function InstallDialog({
                           >
                             <span className="fomod-option__control">
                               <input
+                                className={isRadio ? undefined : 'flx-checkbox__native'}
                                 type={isRadio ? 'radio' : 'checkbox'}
                                 name={groupIdentity}
                                 checked={option.isSelected}
@@ -551,8 +554,8 @@ export function InstallDialog({
                                   });
                                 }}
                               />
-                              {!isRadio && option.isSelected ? (
-                                <Check size={12} strokeWidth={3} aria-hidden="true" />
+                              {!isRadio ? (
+                                <span aria-hidden="true" className="flx-checkbox__box" />
                               ) : null}
                             </span>
                             <FomodOptionImage imagePath={option.option.imagePath} />
@@ -713,8 +716,8 @@ export function InstallDialog({
     >
       <span className="sr-only">Определяем тип установщика</span>
       <div className="field install-name-field install-detecting-skeleton__field" aria-hidden="true">
-        <span className="workspace-skeleton install-detecting-skeleton__label" />
-        <span className="workspace-skeleton install-detecting-skeleton__input" />
+        <Skeleton className="install-detecting-skeleton__label" />
+        <Skeleton className="install-detecting-skeleton__input" />
       </div>
     </div>
   );
@@ -767,163 +770,31 @@ export function InstallDialog({
 
   const renderInstallDetails = () => {
     const preview = installDialog.layoutPreview;
-    const rows = preview
-      ? buildArchivePlacementRows(preview, installDialog.placementOverrides)
-      : [];
-    const draggedEntry = installDialog.draggedSourcePath
-      ? preview?.entries.find(
-          (entry) => entry.sourcePath === installDialog.draggedSourcePath
-        )
-      : null;
-    const visibleArchiveWindow = createVirtualWindow(rows, archiveTreeScrollTop, {
-      rowHeight: archiveTreeRowHeight,
-      visibleRows: archiveTreeVisibleRows,
-      overscanRows: archiveTreeOverscanRows
-    });
+    return preview ? (
+      <InstallPlacementEditor
+        key={installDialog.operationId}
+        preview={preview}
+        edits={installDialog.placementEdits}
+        language={language}
+        validationPending={installDialog.placementValidationPending}
+        disabled={installDialog.isSubmitting}
+        onEditsChange={onPlacementEditsChange}
+      />
+    ) : null;
+  };
 
+  const renderPlacementAssessment = () => {
+    const preview = installDialog.layoutPreview;
+    const assessment = preview?.assessment;
+    const message = preview ? placementAssessmentMessage(preview, language) : null;
+    if (!preview || !assessment || !message) {
+      return <span />;
+    }
+    const compatible = assessment.status === 'ready';
     return (
-      <div className="install-details-tree">
-        <header className="install-section-heading">
-          <div>
-            <p className="eyebrow">Archive details</p>
-            <h3>Placement tree</h3>
-          </div>
-          <div className="mods-toolbar">
-            <button
-              className="tool-button"
-              type="button"
-              onClick={() =>
-                onPatch({
-                  placementOverrides: {},
-                  validationMessage: null
-                })
-              }
-            >
-              <RefreshCw size={15} aria-hidden="true" />
-              Reset
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => onPatch({ phase: 'options', validationMessage: null })}
-            >
-              Apply
-            </button>
-          </div>
-        </header>
-        {preview && preview.validationFindings.length > 0 ? (
-          <div className="install-findings">
-            {preview.validationFindings.map((finding) => (
-              <span key={`${finding.path}:${finding.message}`} data-blocker={finding.blocksInstall}>
-                {finding.path || finding.classification}: {finding.message}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        <div
-          className={`archive-tree${preview ? '' : ' archive-tree--pending'}`}
-          role="tree"
-          aria-label="Archive placement tree"
-          onScroll={(event) => onArchiveTreeScrollTopChange(event.currentTarget.scrollTop)}
-        >
-          {preview ? (
-            <>
-              {visibleArchiveWindow.topSpacer > 0 ? (
-                <div style={{ height: visibleArchiveWindow.topSpacer }} aria-hidden="true" />
-              ) : null}
-              {visibleArchiveWindow.items.map((row) => {
-                const canDrop =
-                  draggedEntry !== undefined &&
-                  draggedEntry !== null &&
-                  createPlacementOverrideForDrop(draggedEntry, row) !== null;
-                const hasOverride =
-                  row.entry !== null && installDialog.placementOverrides[row.entry.sourcePath] !== undefined;
-                return (
-                  <div
-                    key={row.key}
-                    className="archive-tree-row"
-                    role="treeitem"
-                    tabIndex={0}
-                    aria-level={row.depth + 1}
-                    draggable={row.entry?.manualOverrideAllowed === true}
-                    data-directory={row.isDirectory}
-                    data-drop={canDrop}
-                    data-override={hasOverride}
-                    onDragStart={(event) => {
-                      if (!row.entry?.manualOverrideAllowed) {
-                        event.preventDefault();
-                        return;
-                      }
-
-                      event.dataTransfer.setData('text/plain', row.entry.sourcePath);
-                      onPatch({ draggedSourcePath: row.entry.sourcePath });
-                    }}
-                    onDragEnd={() => onPatch({ draggedSourcePath: null })}
-                    onDragOver={(event) => {
-                      if (canDrop) {
-                        event.preventDefault();
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const sourcePath =
-                        event.dataTransfer.getData('text/plain') || installDialog.draggedSourcePath || '';
-                      const sourceEntry = preview.entries.find(
-                        (entry) => entry.sourcePath === sourcePath
-                      );
-                      if (!sourceEntry) {
-                        onPatch({ draggedSourcePath: null });
-                        return;
-                      }
-
-                      const override = createPlacementOverrideForDrop(sourceEntry, row);
-                      if (!override) {
-                        onPatch({ draggedSourcePath: null });
-                        return;
-                      }
-
-                      onPatch({
-                        draggedSourcePath: null,
-                        placementOverrides: {
-                          ...installDialog.placementOverrides,
-                          [override.sourcePath]: {
-                            target: override.target,
-                            targetRelativePath: override.targetRelativePath
-                          }
-                        },
-                        validationMessage: null
-                      });
-                    }}
-                    style={{ paddingLeft: `${12 + row.depth * 18}px` }}
-                  >
-                    {row.isDirectory ? (
-                      <FolderOpen size={15} aria-hidden="true" />
-                    ) : (
-                      <File size={15} aria-hidden="true" />
-                    )}
-                    <span>{row.name}</span>
-                    <small>{row.isDirectory ? row.target || 'folder' : row.entry?.classification}</small>
-                  </div>
-                );
-              })}
-              {visibleArchiveWindow.bottomSpacer > 0 ? (
-                <div style={{ height: visibleArchiveWindow.bottomSpacer }} aria-hidden="true" />
-              ) : null}
-            </>
-          ) : (
-            <div
-              className="archive-tree-row"
-              role="treeitem"
-              tabIndex={0}
-              aria-level={1}
-              data-directory={false}
-            >
-              <File size={15} aria-hidden="true" />
-              <span>{installDialog.source.fileName || installDialog.source.displayName}</span>
-              <small>archive</small>
-            </div>
-          )}
-        </div>
+      <div className="install-placement-assessment" data-status={compatible ? 'ready' : 'blocked'} role="status" aria-live="polite">
+        {compatible ? <CheckCircle2 size={17} aria-hidden="true" /> : <AlertTriangle size={17} aria-hidden="true" />}
+        <span>{message}</span>
       </div>
     );
   };
@@ -987,6 +858,7 @@ export function InstallDialog({
 
           {installDialog.phase === 'detecting' ||
           installDialog.phase === 'options' ||
+          installDialog.phase === 'details' ||
           installDialog.phase === 'error' ? (
             <footer
               className={
@@ -996,9 +868,8 @@ export function InstallDialog({
               }
             >
               {installDialog.phase === 'detecting' ? (
-                <span
-                  className="workspace-skeleton install-detecting-skeleton__action install-detecting-skeleton__action--details"
-                  aria-hidden="true"
+                <Skeleton
+                  className="install-detecting-skeleton__action install-detecting-skeleton__action--details"
                 />
               ) : installDialog.phase === 'options' ? (
                 <button
@@ -1012,14 +883,15 @@ export function InstallDialog({
                   <FolderTree size={15} aria-hidden="true" />
                   Подробнее
                 </button>
+              ) : installDialog.phase === 'details' ? (
+                renderPlacementAssessment()
               ) : (
                 <span />
               )}
               <div className="install-dialog-action-group">
                 {installDialog.phase === 'detecting' ? (
-                  <span
-                    className="workspace-skeleton install-detecting-skeleton__action install-detecting-skeleton__action--install"
-                    aria-hidden="true"
+                  <Skeleton
+                    className="install-detecting-skeleton__action install-detecting-skeleton__action--install"
                   />
                 ) : installDialog.phase === 'error' ? (
                   <button
@@ -1043,6 +915,40 @@ export function InstallDialog({
                     <Play size={16} aria-hidden="true" />
                     {installDialog.isSubmitting ? 'Подготовка…' : 'Установить'}
                   </button>
+                ) : null}
+                {installDialog.phase === 'details' ? (
+                  <>
+                    <button
+                      className="tool-button"
+                      type="button"
+                      disabled={installDialog.isSubmitting}
+                      onClick={() => onPatch({ phase: 'options', validationMessage: null })}
+                    >
+                      <ChevronLeft size={15} aria-hidden="true" />
+                      {language.toLocaleLowerCase().startsWith('de') ? 'Zurück' : language.toLocaleLowerCase().startsWith('en') ? 'Back' : 'Назад'}
+                    </button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={
+                        installDialog.isSubmitting ||
+                        installDialog.placementValidationPending ||
+                        Boolean(installDialog.validationMessage) ||
+                        !installDialog.layoutPreview?.canInstall ||
+                        Boolean(validateInstallModName(installDialog.modName))
+                      }
+                      onClick={onSubmitInstallOptions}
+                    >
+                      <Play size={16} aria-hidden="true" />
+                      {installDialog.isSubmitting
+                        ? 'Подготовка…'
+                        : language.toLocaleLowerCase().startsWith('de')
+                          ? 'Installieren'
+                          : language.toLocaleLowerCase().startsWith('en')
+                            ? 'Install'
+                            : 'Установить'}
+                    </button>
+                  </>
                 ) : null}
               </div>
             </footer>

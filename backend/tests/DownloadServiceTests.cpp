@@ -1,4 +1,5 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
+#include "FluxoraCore/Services/ArchiveCatalogService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
@@ -95,6 +96,11 @@ namespace fluxora::test_hooks
         const std::filesystem::path& modsDirectory,
         std::wstring_view safeName,
         const std::function<void()>& beforeCommit);
+
+    void setInstalledDirectoryRenameHook(
+        std::function<std::error_code(
+            const std::filesystem::path&,
+            const std::filesystem::path&)> hook);
 
     void setActiveDownloadForTest(const std::filesystem::path& path, bool active);
 
@@ -246,6 +252,26 @@ namespace fluxora::tests
             ~ScopedResumeBeforeClaimHook()
             {
                 test_hooks::setResumeBeforeClaimHook({});
+            }
+        };
+
+        class ScopedInstalledDirectoryRenameHook final
+        {
+        public:
+            explicit ScopedInstalledDirectoryRenameHook(
+                std::function<std::error_code(
+                    const std::filesystem::path&,
+                    const std::filesystem::path&)> hook)
+            {
+                test_hooks::setInstalledDirectoryRenameHook(std::move(hook));
+            }
+
+            ScopedInstalledDirectoryRenameHook(const ScopedInstalledDirectoryRenameHook&) = delete;
+            ScopedInstalledDirectoryRenameHook& operator=(const ScopedInstalledDirectoryRenameHook&) = delete;
+
+            ~ScopedInstalledDirectoryRenameHook()
+            {
+                test_hooks::setInstalledDirectoryRenameHook({});
             }
         };
 
@@ -582,6 +608,83 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, RenameDownloadMovesArchiveStateAndPreservesCatalogIdentity)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Download rename path behavior is validated on Windows.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Rename Build";
+        ScopedDownloadProject scopedProject(temp, project);
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path source = temp.path() / L"Old Archive.tar.gz";
+        writeTextFile(source, "archive payload");
+        const DownloadEntry imported = downloads.importLocalFile(project, source);
+        const std::filesystem::path oldMetadata(imported.localPath.wstring() + L".fluxora.json");
+        const std::filesystem::path oldCatalog =
+            ArchiveCatalogService::sidecarPathFor(imported.localPath);
+        ASSERT_TRUE(std::filesystem::is_regular_file(oldMetadata));
+        ASSERT_TRUE(std::filesystem::is_regular_file(oldCatalog));
+
+        const std::filesystem::path collisionPath =
+            pathSettings.downloadsDirectory(project) / L"Existing Archive.tar.gz";
+        writeTextFile(collisionPath, "existing archive");
+        EXPECT_THROW(
+            (void)downloads.renameDownload(project, imported.localPath, L"Existing Archive"),
+            std::invalid_argument);
+        EXPECT_TRUE(std::filesystem::is_regular_file(imported.localPath));
+        EXPECT_TRUE(std::filesystem::is_regular_file(collisionPath));
+        ASSERT_TRUE(std::filesystem::remove(collisionPath));
+
+        const DownloadEntry renamed =
+            downloads.renameDownload(project, imported.localPath, L"Новый Архив Ä");
+        const std::filesystem::path expectedPath =
+            pathSettings.downloadsDirectory(project) / L"Новый Архив Ä.tar.gz";
+
+        EXPECT_EQ(renamed.localPath, expectedPath);
+        EXPECT_EQ(renamed.fileName, L"Новый Архив Ä.tar.gz");
+        EXPECT_EQ(renamed.name, L"Новый Архив Ä");
+        EXPECT_EQ(renamed.archiveId, imported.archiveId);
+        EXPECT_FALSE(std::filesystem::exists(imported.localPath));
+        EXPECT_FALSE(std::filesystem::exists(oldMetadata));
+        EXPECT_FALSE(std::filesystem::exists(oldCatalog));
+        EXPECT_TRUE(std::filesystem::is_regular_file(expectedPath));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            std::filesystem::path(expectedPath.wstring() + L".fluxora.json")));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            ArchiveCatalogService::sidecarPathFor(expectedPath)));
+
+        const std::vector<DownloadEntry> listed = downloads.listDownloads(project);
+        ASSERT_EQ(listed.size(), 1U);
+        EXPECT_EQ(listed.front().localPath, expectedPath);
+
+        const DownloadEntry caseRenamed =
+            downloads.renameDownload(project, expectedPath, L"новый Архив Ä");
+        const std::filesystem::path caseExpectedPath =
+            pathSettings.downloadsDirectory(project) / L"новый Архив Ä.tar.gz";
+        EXPECT_EQ(caseRenamed.localPath.filename().wstring(), L"новый Архив Ä.tar.gz");
+        EXPECT_TRUE(std::filesystem::is_regular_file(caseExpectedPath));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            ArchiveCatalogService::sidecarPathFor(caseExpectedPath)));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
     TEST(DownloadServiceTests, FailedReplaceCommitRestoresTheOriginalDirectory)
     {
 #ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
@@ -607,6 +710,95 @@ namespace fluxora::tests
              std::filesystem::directory_iterator(mods))
         {
             EXPECT_FALSE(entry.path().filename().wstring().starts_with(L".Rollback Mod.replacing"));
+        }
+#endif
+    }
+
+    TEST(DownloadServiceTests, ReplaceCommitRetriesTransientDirectoryAccessDenied)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path mods = temp.path() / L"mods";
+        const std::filesystem::path target = mods / L"Unicode Mod";
+        const std::filesystem::path staging = mods / L".Unicode Mod.installing";
+        writeTextFile(target / L"Data" / L"Old.txt", "old");
+        writeTextFile(staging / L"Data" / L"тестовая папка" / L"New.txt", "new");
+
+        std::atomic<int> renameAttempts{0};
+        const ScopedInstalledDirectoryRenameHook renameHook(
+            [&renameAttempts](
+                const std::filesystem::path& source,
+                const std::filesystem::path& destination)
+            {
+                if (++renameAttempts <= 2)
+                {
+                    return std::make_error_code(std::errc::permission_denied);
+                }
+                std::error_code error;
+                std::filesystem::rename(source, destination, error);
+                return error;
+            });
+
+        EXPECT_NO_THROW(test_hooks::replaceDirectoryWithStagingForTest(
+            staging,
+            target,
+            mods,
+            L"Unicode Mod"));
+
+        EXPECT_EQ(renameAttempts.load(), 4);
+        EXPECT_FALSE(std::filesystem::exists(target / L"Data" / L"Old.txt"));
+        EXPECT_EQ(
+            readTextFile(target / L"Data" / L"тестовая папка" / L"New.txt"),
+            "new");
+#endif
+    }
+
+    TEST(DownloadServiceTests, FailedPromotionRestoresTheOriginalThroughTheRetriedRenamePath)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path mods = temp.path() / L"mods";
+        const std::filesystem::path target = mods / L"Unicode Rollback Mod";
+        const std::filesystem::path staging = mods / L".Unicode Rollback Mod.installing";
+        writeTextFile(target / L"Data" / L"Original.txt", "original");
+        writeTextFile(staging / L"Data" / L"тестовая папка" / L"New.txt", "new");
+
+        std::atomic<int> renameAttempts{0};
+        const ScopedInstalledDirectoryRenameHook renameHook(
+            [&renameAttempts, &staging](
+                const std::filesystem::path& source,
+                const std::filesystem::path& destination)
+            {
+                ++renameAttempts;
+                if (source == staging)
+                {
+                    return std::make_error_code(std::errc::permission_denied);
+                }
+                std::error_code error;
+                std::filesystem::rename(source, destination, error);
+                return error;
+            });
+
+        EXPECT_THROW(
+            test_hooks::replaceDirectoryWithStagingForTest(
+                staging,
+                target,
+                mods,
+                L"Unicode Rollback Mod"),
+            InstallTargetBusyError);
+
+        EXPECT_EQ(renameAttempts.load(), 10);
+        EXPECT_EQ(readTextFile(target / L"Data" / L"Original.txt"), "original");
+        EXPECT_TRUE(std::filesystem::exists(
+            staging / L"Data" / L"тестовая папка" / L"New.txt"));
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(mods))
+        {
+            EXPECT_FALSE(entry.path().filename().wstring().find(L"replacing") != std::wstring::npos);
         }
 #endif
     }
@@ -721,24 +913,22 @@ namespace fluxora::tests
         ASSERT_EQ(accepted.size(), 1U);
         EXPECT_EQ(accepted.front().localPath.extension(), L".nxm");
 
-        std::vector<DownloadEntry> completed;
-        for (int attempt = 0; attempt < 200; ++attempt)
-        {
-            completed = downloads.listDownloads(projectDirectory);
-            if (completed.size() == 1U && completed.front().canInstall)
+        const std::optional<DownloadEntry> completed = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry)
             {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+                return entry.fileName == L"Cabbage CS Preset.7z" && entry.canInstall;
+            },
+            std::chrono::seconds(30));
+        ASSERT_TRUE(completed.has_value());
 
         downloads.shutdown();
         const std::vector<DownloadEntry> reloaded = downloads.listDownloads(projectDirectory);
         const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
 
-        ASSERT_EQ(completed.size(), 1U);
-        EXPECT_EQ(completed.front().fileName, L"Cabbage CS Preset.7z");
-        EXPECT_TRUE(completed.front().canInstall);
+        EXPECT_EQ(completed->fileName, L"Cabbage CS Preset.7z");
+        EXPECT_TRUE(completed->canInstall);
         ASSERT_EQ(reloaded.size(), 1U);
         EXPECT_EQ(reloaded.front().fileName, L"Cabbage CS Preset.7z");
         for (const auto& entry : std::filesystem::directory_iterator(downloadsDirectory))
@@ -1284,6 +1474,103 @@ namespace fluxora::tests
         ASSERT_TRUE(downgraded.has_value());
         EXPECT_TRUE(std::filesystem::exists(upgradedArchive));
         EXPECT_TRUE(std::filesystem::exists(downgradedArchive));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, UpgradeReplacementReusesCleanArchiveNameAndListsItFirst)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path cleanArchive = downloadsDirectory / L"nexus-fixture-200.zip";
+        const std::filesystem::path suffixedArchive = downloadsDirectory / L"nexus-fixture-200 (2).zip";
+        const std::filesystem::path unrelatedArchive = downloadsDirectory / L"Recent Optional File.zip";
+        writeCompletedNexusArchive(cleanArchive, "100", "1.0.0", "old archive");
+        writeTextFile(unrelatedArchive, "unrelated archive");
+        const auto now = std::filesystem::file_time_type::clock::now();
+        std::filesystem::last_write_time(cleanArchive, now - std::chrono::hours(2));
+        std::filesystem::last_write_time(unrelatedArchive, now - std::chrono::hours(1));
+
+        std::atomic<bool> originalArchiveVisibleDuringTransfer{false};
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [&](const std::filesystem::path&,
+                const std::filesystem::path&,
+                std::wstring_view)
+            {
+                originalArchiveVisibleDuringTransfer = std::filesystem::exists(cleanArchive);
+                const std::filesystem::path destination = originalArchiveVisibleDuringTransfer
+                    ? suffixedArchive
+                    : cleanArchive;
+                writeTextFile(destination, "new archive");
+                return destination;
+            });
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/3863/files/200"});
+        const std::optional<DownloadEntry> awaiting = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry)
+            {
+                return entry.transferState == L"awaiting-decision";
+            });
+        ASSERT_TRUE(awaiting.has_value());
+        ASSERT_TRUE(awaiting->duplicateDecision.has_value());
+        EXPECT_EQ(awaiting->duplicateDecision->direction, L"upgrade");
+        ASSERT_TRUE(downloads.resolveDuplicateDecision(
+            projectDirectory,
+            awaiting->localPath,
+            awaiting->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::Replace).has_value());
+
+        const std::optional<DownloadEntry> completed = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry)
+            {
+                return entry.canInstall && (
+                    (entry.localPath == cleanArchive && readTextFile(cleanArchive) == "new archive") ||
+                    entry.localPath == suffixedArchive);
+            });
+        ASSERT_TRUE(completed.has_value());
+        EXPECT_FALSE(originalArchiveVisibleDuringTransfer.load());
+        EXPECT_EQ(completed->localPath, cleanArchive);
+        EXPECT_EQ(completed->fileName, L"nexus-fixture-200.zip");
+        EXPECT_EQ(readTextFile(cleanArchive), "new archive");
+        EXPECT_FALSE(std::filesystem::exists(suffixedArchive));
+
+        const std::vector<DownloadEntry> listed = downloads.listDownloads(projectDirectory);
+        ASSERT_GE(listed.size(), 2U);
+        EXPECT_EQ(listed.front().localPath, cleanArchive);
 
         downloads.shutdown();
         pathSettings.shutdown();
@@ -1923,6 +2210,90 @@ namespace fluxora::tests
 
         EXPECT_EQ(plan.suggestedModName, L"Imperial Forts Remake PBR Lod Helper");
         EXPECT_FALSE(plan.matchedTarget.has_value());
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, PlanDownloadInstallDropsResolutionVariantFromConfirmedNexusTitle)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path archivePath = pathSettings.downloadsDirectory(projectDirectory) /
+            L"Daedric Shrines - All in One  - 2K.bsa";
+        writeTextFile(archivePath, "archive");
+        writeTextFile(
+            archivePath.wstring() + L".fluxora.json",
+            R"({"gameDomain":"skyrimspecialedition","modId":"78772","fileId":"536019","nexusModName":"Daedric Shrines - All in One","isDownloading":false})");
+        InstanceMetadataStore::ensureInstance(projectDirectory, L"skyrimse");
+
+        const FluxoraInstallPlan plan = downloads.planDownloadInstall(projectDirectory, archivePath);
+
+        EXPECT_EQ(plan.suggestedModName, L"Daedric Shrines - All in One");
+        EXPECT_FALSE(plan.matchedTarget.has_value());
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, PlanDownloadInstallRecognizesGenericResolutionQualifiers)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        InstanceMetadataStore::ensureInstance(projectDirectory, L"skyrimse");
+
+        const std::vector<std::wstring> archiveStems{
+            L"Generic Texture Pack - 4K-2K",
+            L"Generic Texture Pack — 2048",
+            L"Generic Texture Pack (4096x4096)"
+        };
+        for (std::size_t index = 0; index < archiveStems.size(); ++index)
+        {
+            const std::filesystem::path archivePath =
+                pathSettings.downloadsDirectory(projectDirectory) /
+                (archiveStems[index] + L".bsa");
+            writeTextFile(archivePath, std::to_string(index));
+            writeTextFile(
+                archivePath.wstring() + L".fluxora.json",
+                R"({"gameDomain":"skyrimspecialedition","modId":"1000","fileId":"2000","nexusModName":"Generic Texture Pack","isDownloading":false})");
+
+            const FluxoraInstallPlan plan =
+                downloads.planDownloadInstall(projectDirectory, archivePath);
+
+            EXPECT_EQ(plan.suggestedModName, L"Generic Texture Pack")
+                << "archive variant index: " << index;
+            EXPECT_FALSE(plan.matchedTarget.has_value());
+        }
 
         downloads.shutdown();
         pathSettings.shutdown();

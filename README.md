@@ -25,7 +25,7 @@ The active product UI lives in `frontend-tauri/`. The C++ core in `backend/` own
 - **Native mod workspace**: manage installed mods, separators, enable state, profile order, plugin load order, lazy file trees and overwrite relationships.
 - **Nexus Mods workflow**: OAuth/API-key compatibility, NXM link capture, download queue management, local archive import and install actions.
 - **Install experience**: archive layout analysis, FOMOD flows, replace/merge decisions, placement details and operation progress.
-- **Skyrim automation**: VFS launch support, Parallax Gen output setup and No Grass In Objects grass cache generation.
+- **Skyrim automation**: VFS launch support, automatic Parallax Gen, TexGen and DynDOLOD output setup, and No Grass In Objects grass cache generation.
 - **Build portability**: import existing Mod Organizer 2 builds and export or install `.fluxpack` packages for one-click build sharing.
 - **AI-assisted modding**: local build context, Nexus/web-backed research, requirements audits, recommendations and troubleshooting through the Fluxora AI host.
 - **Secure desktop boundary**: renderer code uses a typed `window.fluxora` facade instead of direct filesystem, shell, Node.js or native module access.

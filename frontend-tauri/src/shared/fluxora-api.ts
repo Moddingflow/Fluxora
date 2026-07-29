@@ -52,6 +52,7 @@ export const FluxoraIpcChannels = {
   downloadsAnalyzeFomod: 'fluxora:downloads:analyze-fomod',
   downloadsAnalyzeFomodContentLayout: 'fluxora:downloads:analyze-fomod-content-layout',
   downloadsImportFile: 'fluxora:downloads:import-file',
+  downloadsRename: 'fluxora:downloads:rename',
   downloadsPlanInstall: 'fluxora:downloads:plan-install',
   downloadsInstallFomod: 'fluxora:downloads:install-fomod',
   downloadsInstall: 'fluxora:downloads:install',
@@ -79,6 +80,7 @@ export const FluxoraIpcChannels = {
   modsCreateEmpty: 'fluxora:mods:create-empty',
   modsCreateSeparator: 'fluxora:mods:create-separator',
   modsDeleteInstalled: 'fluxora:mods:delete-installed',
+  modsRenameInstalled: 'fluxora:mods:rename-installed',
   modsDeleteSeparator: 'fluxora:mods:delete-separator',
   modsGetEffectiveFileTree: 'fluxora:mods:get-effective-file-tree',
   modsGetEffectiveFileTreeChildren: 'fluxora:mods:get-effective-file-tree-children',
@@ -157,6 +159,7 @@ export const FluxoraIpcChannels = {
   settingsSetTheme: 'fluxora:settings:set-theme',
   shellOpenPath: 'fluxora:shell:open-path',
   shellShowItemInFolder: 'fluxora:shell:show-item-in-folder',
+  clipboardWriteText: 'fluxora:clipboard:write-text',
   templatesList: 'fluxora:templates:list',
   templatesResolve: 'fluxora:templates:resolve',
   textFilesRead: 'fluxora:text-files:read',
@@ -834,7 +837,7 @@ export interface FluxoraExecutable {
   arguments: string;
   workingDirectory: string;
   iconPath: string;
-  managedToolKind?: 'bodySlide';
+  managedToolKind?: 'bodySlide' | 'texGen' | 'dynDoLod';
   executableDisplayMetadata?: unknown;
 }
 
@@ -857,7 +860,7 @@ export interface FluxoraExecutableLaunchResult extends FluxoraExecutable {
   processId: number;
   operationId: string;
   managedSessionId?: string;
-  managedToolKind?: 'bodySlide';
+  managedToolKind?: 'bodySlide' | 'texGen' | 'dynDoLod';
   outputMod?: FluxoraManagedOutputMod;
   configurationStatus?: 'configured' | 'recovered' | string;
   warnings?: string[];
@@ -1388,7 +1391,7 @@ export interface FluxoraDownloadEntry {
   localPath: string;
   source: string;
   archiveId: string | null;
-  buildStatus: 'Ready' | 'Installing' | 'Installed' | 'Deleted' | 'Needs review' | 'Failed' | null;
+  buildStatus: 'Ready' | 'Installing' | 'Installed' | 'Deleted' | 'Failed' | null;
   transferState:
     | 'idle'
     | 'queued'
@@ -1421,6 +1424,7 @@ export interface FluxoraDownloadsChangedEvent {
   sequence: number;
   upserts: FluxoraDownloadEntry[];
   removedIds: string[];
+  placements: FluxoraOrderPlacement[];
   reason: string;
   fullResyncRequired: boolean;
 }
@@ -1502,6 +1506,7 @@ export interface FluxoraContentLayoutPreviewEntry {
   explanation: string;
   manualOverrideAllowed: boolean;
   safeManualTargets: string[];
+  included: boolean;
 }
 
 export interface FluxoraContentLayoutFinding {
@@ -1512,6 +1517,18 @@ export interface FluxoraContentLayoutFinding {
   blocksInstall: boolean;
 }
 
+export type FluxoraPlacementTarget = 'data' | 'gameRoot';
+
+export interface FluxoraPlacementDirectory {
+  target: FluxoraPlacementTarget;
+  targetRelativePath: string;
+}
+
+export interface FluxoraContentLayoutAssessment {
+  status: 'ready' | 'warning' | 'blocked';
+  reasonCodes: string[];
+}
+
 export interface FluxoraContentLayoutPreview {
   gameId: string;
   gameDisplayName: string;
@@ -1519,15 +1536,27 @@ export interface FluxoraContentLayoutPreview {
   canInstall: boolean;
   summary: FluxoraContentLayoutPreviewSummary;
   entries: FluxoraContentLayoutPreviewEntry[];
+  directories?: FluxoraPlacementDirectory[];
   validationFindings: FluxoraContentLayoutFinding[];
   explanationSummary: string;
   explanationDetails: string[];
+  archiveContentFingerprint?: string;
+  editFingerprint?: string;
+  placementFingerprint?: string;
+  assessment?: FluxoraContentLayoutAssessment;
 }
 
 export interface FluxoraPlacementOverride {
   sourcePath: string;
   target: string;
   targetRelativePath: string;
+}
+
+export interface FluxoraPlacementEditsV2 {
+  schemaVersion: 2;
+  files: FluxoraPlacementOverride[];
+  directories: FluxoraPlacementDirectory[];
+  excludedSourcePaths: string[];
 }
 
 export interface FluxoraFomodFileDependencyState {
@@ -1750,6 +1779,7 @@ export interface FluxoraAnalyzeContentLayoutRequest {
   projectDirectory: string;
   downloadPath: string;
   existingModMode?: FluxoraExistingModInstallMode;
+  placementEdits?: FluxoraPlacementEditsV2;
 }
 
 export interface FluxoraAnalyzeFomodContentLayoutRequest extends FluxoraAnalyzeContentLayoutRequest {
@@ -2533,6 +2563,12 @@ export interface FluxoraApi {
       modPath: string,
       request?: OperationRequest
     ) => Promise<FluxoraModMutationResult>;
+    renameInstalled: (
+      projectDirectory: string,
+      modPath: string,
+      newName: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraInstalledMod>;
     createEmpty: (
       projectDirectory: string,
       modName: string,
@@ -2788,6 +2824,12 @@ export interface FluxoraApi {
       sourcePath: string,
       request?: OperationRequest
     ) => Promise<FluxoraDownloadEntry>;
+    rename: (
+      projectDirectory: string,
+      downloadPath: string,
+      newBaseName: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraDownloadEntry>;
     delete: (
       projectDirectory: string,
       downloadPath: string,
@@ -3004,6 +3046,9 @@ export interface FluxoraApi {
   shell: {
     openPath: (path: string) => Promise<ShellOpenPathResult>;
     showItemInFolder: (path: string) => Promise<ShellShowItemInFolderResult>;
+  };
+  clipboard: {
+    writeText: (text: string) => Promise<void>;
   };
   templates: {
     list: (request?: OperationRequest) => Promise<FluxoraGameTemplate[]>;

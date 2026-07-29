@@ -45,8 +45,16 @@ namespace fluxora::test_hooks
     void setInstallStagingCacheProducerHook(
         std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook);
 
+    void setContentLayoutIndexProducerHook(
+        std::function<void(const std::filesystem::path&, std::wstring_view)> hook);
+
     void setExternalFomodMetadataProbeHook(
         std::function<std::optional<bool>(
+            const std::filesystem::path&,
+            const std::filesystem::path&)> hook);
+
+    void setInstalledDirectoryRenameHook(
+        std::function<std::error_code(
             const std::filesystem::path&,
             const std::filesystem::path&)> hook);
 
@@ -78,6 +86,24 @@ namespace fluxora::tests
             }
         };
 
+        class ContentLayoutIndexProducerHookGuard
+        {
+        public:
+            explicit ContentLayoutIndexProducerHookGuard(
+                std::function<void(const std::filesystem::path&, std::wstring_view)> hook)
+            {
+                test_hooks::setContentLayoutIndexProducerHook(std::move(hook));
+            }
+
+            ContentLayoutIndexProducerHookGuard(const ContentLayoutIndexProducerHookGuard&) = delete;
+            ContentLayoutIndexProducerHookGuard& operator=(const ContentLayoutIndexProducerHookGuard&) = delete;
+
+            ~ContentLayoutIndexProducerHookGuard()
+            {
+                test_hooks::setContentLayoutIndexProducerHook({});
+            }
+        };
+
         class ExternalFomodMetadataProbeHookGuard
         {
         public:
@@ -95,6 +121,26 @@ namespace fluxora::tests
             ~ExternalFomodMetadataProbeHookGuard()
             {
                 test_hooks::setExternalFomodMetadataProbeHook({});
+            }
+        };
+
+        class InstalledDirectoryRenameHookGuard
+        {
+        public:
+            explicit InstalledDirectoryRenameHookGuard(
+                std::function<std::error_code(
+                    const std::filesystem::path&,
+                    const std::filesystem::path&)> hook)
+            {
+                test_hooks::setInstalledDirectoryRenameHook(std::move(hook));
+            }
+
+            InstalledDirectoryRenameHookGuard(const InstalledDirectoryRenameHookGuard&) = delete;
+            InstalledDirectoryRenameHookGuard& operator=(const InstalledDirectoryRenameHookGuard&) = delete;
+
+            ~InstalledDirectoryRenameHookGuard()
+            {
+                test_hooks::setInstalledDirectoryRenameHook({});
             }
         };
 #endif
@@ -745,6 +791,133 @@ namespace fluxora::tests
         installs.shutdown();
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, DurableInstallDoesNotMaterializeAnyExcludedArchiveContent)
+    {
+        const DownloadEntry download = importArchive(
+            L"Durable Exclusions.zip",
+            {
+                {L"Data/Scripts/Disabled.pex", "script"},
+                {L"Data/SKSE/Plugins/Disabled.dll", "plugin"},
+                {L"Data/Source/Disabled.psc", "source"}
+            });
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-exclusions";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = download.localPath;
+        request.modName = L"Durable Exclusions";
+        request.profileName = L"Default";
+        request.placementOverridesJson =
+            LR"json({"schemaVersion":2,"files":[],"directories":[],"excludedSourcePaths":["Data/Scripts/Disabled.pex","Data/SKSE/Plugins/Disabled.dll","Data/Source/Disabled.psc"]})json";
+        const InstallOperationRecord accepted = installs.submit(std::move(request));
+
+        EXPECT_NE(
+            accepted.placementOverridesJson.find(L"excludedSourcePaths"),
+            std::wstring::npos);
+        const InstallOperationRecord completed = waitForInstallOperation(
+            L"durable-exclusions",
+            L"completed");
+        ASSERT_EQ(completed.state, L"completed") << toUtf8(completed.errorMessage);
+
+        const std::filesystem::path installed = modsDirectory() / L"Durable Exclusions";
+        EXPECT_TRUE(std::filesystem::is_directory(installed));
+        EXPECT_FALSE(std::filesystem::exists(installed / L"Scripts"));
+        EXPECT_FALSE(std::filesystem::exists(installed / L"SKSE"));
+        EXPECT_FALSE(std::filesystem::exists(installed / L"Source"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, DurableInstallMaterializesUnicodePlacementEdits)
+    {
+        const DownloadEntry download = importArchive(
+            L"Durable Unicode Placement.zip",
+            {
+                {L"Data/Feature.esp", "plugin"},
+                {L"Data/Scripts/Feature.pex", "script"}
+            });
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-unicode-placement";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = download.localPath;
+        request.modName = L"Durable Unicode Placement";
+        request.profileName = L"Default";
+        request.placementOverridesJson =
+            LR"json({"schemaVersion":2,"files":[{"sourcePath":"Data/Feature.esp","target":"data","targetRelativePath":"тестовая папка/Feature.esp"},{"sourcePath":"Data/Scripts/Feature.pex","target":"data","targetRelativePath":"тестовая папка/Scripts/Feature.pex"}],"directories":[{"target":"data","targetRelativePath":"тестовая папка"},{"target":"data","targetRelativePath":"тестовая папка 123"}],"excludedSourcePaths":[]})json";
+        static_cast<void>(installs.submit(std::move(request)));
+
+        const InstallOperationRecord completed = waitForInstallOperation(
+            L"durable-unicode-placement",
+            L"completed");
+        ASSERT_EQ(completed.state, L"completed") << toUtf8(completed.errorMessage);
+
+        const std::filesystem::path installed =
+            modsDirectory() / L"Durable Unicode Placement";
+        EXPECT_EQ(readTextFile(installed / L"тестовая папка" / L"Feature.esp"), "plugin");
+        EXPECT_EQ(
+            readTextFile(installed / L"тестовая папка" / L"Scripts" / L"Feature.pex"),
+            "script");
+        EXPECT_TRUE(std::filesystem::is_directory(installed / L"тестовая папка 123"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, DurableReplaceKeepsOriginalAndNeedsReviewWhenTargetStaysLocked)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        const DownloadEntry original = importArchive(
+            L"Target Busy Original.zip",
+            {{L"Data/Old.txt", "old"}});
+        static_cast<void>(downloads_.installDownload(
+            project_,
+            original.localPath,
+            L"Target Busy Mod"));
+        const DownloadEntry replacement = importArchive(
+            L"Target Busy Replacement.zip",
+            {{L"Data/тестовая папка/New.txt", "new"}});
+
+        std::atomic<int> renameAttempts{0};
+        const InstalledDirectoryRenameHookGuard renameHook(
+            [&renameAttempts](const std::filesystem::path&, const std::filesystem::path&)
+            {
+                ++renameAttempts;
+                return std::make_error_code(std::errc::permission_denied);
+            });
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-target-busy";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = replacement.localPath;
+        request.modName = L"Target Busy Mod";
+        request.profileName = L"Default";
+        request.existingModMode = ExistingModInstallMode::Replace;
+        static_cast<void>(installs.submit(std::move(request)));
+
+        const InstallOperationRecord review = waitForInstallOperation(
+            L"durable-target-busy",
+            L"needsReview");
+        EXPECT_EQ(review.errorCode, L"install.targetBusy");
+        EXPECT_NE(review.errorMessage.find(L"Close"), std::wstring::npos);
+        EXPECT_EQ(renameAttempts.load(), 8);
+        EXPECT_EQ(
+            readTextFile(modsDirectory() / L"Target Busy Mod" / L"Old.txt"),
+            "old");
+        EXPECT_FALSE(std::filesystem::exists(
+            modsDirectory() / L"Target Busy Mod" / L"тестовая папка" / L"New.txt"));
+        installs.shutdown();
+#endif
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, CancellingRunningDurableInstallStopsBeforePublishingTheMod)
     {
         using namespace std::chrono_literals;
@@ -874,13 +1047,18 @@ namespace fluxora::tests
     {
         const DownloadEntry download = importArchive(
             L"Durable Restore.zip",
-            {{L"Data/Restored.esp", "plugin"}});
+            {
+                {L"Data/Restored.esp", "plugin"},
+                {L"Data/Scripts/DisabledAfterRestore.pex", "script"}
+            });
         InstallOperationRecord interrupted;
         interrupted.operationId = L"durable-restore";
         interrupted.sourceKind = L"download";
         interrupted.sourcePath = download.localPath;
         interrupted.profileName = L"Default";
         interrupted.targetFolder = L"Durable Restore";
+        interrupted.placementOverridesJson =
+            LR"json({"schemaVersion":2,"files":[],"directories":[],"excludedSourcePaths":["Data/Scripts/DisabledAfterRestore.pex"]})json";
         interrupted.requestJson = LR"({"isFomod":false,"fomodContextId":"","modOrderTargetIndex":-1})";
         interrupted.state = L"extracting";
         interrupted.stage = L"extracting";
@@ -899,6 +1077,8 @@ namespace fluxora::tests
         EXPECT_FALSE(completed.archiveFingerprint.empty());
         EXPECT_TRUE(std::filesystem::is_regular_file(
             modsDirectory() / L"Durable Restore" / L"Restored.esp"));
+        EXPECT_FALSE(std::filesystem::exists(
+            modsDirectory() / L"Durable Restore" / L"Scripts"));
         installs.shutdown();
     }
 
@@ -2395,7 +2575,7 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(modPath / L"skse64_loader.exe"));
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, InstallDownloadRejectsTamperedContentLayoutCachePayload)
+    TEST_F(ModFileOperationsIntegrationTests, IndexedPreviewDoesNotMaterializeATamperableInstallPayload)
     {
         const DownloadEntry download = importArchive(
             L"Cached Layout.zip",
@@ -2425,16 +2605,7 @@ namespace fluxora::tests
         ASSERT_TRUE(plan.canInstall());
         const std::vector<std::filesystem::path> payloads =
             installStagingCachePayloads(downloadsDirectory(), L"archive-staging-");
-        ASSERT_EQ(payloads.size(), 1U);
-        const std::filesystem::path cachedPlugin = payloads.front() / L"Data" / L"SkyUI_SE.esp";
-        ASSERT_TRUE(std::filesystem::is_regular_file(cachedPlugin));
-        const std::uintmax_t cachedPluginSize = std::filesystem::file_size(cachedPlugin);
-        const std::filesystem::file_time_type cachedPluginTimestamp =
-            std::filesystem::last_write_time(cachedPlugin);
-        writeTextFile(cachedPlugin, "tampered-plugin");
-        ASSERT_EQ(std::filesystem::file_size(cachedPlugin), cachedPluginSize);
-        std::filesystem::last_write_time(cachedPlugin, cachedPluginTimestamp);
-        test_hooks::alignInstallStagingCacheMetadataDigestForTest(payloads.front().parent_path());
+        EXPECT_TRUE(payloads.empty());
 
         std::optional<InstalledMod> installed;
         std::string installError;
@@ -2513,7 +2684,7 @@ namespace fluxora::tests
             "replaced-plugin");
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutCleansStaleBuildingCacheEntry)
+    TEST_F(ModFileOperationsIntegrationTests, IndexedPreviewLeavesLegacyStagingCacheUntouched)
     {
         const std::filesystem::path staleBuilding =
             downloadsDirectory() / L".install-staging-cache" / L".building-archive-staging-crash";
@@ -2547,8 +2718,8 @@ namespace fluxora::tests
         }
 
         ASSERT_TRUE(plan.canInstall());
-        EXPECT_FALSE(std::filesystem::exists(staleBuilding));
-        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").size(), 1U);
+        EXPECT_TRUE(std::filesystem::exists(staleBuilding));
+        EXPECT_TRUE(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").empty());
     }
 
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
@@ -2579,10 +2750,10 @@ namespace fluxora::tests
             }
         };
 
-        InstallStagingCacheProducerHookGuard hook{
-            [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
+        ContentLayoutIndexProducerHookGuard hook{
+            [&](const std::filesystem::path& archivePath, std::wstring_view)
             {
-                if (kind == L"archive-staging" && !firstProducerPaused.exchange(true))
+                if (archivePath == first.localPath && !firstProducerPaused.exchange(true))
                 {
                     firstProducerStartedPromise.set_value();
                     releaseFirstProducer.wait();
@@ -2645,7 +2816,7 @@ namespace fluxora::tests
             throw;
         }
 
-        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").size(), 2U);
+        EXPECT_TRUE(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").empty());
     }
 #endif
 
@@ -2659,6 +2830,11 @@ namespace fluxora::tests
 
         std::optional<InstalledMod> installed;
         std::string error;
+        PlacementEdits placementEdits;
+        placementEdits.files.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::GameRoot
+        });
         try
         {
             installed = downloads_.installDownload(
@@ -2666,12 +2842,7 @@ namespace fluxora::tests
                 download.localPath,
                 L"Manual Placement",
                 ExistingModInstallMode::FailIfExists,
-                {
-                    PlacementOverride{
-                        GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
-                        PlacementTarget::GameRoot
-                    }
-                });
+                placementEdits);
         }
         catch (const std::exception& exception)
         {
@@ -2958,6 +3129,69 @@ namespace fluxora::tests
         EXPECT_TRUE(downloads_.listDownloads(project_).empty());
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, RenameInstalledModMovesDirectoryAndRetainsProfileIdentity)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Old Mod Name");
+        writeTextFile(created.id / L"textures" / L"armor.dds", "texture");
+
+        const std::vector<ProfileModOrderItem> beforeOrder =
+            profileOrder_.listModOrder(project_, L"Default");
+        const auto beforeItem = std::find_if(
+            beforeOrder.begin(),
+            beforeOrder.end(),
+            [&created](const ProfileModOrderItem& item)
+            {
+                return item.id == created.id;
+            });
+        ASSERT_NE(beforeItem, beforeOrder.end());
+
+        const InstalledModEntry collision = mods_.createEmptyMod(project_, L"Existing Mod");
+        EXPECT_THROW(
+            (void)mods_.renameInstalledMod(project_, created.id, L"Existing Mod"),
+            std::invalid_argument);
+        EXPECT_TRUE(std::filesystem::is_directory(created.id));
+        EXPECT_TRUE(std::filesystem::is_directory(collision.id));
+
+        const InstalledModEntry renamed =
+            mods_.renameInstalledMod(project_, created.id, L"Новая Броня Ä");
+        const std::filesystem::path expectedPath = modsDirectory() / L"Новая Броня Ä";
+
+        EXPECT_EQ(renamed.id, expectedPath);
+        EXPECT_EQ(renamed.name, L"Новая Броня Ä");
+        EXPECT_FALSE(std::filesystem::exists(created.id));
+        EXPECT_TRUE(std::filesystem::is_regular_file(expectedPath / L"textures" / L"armor.dds"));
+
+        const std::vector<ProfileModOrderItem> afterOrder =
+            profileOrder_.listModOrder(project_, L"Default");
+        const auto afterItem = std::find_if(
+            afterOrder.begin(),
+            afterOrder.end(),
+            [&beforeItem](const ProfileModOrderItem& item)
+            {
+                return item.modUuid == beforeItem->modUuid;
+            });
+        ASSERT_NE(afterItem, afterOrder.end());
+        EXPECT_EQ(afterItem->orderId, beforeItem->orderId);
+        EXPECT_EQ(afterItem->id, expectedPath);
+        EXPECT_EQ(afterItem->name, L"Новая Броня Ä");
+    }
+
+#ifdef _WIN32
+    TEST_F(ModFileOperationsIntegrationTests, RenameInstalledModSupportsCaseOnlyFolderChanges)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Case Sensitive Mod");
+
+        const InstalledModEntry renamed =
+            mods_.renameInstalledMod(project_, created.id, L"case sensitive mod");
+        const std::filesystem::path expectedPath = modsDirectory() / L"case sensitive mod";
+
+        EXPECT_EQ(renamed.id.filename().wstring(), L"case sensitive mod");
+        EXPECT_EQ(renamed.name, L"case sensitive mod");
+        EXPECT_EQ(expectedPath.filename().wstring(), L"case sensitive mod");
+        EXPECT_TRUE(std::filesystem::is_directory(expectedPath));
+    }
+#endif
+
     TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModRemovesOnlySelectedMod)
     {
         std::string firstError;
@@ -3104,6 +3338,214 @@ namespace fluxora::tests
             InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
         ASSERT_NE(findInstalledMod(records, L"Northern Roads - Patches Compendium"), nullptr);
         EXPECT_EQ(findInstalledMod(records, L"Northern Roads - Patches Compendium.fomod-package"), nullptr);
+    }
+
+    TEST_F(
+        ModFileOperationsIntegrationTests,
+        ReplaceFomodDownloadPrefersDownloadedFileVersionOverEmbeddedModuleVersion)
+    {
+        const std::filesystem::path baselinePath =
+            modsDirectory() / L"Exact Nexus File Version";
+        writeTextFile(baselinePath / L"ExactVersion.esp", "old-plugin");
+        const InstalledModRecord baseline = InstanceMetadataStore::registerInstalledMod(
+            project_,
+            baselinePath,
+            L"Exact Nexus File Version",
+            L"2.3",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"173747",
+                L"781994",
+                L"nxm://skyrimspecialedition/mods/173747/files/781994",
+                {},
+                L"2.3"});
+        const DownloadEntry download = importArchive(
+            L"Exact Nexus File Version.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Exact Nexus File Version</moduleName>
+  <requiredInstallFiles>
+    <file source="payload/ExactVersion.esp" destination="ExactVersion.esp" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Exact Nexus File Version</Name><Version>2.3</Version></fomod>)xml"},
+                {L"payload/ExactVersion.esp", "plugin"}
+            });
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/173747/files/781995",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"173747",
+                "fileId":"781995",
+                "nexusModName":"Exact Nexus File Version",
+                "version":"2.3.1",
+                "latestVersion":"2.3.1",
+                "isDownloading":false
+            })json");
+
+        InstalledMod installed;
+        try
+        {
+            installed = downloads_.installFomodDownload(
+                project_,
+                download.localPath,
+                L"Exact Nexus File Version",
+                ExistingModInstallMode::Replace,
+                {});
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        EXPECT_EQ(installed.modUuid, baseline.uuid);
+        EXPECT_EQ(installed.version, L"2.3.1");
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        const InstalledModRecord* record =
+            findInstalledMod(records, L"Exact Nexus File Version");
+        ASSERT_NE(record, nullptr);
+        EXPECT_EQ(record->version, L"2.3.1");
+    }
+
+    TEST_F(
+        ModFileOperationsIntegrationTests,
+        ReplaceFomodDownloadRepairsLegacySidecarVersionOverwrittenByEmbeddedMetadata)
+    {
+        const std::filesystem::path baselinePath =
+            modsDirectory() / L"Legacy Sidecar Version";
+        writeTextFile(baselinePath / L"LegacyVersion.esp", "old-plugin");
+        const InstalledModRecord baseline = InstanceMetadataStore::registerInstalledMod(
+            project_,
+            baselinePath,
+            L"Legacy Sidecar Version",
+            L"2.3",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"173747",
+                L"781994",
+                L"nxm://skyrimspecialedition/mods/173747/files/781994",
+                {},
+                L"2.3"});
+        const DownloadEntry download = importArchive(
+            L"Legacy Sidecar Version.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Legacy Sidecar Version</moduleName>
+  <requiredInstallFiles>
+    <file source="payload/LegacyVersion.esp" destination="LegacyVersion.esp" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Legacy Sidecar Version</Name><Version>2.3</Version></fomod>)xml"},
+                {L"payload/LegacyVersion.esp", "new-plugin"}
+            });
+        const std::filesystem::path sidecar =
+            download.localPath.wstring() + L".fluxora.json";
+        writeTextFile(
+            sidecar,
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/173747/files/781995",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"173747",
+                "fileId":"781995",
+                "nexusModName":"Legacy Sidecar Version",
+                "version":"2.3",
+                "latestVersion":"2.3.1",
+                "lastRequestedUnixMs":1785257166303,
+                "isDownloading":false
+            })json");
+
+        InstalledMod installed;
+        try
+        {
+            installed = downloads_.installFomodDownload(
+                project_,
+                download.localPath,
+                L"Legacy Sidecar Version",
+                ExistingModInstallMode::Replace,
+                {});
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        EXPECT_EQ(installed.modUuid, baseline.uuid);
+        EXPECT_EQ(installed.version, L"2.3.1");
+        EXPECT_EQ(readTextFile(installed.id / L"LegacyVersion.esp"), "new-plugin");
+        const std::string repairedSidecar = readTextFile(sidecar);
+        EXPECT_NE(
+            repairedSidecar.find(R"json("downloadedFileVersion":"2.3.1")json"),
+            std::string::npos);
+    }
+
+    TEST_F(
+        ModFileOperationsIntegrationTests,
+        InstallFomodDownloadPreservesKnownLatestVersionIndependently)
+    {
+        const DownloadEntry download = importArchive(
+            L"Independent Latest Version.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Independent Latest Version</moduleName>
+  <requiredInstallFiles>
+    <file source="payload/IndependentLatest.esp" destination="IndependentLatest.esp" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Independent Latest Version</Name><Version>2.3.1</Version></fomod>)xml"},
+                {L"payload/IndependentLatest.esp", "plugin"}
+            });
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/173747/files/781995",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"173747",
+                "fileId":"781995",
+                "nexusModName":"Independent Latest Version",
+                "version":"2.3.1",
+                "latestVersion":"2.4.0",
+                "isDownloading":false
+            })json");
+
+        InstalledMod installed;
+        try
+        {
+            installed = downloads_.installFomodDownload(
+                project_,
+                download.localPath,
+                L"Independent Latest Version",
+                ExistingModInstallMode::FailIfExists,
+                {});
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        EXPECT_EQ(installed.version, L"2.3.1");
+        EXPECT_EQ(installed.latestVersion, L"2.4.0");
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        const InstalledModRecord* record =
+            findInstalledMod(records, L"Independent Latest Version");
+        ASSERT_NE(record, nullptr);
+        EXPECT_EQ(record->source.latestVersion, L"2.4.0");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ReplaceFomodUpdateSupportsArbitrarilyNestedArchiveRoot)
@@ -3702,7 +4144,7 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(downloadsDirectory().parent_path() / L"escaped-preview.png"));
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, OrdinaryArchiveInstallCompletesWhileFomodPackageBuildIsPaused)
+    TEST_F(ModFileOperationsIntegrationTests, OrdinaryArchiveInstallCompletesWhileFomodMetadataBuildIsPaused)
     {
         std::vector<ZipEntry> fomodEntries{
             {L"fomod/ModuleConfig.xml", R"xml(<config>
@@ -3759,7 +4201,7 @@ namespace fluxora::tests
         InstallStagingCacheProducerHookGuard hook{
             [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
             {
-                if (kind == L"fomod-package" && !fomodProducerPaused.exchange(true))
+                if (kind == L"fomod-metadata" && !fomodProducerPaused.exchange(true))
                 {
                     fomodProducerStartedPromise.set_value();
                     releaseFomodProducer.wait();
@@ -3822,7 +4264,8 @@ namespace fluxora::tests
             throw;
         }
 
-        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"fomod-package-").size(), 1U);
+        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"fomod-metadata-").size(), 1U);
+        EXPECT_TRUE(installStagingCachePayloads(downloadsDirectory(), L"fomod-package-").empty());
         EXPECT_TRUE(std::filesystem::is_regular_file(
             modsDirectory() / L"Plain Archive" / L"PlainArchive.esp"));
     }

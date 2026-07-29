@@ -25,6 +25,7 @@ namespace fluxora
     class BuildPathSettingsService;
     class BuildFileWorkspaceService;
     class BodySlideIntegrationService;
+    class LodGeneratorIntegrationService;
     class NexusModsAuthService;
     class NexusUpdateApi;
     class ProjectService;
@@ -58,6 +59,7 @@ namespace fluxora
         [[nodiscard]] EffectiveFileTreeService& effectiveFileTree() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] BodySlideIntegrationService& bodySlideIntegration() noexcept;
+        [[nodiscard]] LodGeneratorIntegrationService& lodGeneratorIntegration() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
         [[nodiscard]] ExternalConnectionService& externalConnections() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
@@ -92,6 +94,7 @@ namespace fluxora
         std::unique_ptr<ExecutableIconService> executableIcons_;
         std::unique_ptr<ExecutableService> executables_;
         std::unique_ptr<BodySlideIntegrationService> bodySlideIntegration_;
+        std::unique_ptr<LodGeneratorIntegrationService> lodGeneratorIntegration_;
         std::unique_ptr<TemplateService> templates_;
         std::unique_ptr<ProjectService> projects_;
         std::unique_ptr<FluxPackService> fluxPacks_;

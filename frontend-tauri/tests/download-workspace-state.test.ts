@@ -192,6 +192,28 @@ describe('download workspace state', () => {
     expect(updated.items[2]).toBe(added);
   });
 
+  it('applies the native placement when a completed replacement becomes the newest download', () => {
+    const ready = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+    const replacement = downloadEntry('paused', 'SmoothCam 1.2.1.zip');
+
+    const updated = downloadWorkspaceReducer(ready, {
+      type: 'delta-applied',
+      upserts: [replacement],
+      removedIds: [],
+      placements: [{ orderId: replacement.id, beforeOrderId: 'skyui' }]
+    });
+
+    expect(updated.items.map((entry) => entry.id)).toEqual([
+      'paused',
+      'skyui',
+      'active'
+    ]);
+    expect(updated.items[0]).toBe(replacement);
+  });
+
   it('queues duplicate decisions in row order and removes a canceled pending row', () => {
     const firstDecision = downloadEntry('decision-first', 'SkyUI 1.0.1.7z', {
       archiveId: null,

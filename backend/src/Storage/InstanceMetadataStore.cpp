@@ -479,6 +479,16 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    bool InstanceMetadataStore::repairInstalledModVersion(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     std::optional<ModUpdateSweepRecord> InstanceMetadataStore::modUpdateSweep(
         const std::filesystem::path&,
         std::wstring_view)
@@ -2148,10 +2158,11 @@ namespace fluxora
             {
                 database.exec(
                     "UPDATE mod_sources SET "
-                    "latest_version = CASE WHEN last_checked_at = '' THEN "
-                    "COALESCE((SELECT version FROM mods WHERE mods.id = mod_sources.mod_id), latest_version) "
+                    "latest_version = CASE WHEN last_checked_at = '' AND trim(latest_version) = '' THEN "
+                    "COALESCE(NULLIF((SELECT version FROM mods WHERE mods.id = mod_sources.mod_id), ''), latest_version) "
                     "ELSE latest_version END, "
-                    "latest_file_id = CASE WHEN last_checked_at = '' THEN remote_file_id ELSE latest_file_id END, "
+                    "latest_file_id = CASE WHEN last_checked_at = '' AND trim(latest_file_id) = '' "
+                    "THEN remote_file_id ELSE latest_file_id END, "
                     "last_check_state = CASE "
                     "WHEN lower(provider) = 'nexus' AND game_domain <> '' AND remote_mod_id <> '' AND remote_file_id <> '' "
                     "THEN CASE WHEN last_checked_at = '' THEN 'baseline_pending' ELSE 'recheck_required' END "
@@ -2536,8 +2547,14 @@ namespace fluxora
             {
                 if (record.source.lastCheckedAt.empty())
                 {
-                    record.source.latestVersion = record.version;
-                    record.source.latestFileId = record.source.remoteFileId;
+                    if (trim(record.source.latestVersion).empty())
+                    {
+                        record.source.latestVersion = record.version;
+                    }
+                    if (trim(record.source.latestFileId).empty())
+                    {
+                        record.source.latestFileId = record.source.remoteFileId;
+                    }
                     record.source.updateCheckState = L"baseline_pending";
                 }
                 else if (record.source.updateCheckState.empty())
@@ -2753,6 +2770,31 @@ namespace fluxora
                 statement.columnText(24)
             };
             return record;
+        }
+
+        bool repairInstalledModVersionInDatabase(
+            Database& database,
+            std::wstring_view folderName,
+            std::wstring_view expectedVersion,
+            std::wstring_view confirmedVersion)
+        {
+            Statement currentVersion = database.prepare(
+                "SELECT version FROM mods WHERE folder_name = ? LIMIT 1;");
+            currentVersion.bindText(1, folderName);
+            if (!currentVersion.stepRow() || currentVersion.columnText(0) != expectedVersion)
+            {
+                return false;
+            }
+
+            Statement repairVersion = database.prepare(
+                "UPDATE mods SET version = ? "
+                "WHERE folder_name = ? AND version = ?;");
+            repairVersion.bindText(1, confirmedVersion);
+            repairVersion.bindText(2, folderName);
+            repairVersion.bindText(3, expectedVersion);
+            repairVersion.stepDone();
+            bumpModInventoryRevision(database);
+            return true;
         }
 
         std::vector<InstalledModRecord> readInstalledRecords(
@@ -7261,7 +7303,9 @@ namespace fluxora
         syncProfileOrderItems(database, normalizedProfileName);
 
         const int count = profileOrderItemCount(database, normalizedProfileName);
-        const int position = std::clamp(targetIndex, 0, count);
+        const int position = targetIndex < 0
+            ? count
+            : std::clamp(targetIndex, 0, count);
         const std::wstring now = nowUtcText();
 
         Statement shift = database.prepare(
@@ -7827,11 +7871,6 @@ namespace fluxora
         {
             throw std::invalid_argument("Installed mod directory does not exist.");
         }
-        if (std::filesystem::exists(targetModDirectory))
-        {
-            throw std::invalid_argument("Installed mod rename target already exists.");
-        }
-
         Database database = openInstanceDatabase(projectDirectory);
         InstalledModRecord record = readRecordByFolder(
             database,
@@ -7843,8 +7882,52 @@ namespace fluxora
             throw std::invalid_argument("Only installed mods can be renamed.");
         }
 
+        if (currentModDirectory == targetModDirectory)
+        {
+            throw std::invalid_argument("Installed mod rename requires a different name.");
+        }
+        std::error_code equivalenceError;
+        const bool caseOnlyRename =
+            std::filesystem::exists(targetModDirectory) &&
+            std::filesystem::equivalent(currentModDirectory, targetModDirectory, equivalenceError) &&
+            !equivalenceError;
+        if (std::filesystem::exists(targetModDirectory) && !caseOnlyRename)
+        {
+            throw std::invalid_argument("Installed mod rename target already exists.");
+        }
+
         std::error_code renameError;
-        std::filesystem::rename(currentModDirectory, targetModDirectory, renameError);
+        if (caseOnlyRename)
+        {
+            const std::filesystem::path stagingDirectory =
+                currentModDirectory.parent_path() /
+                std::filesystem::path(L".fluxora-rename-" + record.uuid);
+            if (std::filesystem::exists(stagingDirectory))
+            {
+                throw std::runtime_error("Installed mod rename staging directory already exists.");
+            }
+
+            std::filesystem::rename(currentModDirectory, stagingDirectory, renameError);
+            if (!renameError)
+            {
+                std::filesystem::rename(stagingDirectory, targetModDirectory, renameError);
+                if (renameError)
+                {
+                    std::error_code rollbackError;
+                    std::filesystem::rename(stagingDirectory, currentModDirectory, rollbackError);
+                    if (rollbackError)
+                    {
+                        throw std::runtime_error(
+                            "Installed mod case-only rename failed and could not be rolled back: " +
+                            renameError.message());
+                    }
+                }
+            }
+        }
+        else
+        {
+            std::filesystem::rename(currentModDirectory, targetModDirectory, renameError);
+        }
         if (renameError)
         {
             throw std::runtime_error("Installed mod directory could not be renamed: " + renameError.message());
@@ -8245,6 +8328,17 @@ namespace fluxora
             updateSource.bindText(12, check.folderName);
             updateSource.stepDone();
 
+            if (!check.expectedInstalledVersion.empty() &&
+                !check.confirmedInstalledVersion.empty() &&
+                check.expectedInstalledVersion != check.confirmedInstalledVersion)
+            {
+                (void)repairInstalledModVersionInDatabase(
+                    database,
+                    check.folderName,
+                    check.expectedInstalledVersion,
+                    check.confirmedInstalledVersion);
+            }
+
             try
             {
                 InstalledModRecord record =
@@ -8270,6 +8364,56 @@ namespace fluxora
             {
             }
         }
+    }
+
+    bool InstanceMetadataStore::repairInstalledModVersion(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view folderName,
+        std::wstring_view expectedVersion,
+        std::wstring_view confirmedVersion,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(folderName)).empty() ||
+            expectedVersion.empty() || confirmedVersion.empty() ||
+            expectedVersion == confirmedVersion)
+        {
+            return false;
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        if (!repairInstalledModVersionInDatabase(
+                database,
+                folderName,
+                expectedVersion,
+                confirmedVersion))
+        {
+            return false;
+        }
+
+        std::optional<InstalledModRecord> manifestToWrite;
+        try
+        {
+            manifestToWrite =
+                readRecordByFolder(database, projectDirectory, folderName, modsRoot);
+        }
+        catch (const std::exception&)
+        {
+        }
+        transaction.commit();
+
+        if (manifestToWrite.has_value())
+        {
+            try
+            {
+                writePortableManifest(*manifestToWrite);
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+        return true;
     }
 
     std::optional<ModUpdateSweepRecord> InstanceMetadataStore::modUpdateSweep(

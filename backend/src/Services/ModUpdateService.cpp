@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/ModOrganizerVersionCodec.hpp"
 #include "FluxoraCore/Services/NexusFileLineageResolver.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
@@ -20,6 +21,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -38,6 +40,51 @@ namespace fluxora
                 return static_cast<wchar_t>(std::towlower(character));
             });
             return value;
+        }
+
+        std::optional<std::wstring> confirmedImportedVersionRepair(
+            const InstalledModRecord& mod,
+            const NexusModFilesResponse& response)
+        {
+            const std::optional<std::wstring> decoded =
+                ModOrganizerVersionCodec::decodeDecimalCanonicalVersion(mod.version);
+            if (!decoded.has_value() || *decoded == mod.version)
+            {
+                return std::nullopt;
+            }
+
+            const auto installedFile = std::find_if(
+                response.files.begin(),
+                response.files.end(),
+                [&mod](const NexusFileMetadata& file)
+                {
+                    return file.fileId == mod.source.remoteFileId;
+                });
+            if (installedFile == response.files.end() || installedFile->version != *decoded)
+            {
+                return std::nullopt;
+            }
+
+            return decoded;
+        }
+
+        std::optional<std::wstring> storedImportedVersionRepair(
+            const InstalledModRecord& mod)
+        {
+            const std::optional<std::wstring> decoded =
+                ModOrganizerVersionCodec::decodeDecimalCanonicalVersion(mod.version);
+            if (!decoded.has_value() ||
+                lower(mod.source.provider) != L"nexus" ||
+                mod.source.remoteFileId.empty() ||
+                mod.source.latestFileId != mod.source.remoteFileId ||
+                mod.source.latestVersion != *decoded ||
+                lower(mod.source.updateCheckState) != L"completed" ||
+                mod.source.lastCheckedAt.empty())
+            {
+                return std::nullopt;
+            }
+
+            return decoded;
         }
 
         std::wstring nowUtcText()
@@ -365,53 +412,6 @@ namespace fluxora
                     : Resolution{ResolutionState::Resolved, selected, lineage.kind};
             }
 
-            std::vector<const NexusFileMetadata*> candidates;
-            for (const NexusFileMetadata& file : response.files)
-            {
-                if (!isActive(file) || file.fileId == installed->second->fileId ||
-                    file.categoryId != installed->second->categoryId ||
-                    file.uploadedTimestamp <= installed->second->uploadedTimestamp)
-                {
-                    continue;
-                }
-                candidates.push_back(&file);
-            }
-
-            if (candidates.size() > 1 && installed->second->isPrimary.has_value())
-            {
-                std::vector<const NexusFileMetadata*> primaryMatches;
-                std::copy_if(
-                    candidates.begin(),
-                    candidates.end(),
-                    std::back_inserter(primaryMatches),
-                    [&](const NexusFileMetadata* candidate)
-                    {
-                        return candidate->isPrimary.has_value() &&
-                            candidate->isPrimary == installed->second->isPrimary;
-                    });
-                if (primaryMatches.size() == 1)
-                {
-                    candidates = std::move(primaryMatches);
-                }
-            }
-
-            if (candidates.size() == 1)
-            {
-                return {
-                    ResolutionState::Resolved,
-                    candidates.front(),
-                    NexusFileLineageKind::UnprovenOrDifferentBranch
-                };
-            }
-            if (candidates.size() > 1)
-            {
-                return {
-                    ResolutionState::Ambiguous,
-                    nullptr,
-                    NexusFileLineageKind::UnprovenOrDifferentBranch
-                };
-            }
-
             return isActive(*installed->second)
                 ? Resolution{ResolutionState::Resolved, installed->second, NexusFileLineageKind::SameFile}
                 : Resolution{ResolutionState::Failed, nullptr, NexusFileLineageKind::SameFile};
@@ -533,6 +533,13 @@ namespace fluxora
             options_.maxConcurrentMetadataRequests,
             std::size_t{1},
             std::size_t{4});
+        options_.maxTransientMetadataRetries = (std::min)(
+            options_.maxTransientMetadataRetries,
+            std::size_t{3});
+        options_.transientMetadataRetryDelay = (std::clamp)(
+            options_.transientMetadataRetryDelay,
+            std::chrono::milliseconds{0},
+            std::chrono::milliseconds{2'000});
     }
 
     ModUpdateCheckResult ModUpdateService::check(const ModUpdateCheckRequest& request) const
@@ -548,8 +555,30 @@ namespace fluxora
         const std::wstring checkedAt = options_.nowUtc();
         const std::filesystem::path modsDirectory =
             pathSettings_.modsDirectory(request.projectDirectory);
-        const std::vector<InstalledModRecord> installed =
+        std::vector<InstalledModRecord> installed =
             InstanceMetadataStore::listInstalledMods(request.projectDirectory, modsDirectory);
+        for (InstalledModRecord& mod : installed)
+        {
+            const std::optional<std::wstring> repair = storedImportedVersionRepair(mod);
+            if (!repair.has_value() ||
+                !InstanceMetadataStore::repairInstalledModVersion(
+                    request.projectDirectory,
+                    mod.folderName,
+                    mod.version,
+                    *repair,
+                    modsDirectory))
+            {
+                continue;
+            }
+
+            mod.version = *repair;
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ModUpdates",
+                "Repaired stored Mod Organizer version encoding folderName=" +
+                    asciiText(mod.folderName) +
+                    " fileId=" + asciiText(mod.source.remoteFileId) + ".");
+        }
 
         using GroupKey = std::pair<std::wstring, std::wstring>;
         std::map<GroupKey, std::vector<const InstalledModRecord*>> groups;
@@ -796,9 +825,9 @@ namespace fluxora
                     result.nextEligibleAt = retryAt;
                     gameNextEligibleAt[gameDomain] = retryAt;
                     gameBackoffSteps[gameDomain] = static_cast<int>((std::min)(index + 1, backoffMinutes.size() - 1));
-                    issuanceStopped = true;
                     break;
                 }
+                case NexusUpdateApiErrorKind::ResourceUnavailable:
                 case NexusUpdateApiErrorKind::InvalidResponse:
                     result.reason = ModUpdateCheckReason::MetadataUnavailable;
                     gameStopReasons[gameDomain] = L"metadata_unavailable";
@@ -952,6 +981,23 @@ namespace fluxora
             std::vector<MetadataWork> networkWork;
             networkWork.reserve(groups.size());
 
+            const auto reportMetadataProgress = [&](
+                const std::vector<const InstalledModRecord*>& mods)
+            {
+                if (!options_.progress)
+                {
+                    return;
+                }
+                for (const InstalledModRecord* mod : mods)
+                {
+                    ++completedMetadataMods;
+                    options_.progress(
+                        completedMetadataMods,
+                        totalMetadataMods,
+                        mod->folderName);
+                }
+            };
+
             const auto processMetadataResponse = [&](
                 const GroupKey& key,
                 const std::vector<const InstalledModRecord*>& mods,
@@ -1000,10 +1046,26 @@ namespace fluxora
                     persisted.latestFileId = resolution.file->fileId;
                     persisted.lastCheckState = L"completed";
                     persisted.lastAttemptedAt = checkedAt;
+                    if (const std::optional<std::wstring> repair =
+                            confirmedImportedVersionRepair(*mod, response);
+                        repair.has_value())
+                    {
+                        persisted.expectedInstalledVersion = mod->version;
+                        persisted.confirmedInstalledVersion = *repair;
+                    }
                     InstanceMetadataStore::recordRemoteCheck(
                         request.projectDirectory,
                         persisted,
                         modsDirectory);
+                    if (!persisted.confirmedInstalledVersion.empty())
+                    {
+                        logger_.writeOperation(
+                            LogLevel::Info,
+                            "ModUpdates",
+                            "Repaired imported Mod Organizer version encoding folderName=" +
+                                asciiText(mod->folderName) +
+                                " fileId=" + asciiText(mod->source.remoteFileId) + ".");
+                    }
 
                     ++result.counters.checked;
                     if (resolution.file->fileId != mod->source.remoteFileId)
@@ -1011,17 +1073,7 @@ namespace fluxora
                         ++result.counters.updates;
                     }
                 }
-                if (options_.progress)
-                {
-                    for (const InstalledModRecord* mod : mods)
-                    {
-                        ++completedMetadataMods;
-                        options_.progress(
-                            completedMetadataMods,
-                            totalMetadataMods,
-                            mod->folderName);
-                    }
-                }
+                reportMetadataProgress(mods);
             };
 
             for (const auto& [key, mods] : groups)
@@ -1086,12 +1138,16 @@ namespace fluxora
             };
 
             std::size_t nextWork = 0;
+            std::size_t consecutiveTransientFailureBatches = 0;
+            constexpr std::size_t transientFailureBatchesBeforeStop = 2;
             while (nextWork < networkWork.size() &&
                 !issuanceStopped &&
                 !cancelIfRequested() &&
                 !stopForDeadline())
             {
                 std::vector<InFlightMetadata> inFlight;
+                std::size_t attemptedRequestsThisBatch = 0;
+                std::size_t transientFailuresThisBatch = 0;
                 const std::size_t batchLimit = !quotaKnown && nextWork == 0
                     ? std::size_t{1}
                     : options_.maxConcurrentMetadataRequests;
@@ -1102,28 +1158,71 @@ namespace fluxora
                     !stopForDeadline())
                 {
                     const MetadataWork* work = &networkWork[nextWork++];
+                    ++attemptedRequestsThisBatch;
                     ++result.counters.apiRequests;
                     try
                     {
                         const GroupKey key = work->key;
                         inFlight.push_back(InFlightMetadata{
                             work,
-                            std::async(std::launch::async, [this, key]()
+                            std::async(std::launch::async, [this, key, sweepDeadline]()
                             {
-                                return api_.fetchModFiles(key.first, key.second);
+                                for (std::size_t retry = 0;; ++retry)
+                                {
+                                    try
+                                    {
+                                        return api_.fetchModFiles(key.first, key.second);
+                                    }
+                                    catch (const NexusUpdateApiError& exception)
+                                    {
+                                        const bool transient =
+                                            exception.kind() == NexusUpdateApiErrorKind::Offline ||
+                                            exception.kind() == NexusUpdateApiErrorKind::Network;
+                                        if (!transient || retry >= options_.maxTransientMetadataRetries ||
+                                            options_.cancellationRequested())
+                                        {
+                                            throw;
+                                        }
+                                        const auto retryDelay = options_.transientMetadataRetryDelay *
+                                            static_cast<int>(retry + 1);
+                                        if (options_.overallTimeout.count() > 0 &&
+                                            std::chrono::steady_clock::now() + retryDelay >= sweepDeadline)
+                                        {
+                                            throw;
+                                        }
+                                        logger_.writeOperation(
+                                            LogLevel::Warning,
+                                            "ModUpdates",
+                                            "Transient Nexus metadata request failure; retrying gameDomain=" +
+                                                asciiText(key.first) +
+                                                " modId=" + asciiText(key.second) +
+                                                " retryAttempt=" + std::to_string(retry + 1) +
+                                                " retryDelayMs=" + std::to_string(retryDelay.count()) + ".");
+                                        if (retryDelay.count() > 0)
+                                        {
+                                            std::this_thread::sleep_for(retryDelay);
+                                        }
+                                    }
+                                }
                             }),
                             std::chrono::steady_clock::now()});
                     }
                     catch (const std::exception& exception)
                     {
+                        ++transientFailuresThisBatch;
                         handleApiError(
                             NexusUpdateApiError(NexusUpdateApiErrorKind::Network, exception.what()),
                             work->key.first,
                             work->mods->size());
+                        reportMetadataProgress(*work->mods);
                         logger_.writeOperation(
                             LogLevel::Warning,
                             "ModUpdates",
-                            std::string("Nexus metadata request could not be started: ") + exception.what());
+                            "Nexus metadata request could not be started gameDomain=" +
+                                asciiText(work->key.first) +
+                                " modId=" + asciiText(work->key.second) +
+                                " affectedMods=" + std::to_string(work->mods->size()) +
+                                ": " + exception.what());
                     }
                 }
 
@@ -1161,23 +1260,58 @@ namespace fluxora
                     }
                     catch (const NexusUpdateApiError& exception)
                     {
+                        if (exception.kind() == NexusUpdateApiErrorKind::Offline ||
+                            exception.kind() == NexusUpdateApiErrorKind::Network)
+                        {
+                            ++transientFailuresThisBatch;
+                        }
                         handleApiError(exception, work.key.first, work.mods->size());
+                        reportMetadataProgress(*work.mods);
                         logger_.writeOperation(
                             LogLevel::Warning,
                             "ModUpdates",
-                            std::string("Nexus metadata request failed: ") + exception.what());
+                            "Nexus metadata request failed gameDomain=" +
+                                asciiText(work.key.first) +
+                                " modId=" + asciiText(work.key.second) +
+                                " affectedMods=" + std::to_string(work.mods->size()) +
+                                ": " + exception.what());
                     }
                     catch (const std::exception& exception)
                     {
+                        ++transientFailuresThisBatch;
                         handleApiError(
                             NexusUpdateApiError(NexusUpdateApiErrorKind::Network, exception.what()),
                             work.key.first,
                             work.mods->size());
+                        reportMetadataProgress(*work.mods);
                         logger_.writeOperation(
                             LogLevel::Warning,
                             "ModUpdates",
-                            std::string("Nexus metadata request failed: ") + exception.what());
+                            "Nexus metadata request failed gameDomain=" +
+                                asciiText(work.key.first) +
+                                " modId=" + asciiText(work.key.second) +
+                                " affectedMods=" + std::to_string(work.mods->size()) +
+                                ": " + exception.what());
                     }
+                }
+
+                if (!issuanceStopped && attemptedRequestsThisBatch > 0 &&
+                    transientFailuresThisBatch == attemptedRequestsThisBatch)
+                {
+                    ++consecutiveTransientFailureBatches;
+                    if (consecutiveTransientFailureBatches >= transientFailureBatchesBeforeStop)
+                    {
+                        issuanceStopped = true;
+                        logger_.writeOperation(
+                            LogLevel::Warning,
+                            "ModUpdates",
+                            "Nexus metadata sweep stopped after consecutive fully failed network batches; "
+                            "remainingRequests=" + std::to_string(networkWork.size() - nextWork) + ".");
+                    }
+                }
+                else
+                {
+                    consecutiveTransientFailureBatches = 0;
                 }
             }
 

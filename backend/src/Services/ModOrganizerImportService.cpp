@@ -10,6 +10,7 @@
 #include "FluxoraCore/Services/ModOrganizerExecutableImportService.hpp"
 #include "FluxoraCore/Services/ModOrganizerPluginGroupService.hpp"
 #include "FluxoraCore/Services/ModOrganizerProfileOrderService.hpp"
+#include "FluxoraCore/Services/ModOrganizerVersionCodec.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/ProjectStateTransaction.hpp"
@@ -3073,7 +3074,11 @@ namespace fluxora
 
         std::wstring versionFromMeta(const std::map<std::wstring, std::wstring>& meta)
         {
-            return iniValue(meta, {L"version", L"General.version"});
+            const std::wstring storedVersion =
+                iniValue(meta, {L"version", L"General.version"});
+            const std::optional<std::wstring> decoded =
+                ModOrganizerVersionCodec::decodeDecimalCanonicalVersion(storedVersion);
+            return decoded.value_or(storedVersion);
         }
 
         std::wstring nameFromMeta(

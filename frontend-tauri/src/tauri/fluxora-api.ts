@@ -261,7 +261,8 @@ const listenToDownloadsChanged = (
     const normalizedEvent = {
       ...event,
       fullResyncRequired: event.fullResyncRequired ?? false,
-      upserts: normalizeDownloadEntries(event.upserts)
+      upserts: normalizeDownloadEntries(event.upserts),
+      placements: event.placements ?? []
     };
     if (!pending || pending.projectDirectory !== normalizedEvent.projectDirectory) {
       if (pending) {
@@ -273,18 +274,26 @@ const listenToDownloadsChanged = (
 
     const upserts = new Map(pending.upserts.map((entry) => [entry.id, entry]));
     const removedIds = new Set(pending.removedIds);
+    const placements = new Map(
+      pending.placements.map((placement) => [placement.orderId, placement])
+    );
     for (const removedId of normalizedEvent.removedIds) {
       upserts.delete(removedId);
       removedIds.add(removedId);
+      placements.delete(removedId);
     }
     for (const entry of normalizedEvent.upserts) {
       removedIds.delete(entry.id);
       upserts.set(entry.id, entry);
     }
+    for (const placement of normalizedEvent.placements) {
+      placements.set(placement.orderId, placement);
+    }
     pending = {
       ...normalizedEvent,
       upserts: [...upserts.values()],
       removedIds: [...removedIds],
+      placements: [...placements.values()],
       fullResyncRequired:
         pending.fullResyncRequired || normalizedEvent.fullResyncRequired
     };
@@ -736,6 +745,20 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.modsDeleteInstalled,
         projectDirectory,
         modPath,
+        request
+      ),
+    renameInstalled: (
+      projectDirectory: string,
+      modPath: string,
+      newName: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraInstalledMod>(
+        ipc,
+        FluxoraIpcChannels.modsRenameInstalled,
+        projectDirectory,
+        modPath,
+        newName,
         request
       ),
     createEmpty: (projectDirectory: string, modName: string, request?: OperationRequest) =>
@@ -1286,6 +1309,20 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         sourcePath,
         request
       ).then(normalizeDownloadEntry),
+    rename: (
+      projectDirectory: string,
+      downloadPath: string,
+      newBaseName: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraDownloadEntry>(
+        ipc,
+        FluxoraIpcChannels.downloadsRename,
+        projectDirectory,
+        downloadPath,
+        newBaseName,
+        request
+      ).then(normalizeDownloadEntry),
     delete: (projectDirectory: string, downloadPath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadMutationResult>(
         ipc,
@@ -1765,6 +1802,10 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.shellShowItemInFolder,
         path
       )
+  },
+  clipboard: {
+    writeText: (text: string) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.clipboardWriteText, text)
   },
   templates: {
     list: (request?: OperationRequest) =>
@@ -2619,6 +2660,9 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           message: 'Tauri runtime is unavailable in browser preview.'
         } satisfies ShellShowItemInFolderResult;
 
+      case FluxoraIpcChannels.clipboardWriteText:
+        return undefined;
+
       case FluxoraIpcChannels.transferListDestinationDrives:
         return [] satisfies FluxoraTransferDriveOption[];
 
@@ -3080,6 +3124,11 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.shellShowItemInFolder:
         return invoke<ShellShowItemInFolderResult>('fluxora_shell_show_item_in_folder', {
           path: optionalString(args[0])
+        });
+
+      case FluxoraIpcChannels.clipboardWriteText:
+        return invoke<void>('fluxora_clipboard_write_text', {
+          text: typeof args[0] === 'string' ? args[0] : ''
         });
 
       case FluxoraIpcChannels.windowMinimize:
@@ -3664,6 +3713,14 @@ const createTauriInvoker = (): IpcInvoker => ({
         return withOperationId(data, request, mutation[3] as string);
       }
 
+      case FluxoraIpcChannels.modsRenameInstalled:
+        return bridgeRequest(
+          'mods.renameInstalled',
+          { projectDirectory: args[0], modPath: args[1], newName: args[2] },
+          requestWithOperationId(args[3], 'mods_rename_installed'),
+          fileMutationTimeoutMs
+        );
+
       case FluxoraIpcChannels.pluginsList: {
         const pluginRequest =
           args[3] && typeof args[3] === 'object' ? (args[3] as PluginListRequest) : {};
@@ -3868,6 +3925,13 @@ const createTauriInvoker = (): IpcInvoker => ({
           requestWithOperationId(args[2], 'downloads_import_file'),
           fileMutationTimeoutMs
         );
+      case FluxoraIpcChannels.downloadsRename:
+        return bridgeRequest(
+          'downloads.rename',
+          { projectDirectory: args[0], downloadPath: args[1], newBaseName: args[2] },
+          requestWithOperationId(args[3], 'downloads_rename'),
+          fileMutationTimeoutMs
+        );
       case FluxoraIpcChannels.downloadsResume:
         return bridgeRequest('downloads.resume', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_resume'));
       case FluxoraIpcChannels.downloadsResolveDuplicateDecision:
@@ -3931,6 +3995,9 @@ const createTauriInvoker = (): IpcInvoker => ({
           downloadPath: analyze.downloadPath,
           existingModMode: analyze.existingModMode ?? 0
         };
+        if (channel === FluxoraIpcChannels.downloadsAnalyzeContentLayout && analyze.placementEdits) {
+          params.placementEditsJson = JSON.stringify(analyze.placementEdits);
+        }
         if (channel === FluxoraIpcChannels.downloadsAnalyzeFomodContentLayout) {
           params.selectedOptionIdsJson = JSON.stringify(analyze.selectedOptionIds ?? []);
           if (typeof analyze.profileName === 'string') {

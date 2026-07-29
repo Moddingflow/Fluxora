@@ -16,6 +16,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -119,6 +120,17 @@ namespace fluxora
         Merge = 2
     };
 
+    class InstallTargetBusyError final : public std::runtime_error
+    {
+    public:
+        InstallTargetBusyError()
+            : std::runtime_error(
+                  "Close the game or any other program using the mod folder, then retry. "
+                  "Fluxora kept the existing mod and your install decisions unchanged.")
+        {
+        }
+    };
+
     using InstallConflictSnapshotCallback =
         std::function<void(const FluxoraInstallConflictSnapshot& snapshot)>;
 
@@ -166,6 +178,11 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& sourcePath) const;
 
+        DownloadEntry renameDownload(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& downloadPath,
+            std::wstring_view newBaseName) const;
+
         void deleteDownload(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath) const;
@@ -210,7 +227,7 @@ namespace fluxora
             const std::filesystem::path& downloadPath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
-            const std::vector<PlacementOverride>& placementOverrides = {},
+            const PlacementEdits& placementEdits = {},
             const ModIdentityInstallSelection* identitySelection = nullptr,
             std::wstring_view profileName = {},
             int modOrderTargetIndex = -1,
@@ -221,7 +238,7 @@ namespace fluxora
             const std::filesystem::path& archivePath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
-            const std::vector<PlacementOverride>& placementOverrides = {},
+            const PlacementEdits& placementEdits = {},
             const ModIdentityInstallSelection* identitySelection = nullptr,
             std::wstring_view profileName = {},
             int modOrderTargetIndex = -1,
@@ -230,7 +247,8 @@ namespace fluxora
         [[nodiscard]] PlacementPlan analyzeDownloadContentLayout(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath,
-            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists) const;
+            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
+            const PlacementEdits& placementEdits = {}) const;
 
         [[nodiscard]] FomodInstallerDescriptor analyzeFomodDownload(
             const std::filesystem::path& projectDirectory,

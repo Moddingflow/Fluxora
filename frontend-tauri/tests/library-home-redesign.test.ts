@@ -159,7 +159,7 @@ describe('library home redesign', () => {
     );
 
     expect(firstLoadMarkup).toContain('library-build-list--loading');
-    expect(firstLoadMarkup).toContain('workspace-skeleton');
+    expect(firstLoadMarkup).toContain('flx-skeleton');
     expect(firstLoadMarkup).toContain('aria-busy="true"');
     expect(component).not.toContain('title="Loading builds"');
     expect(refreshMarkup).toContain('Skyrim graphics overhaul');

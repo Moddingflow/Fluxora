@@ -787,6 +787,12 @@ namespace fluxora
         std::filesystem::remove(
             AtomicFileStore::backupPathFor(sidecarPathFor(archivePath)),
             error);
+        forgetArchiveIndex(archivePath);
+    }
+
+    void ArchiveCatalogService::forgetArchiveIndex(
+        const std::filesystem::path& archivePath) const
+    {
         const std::lock_guard lock(asyncIndexMutex);
         asyncIndexes.erase(archiveIndexKey(archivePath));
     }

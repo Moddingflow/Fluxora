@@ -147,10 +147,13 @@ describe('Tauri parity gate', () => {
 
     expect(packageJson.dependencies).not.toHaveProperty('@tauri-apps/plugin-dialog');
     expect(packageJson.dependencies).not.toHaveProperty('@tauri-apps/plugin-opener');
+    expect(packageJson.dependencies).not.toHaveProperty('@tauri-apps/plugin-clipboard-manager');
     expect(capabilities).not.toContain('dialog:default');
     expect(capabilities).not.toContain('opener:default');
+    expect(capabilities).not.toContain('clipboard-manager:default');
     expect(facade).not.toContain('@tauri-apps/plugin-dialog');
     expect(facade).not.toContain('@tauri-apps/plugin-opener');
+    expect(facade).not.toContain('@tauri-apps/plugin-clipboard-manager');
 
     for (const command of [
       'fluxora_dialog_pick_file',
@@ -159,6 +162,7 @@ describe('Tauri parity gate', () => {
       'fluxora_open_external',
       'fluxora_shell_open_path',
       'fluxora_shell_show_item_in_folder',
+      'fluxora_clipboard_write_text',
       'fluxora_window_close',
       'fluxora_window_minimize',
       'fluxora_window_set_taskbar_progress',

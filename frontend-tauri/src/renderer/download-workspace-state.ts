@@ -1,5 +1,6 @@
 import type {
   FluxoraDownloadEntry,
+  FluxoraOrderPlacement,
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
@@ -36,6 +37,7 @@ export type DownloadWorkspaceAction =
       type: 'delta-applied';
       upserts: FluxoraDownloadEntry[];
       removedIds: string[];
+      placements?: FluxoraOrderPlacement[];
     }
   | { type: 'item-removed'; id: string }
   | { type: 'search-changed'; searchText: string }
@@ -273,7 +275,7 @@ export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusV
   const tone: DownloadStatusView['tone'] =
     entry.buildStatus === 'Installed'
       ? 'installed'
-      : entry.buildStatus === 'Needs review' || entry.buildStatus === 'Failed'
+      : entry.buildStatus === 'Failed'
         ? 'error'
       : entry.buildStatus === 'Ready'
         ? 'ready'
@@ -335,6 +337,51 @@ export const downloadCapabilityView = (
   };
 };
 
+const applyDownloadPlacements = (
+  items: FluxoraDownloadEntry[],
+  placements: readonly FluxoraOrderPlacement[]
+): FluxoraDownloadEntry[] => {
+  if (placements.length === 0) {
+    return items;
+  }
+
+  const next = [...items];
+  const ids = next.map((entry) => entry.id);
+  for (const placement of placements) {
+    const sourceIndex = ids.indexOf(placement.orderId);
+    if (sourceIndex < 0) {
+      continue;
+    }
+    const [entry] = next.splice(sourceIndex, 1);
+    ids.splice(sourceIndex, 1);
+    if (!entry) {
+      continue;
+    }
+
+    let targetIndex = next.length;
+    if (placement.beforeOrderId) {
+      const beforeIndex = ids.indexOf(placement.beforeOrderId);
+      if (beforeIndex < 0) {
+        next.splice(sourceIndex, 0, entry);
+        ids.splice(sourceIndex, 0, placement.orderId);
+        continue;
+      }
+      targetIndex = beforeIndex;
+    } else if (placement.afterOrderId) {
+      const afterIndex = ids.indexOf(placement.afterOrderId);
+      if (afterIndex < 0) {
+        next.splice(sourceIndex, 0, entry);
+        ids.splice(sourceIndex, 0, placement.orderId);
+        continue;
+      }
+      targetIndex = afterIndex + 1;
+    }
+    next.splice(targetIndex, 0, entry);
+    ids.splice(targetIndex, 0, placement.orderId);
+  }
+  return next;
+};
+
 export const downloadWorkspaceReducer = (
   state: DownloadWorkspaceState,
   action: DownloadWorkspaceAction
@@ -391,7 +438,10 @@ export const downloadWorkspaceReducer = (
           items.push(entry);
         }
       }
-      return downloadWorkspaceReducer(state, { type: 'items-loaded', items });
+      return downloadWorkspaceReducer(state, {
+        type: 'items-loaded',
+        items: applyDownloadPlacements(items, action.placements ?? [])
+      });
     }
     case 'item-removed':
       return downloadWorkspaceReducer(state, {

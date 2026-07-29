@@ -10,14 +10,14 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
-describe('BodySlide managed launch contract', () => {
+describe('managed executable launch contract', () => {
   it('keeps optional DTO fields backward compatible and routes finalization to background', () => {
     const shared = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
     const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
     const bridge = readText('backend', 'src', 'BridgeHost', 'FluxoraBridgeHost.cpp');
 
-    expect(shared).toContain("managedToolKind?: 'bodySlide'");
+    expect(shared).toContain("managedToolKind?: 'bodySlide' | 'texGen' | 'dynDoLod'");
     expect(shared).toContain('managedSessionId?: string');
     expect(shared).toContain('outputMod?: FluxoraManagedOutputMod');
     expect(shared).toContain('configurationStatus?:');
@@ -28,18 +28,32 @@ describe('BodySlide managed launch contract', () => {
       '("executables.completeManagedLaunch", BridgeLane::Background)'
     );
     expect(bridge).toContain('BODYSLIDE_SESSION_ACTIVE');
+    expect(bridge).toContain('LOD_GENERATOR_SESSION_ACTIVE');
     expect(bridge).toContain('payloadCompleteManagedExecutableLaunch');
   });
 
   it('shows the managed label/output and finalizes in a finally block', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const display = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'executables',
+      'managed-executable-display.ts'
+    );
     const launchFlow = app.slice(
       app.indexOf('const launchExecutable = async () =>'),
       app.indexOf('const requestGrassCacheGeneration = () =>')
     );
 
-    expect(app).toContain('BodySlide · VFS');
-    expect(app).toContain('- BodySlide Output');
+    expect(display).toContain('BodySlide · VFS');
+    expect(display).toContain('- BodySlide Output');
+    expect(display).toContain('TexGen · VFS');
+    expect(display).toContain('TexGen Output');
+    expect(display).toContain('DynDOLOD · VFS');
+    expect(display).toContain('DynDOLOD Output');
+    expect(app).toContain('managedExecutableDisplay(');
     expect(launchFlow).toMatch(
       /finally \{[\s\S]*completeManagedLaunch\([\s\S]*managedSessionId,[\s\S]*managedOutcome/
     );

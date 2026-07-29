@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -76,6 +77,7 @@ namespace fluxora::tests
                 request.selectedGameDisplayName = lookup_.support->identity().displayName;
                 request.selectedGameCapabilities = lookup_.support->capabilities();
                 request.rulesProvider = components.contentLayoutRulesProvider;
+                request.assessmentPolicy = components.contentLayoutAssessmentPolicy;
                 request.archiveFileTree = std::move(entries);
                 return request;
             }
@@ -327,6 +329,31 @@ namespace fluxora::tests
         EXPECT_EQ(unknown->target, PlacementTarget::Data);
     }
 
+    TEST_F(ContentLayoutServiceTests, EntirelyUnknownSafeUnicodeLayoutWarnsWithoutBlockingInstall)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"тестовая папка/вложение.payload"}
+        }));
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_FALSE(plan.summary.hasBlockers);
+        EXPECT_TRUE(plan.summary.hasWarnings);
+        EXPECT_EQ(plan.summary.unknownEntries, 1U);
+        ASSERT_TRUE(plan.assessment.has_value());
+        EXPECT_EQ(plan.assessment->status, ContentLayoutAssessmentStatus::Warning);
+
+        const PlacementPlanEntry* unknown = findEntry(
+            plan,
+            L"тестовая папка/вложение.payload");
+        ASSERT_NE(unknown, nullptr);
+        EXPECT_EQ(unknown->target, PlacementTarget::Data);
+        EXPECT_EQ(
+            unknown->targetRelativePath.path().generic_wstring(),
+            L"тестовая папка/вложение.payload");
+        ASSERT_FALSE(plan.validationFindings.empty());
+        EXPECT_FALSE(plan.validationFindings.back().blocksInstall);
+    }
+
     TEST_F(ContentLayoutServiceTests, UnsafePathsAreBlocked)
     {
         const PlacementPlan plan = service_.analyze(skyrimRequest({
@@ -380,6 +407,29 @@ namespace fluxora::tests
         EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"root" / L"skse64_loader.exe"));
         EXPECT_FALSE(std::filesystem::exists(staging / L"Data" / L"SkyUI_SE.esp"));
         EXPECT_FALSE(std::filesystem::exists(staging / L"skse64_loader.exe"));
+    }
+
+    TEST_F(ContentLayoutServiceTests, ApplyPlanMaterializesSingleArchiveWrapperWithoutPreFlattening)
+    {
+        TempDirectory temp;
+        const std::filesystem::path staging = temp.path() / L"staging";
+        writeTextFile(
+            staging / L"Archive Wrapper" / L"Werewolf Footstep FX.esp",
+            "plugin");
+        writeTextFile(
+            staging / L"Archive Wrapper" / L"sound" / L"fx" / L"step.wav",
+            "audio");
+
+        const PlacementPlan plan = service_.analyzeDirectory(staging, skyrimRequest());
+        ASSERT_TRUE(plan.canInstall());
+        ASSERT_NE(findEntry(plan, L"Archive Wrapper/Werewolf Footstep FX.esp"), nullptr);
+        ASSERT_NE(findEntry(plan, L"Archive Wrapper/sound/fx/step.wav"), nullptr);
+
+        service_.applyPlanToDirectory(staging, plan);
+
+        EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"Werewolf Footstep FX.esp"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"sound" / L"fx" / L"step.wav"));
+        EXPECT_FALSE(std::filesystem::exists(staging / L"Archive Wrapper"));
     }
 
     TEST_F(ContentLayoutServiceTests, ApplyPlanMovesRegularFilesInsideSameVolumeStagingDirectory)
@@ -694,9 +744,232 @@ namespace fluxora::tests
         secondRequest.gameDefinitionVersion = L"2.0.0";
 
         const PlacementPlan second = service_.analyze(secondRequest);
-        EXPECT_FALSE(second.canInstall());
+        EXPECT_TRUE(second.canInstall());
         EXPECT_EQ(second.summary.pluginEntries, 0U);
         EXPECT_TRUE(hasFindingFor(second, ContentLayoutClassification::Unknown));
+    }
+
+    TEST_F(ContentLayoutServiceTests, LayoutCacheKeepsArchiveIndexAndMaterializedTreePlansDistinct)
+    {
+        ContentLayoutAnalysisRequest indexedRequest = skyrimRequest({
+            {L"Archive Wrapper/Data/SkyUI_SE.esp"}
+        });
+        indexedRequest.archiveContentHash = L"same-archive-different-materialized-tree";
+        indexedRequest.gameDefinitionVersion = L"1";
+
+        const PlacementPlan indexed = service_.analyze(indexedRequest);
+        ASSERT_NE(findEntry(indexed, L"Archive Wrapper/Data/SkyUI_SE.esp"), nullptr);
+
+        ContentLayoutAnalysisRequest materializedRequest = skyrimRequest({
+            {L"Data/SkyUI_SE.esp"}
+        });
+        materializedRequest.archiveContentHash = indexedRequest.archiveContentHash;
+        materializedRequest.gameDefinitionVersion = indexedRequest.gameDefinitionVersion;
+
+        const PlacementPlan materialized = service_.analyze(materializedRequest);
+
+        EXPECT_EQ(findEntry(materialized, L"Archive Wrapper/Data/SkyUI_SE.esp"), nullptr);
+        ASSERT_NE(findEntry(materialized, L"Data/SkyUI_SE.esp"), nullptr);
+        EXPECT_EQ(findEntry(materialized, L"Data/SkyUI_SE.esp")->target, PlacementTarget::Data);
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsParserAcceptsLegacyAndV2Payloads)
+    {
+        const PlacementEdits legacy = parsePlacementEditsJson(
+            LR"([{"sourcePath":"Data/A.esp","target":"data","targetRelativePath":"A.esp"}])");
+        ASSERT_EQ(legacy.files.size(), 1U);
+        EXPECT_TRUE(legacy.directories.empty());
+
+        const PlacementEdits v2 = parsePlacementEditsJson(
+            LR"({"schemaVersion":2,"files":[{"sourcePath":"Data/A.esp","target":"data","targetRelativePath":"Plugins/A.esp"}],"directories":[{"target":"gameRoot","targetRelativePath":"Tools/Empty"}],"excludedSourcePaths":["Data/Source/Author.psc"]})");
+        ASSERT_EQ(v2.files.size(), 1U);
+        ASSERT_EQ(v2.directories.size(), 1U);
+        ASSERT_EQ(v2.excludedSourcePaths.size(), 1U);
+        EXPECT_EQ(v2.directories.front().target, PlacementTarget::GameRoot);
+        EXPECT_EQ(v2.directories.front().targetRelativePath.path().generic_wstring(), L"Tools/Empty");
+        EXPECT_EQ(v2.excludedSourcePaths.front().path().generic_wstring(), L"Data/Source/Author.psc");
+        EXPECT_NE(placementEditsFingerprint(legacy), placementEditsFingerprint(v2));
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsParticipateInLayoutCacheKey)
+    {
+        ContentLayoutAnalysisRequest firstRequest = skyrimRequest({{L"Data/SkyUI_SE.esp"}});
+        firstRequest.archiveContentHash = L"cache-aware-archive";
+        firstRequest.gameDefinitionVersion = L"1";
+        const PlacementPlan first = service_.analyze(firstRequest);
+        ASSERT_EQ(findEntry(first, L"Data/SkyUI_SE.esp")->target, PlacementTarget::Data);
+
+        ContentLayoutAnalysisRequest secondRequest = firstRequest;
+        secondRequest.placementEdits.files.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::GameRoot,
+            GameRelativePath::parseOrThrow(L"SkyUI_SE.esp")
+        });
+        const PlacementPlan second = service_.analyze(secondRequest);
+
+        ASSERT_NE(findEntry(second, L"Data/SkyUI_SE.esp"), nullptr);
+        EXPECT_EQ(findEntry(second, L"Data/SkyUI_SE.esp")->target, PlacementTarget::GameRoot);
+        EXPECT_NE(first.editFingerprint, second.editFingerprint);
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsMaterializeEmptyDataAndGameRootDirectories)
+    {
+        TempDirectory temp;
+        const std::filesystem::path staging = temp.path() / L"staging";
+        writeTextFile(staging / L"Data" / L"SkyUI_SE.esp", "plugin");
+
+        ContentLayoutAnalysisRequest request = skyrimRequest();
+        request.placementEdits.directories = {
+            {PlacementTarget::Data, GameRelativePath::parseOrThrow(L"Meshes/Empty")},
+            {PlacementTarget::GameRoot, GameRelativePath::parseOrThrow(L"Tools/Empty")}
+        };
+        const PlacementPlan plan = service_.analyzeDirectory(staging, request);
+        ASSERT_TRUE(plan.canInstall());
+        ASSERT_EQ(plan.directories.size(), 2U);
+        ASSERT_TRUE(plan.assessment.has_value());
+        EXPECT_EQ(plan.assessment->status, ContentLayoutAssessmentStatus::Ready);
+
+        service_.applyPlanToDirectory(staging, plan);
+
+        EXPECT_TRUE(std::filesystem::is_directory(staging / L"Meshes" / L"Empty"));
+        EXPECT_TRUE(std::filesystem::is_directory(staging / L"root" / L"Tools" / L"Empty"));
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsExcludeFilesFromPreviewCountsAndMaterialization)
+    {
+        TempDirectory temp;
+        const std::filesystem::path staging = temp.path() / L"staging";
+        writeTextFile(staging / L"Data" / L"Keep.esp", "plugin");
+        writeTextFile(staging / L"Data" / L"Source" / L"Author.psc", "source");
+
+        ContentLayoutAnalysisRequest request = skyrimRequest();
+        request.placementEdits.excludedSourcePaths = {
+            GameRelativePath::parseOrThrow(L"Data/Source/Author.psc")
+        };
+        const PlacementPlan plan = service_.analyzeDirectory(staging, request);
+
+        ASSERT_TRUE(plan.canInstall());
+        ASSERT_EQ(plan.entries.size(), 2U);
+        ASSERT_NE(findEntry(plan, L"Data/Source/Author.psc"), nullptr);
+        EXPECT_FALSE(findEntry(plan, L"Data/Source/Author.psc")->included);
+        EXPECT_TRUE(findEntry(plan, L"Data/Keep.esp")->included);
+        EXPECT_EQ(plan.summary.totalEntries, 2U);
+        EXPECT_EQ(plan.summary.plannedEntries, 1U);
+
+        service_.applyPlanToDirectory(staging, plan);
+
+        EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"Keep.esp"));
+        EXPECT_FALSE(std::filesystem::exists(staging / L"Source" / L"Author.psc"));
+    }
+
+    TEST_F(ContentLayoutServiceTests, ExcludingBlockedExecutableMakesTheRemainingLayoutInstallable)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({{L"root/Unexpected.exe"}});
+        request.placementEdits.excludedSourcePaths = {
+            GameRelativePath::parseOrThrow(L"root/Unexpected.exe")
+        };
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        ASSERT_TRUE(plan.canInstall());
+        ASSERT_NE(findEntry(plan, L"root/Unexpected.exe"), nullptr);
+        EXPECT_FALSE(findEntry(plan, L"root/Unexpected.exe")->included);
+        EXPECT_EQ(findEntry(plan, L"root/Unexpected.exe")->target, PlacementTarget::Blocked);
+        EXPECT_FALSE(plan.summary.hasBlockers);
+        EXPECT_TRUE(plan.validationFindings.empty());
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsBlockCaseInsensitiveFileDirectoryCollision)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({{L"Data/Meshes"}});
+        request.placementEdits.directories.push_back(PlacementDirectory{
+            PlacementTarget::Data,
+            GameRelativePath::parseOrThrow(L"meshes")
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        EXPECT_FALSE(plan.canInstall());
+        ASSERT_TRUE(plan.assessment.has_value());
+        EXPECT_EQ(plan.assessment->status, ContentLayoutAssessmentStatus::Blocked);
+    }
+
+    TEST_F(ContentLayoutServiceTests, RedundantDataWrapperBlocksUntilPlacementEditRemovesIt)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({{L"Data/Data/Redundant.esp"}});
+        const PlacementPlan blocked = service_.analyze(request);
+        EXPECT_FALSE(blocked.canInstall());
+        ASSERT_TRUE(blocked.assessment.has_value());
+        EXPECT_EQ(blocked.assessment->status, ContentLayoutAssessmentStatus::Blocked);
+
+        request.placementEdits.files.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/Data/Redundant.esp"),
+            PlacementTarget::Data,
+            GameRelativePath::parseOrThrow(L"Redundant.esp")
+        });
+        const PlacementPlan corrected = service_.analyze(request);
+        ASSERT_TRUE(corrected.canInstall());
+        ASSERT_TRUE(corrected.assessment.has_value());
+        EXPECT_EQ(corrected.assessment->status, ContentLayoutAssessmentStatus::Ready);
+    }
+
+    TEST_F(ContentLayoutServiceTests, RedundantRootWrapperBlocksUntilPlacementEditRemovesIt)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({{L"root/root/skse64_loader.exe"}});
+        const PlacementPlan blocked = service_.analyze(request);
+        EXPECT_FALSE(blocked.canInstall());
+        ASSERT_TRUE(blocked.assessment.has_value());
+        EXPECT_EQ(blocked.assessment->status, ContentLayoutAssessmentStatus::Blocked);
+
+        request.placementEdits.files.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"root/root/skse64_loader.exe"),
+            PlacementTarget::GameRoot,
+            GameRelativePath::parseOrThrow(L"skse64_loader.exe")
+        });
+        const PlacementPlan corrected = service_.analyze(request);
+        ASSERT_TRUE(corrected.canInstall());
+        ASSERT_TRUE(corrected.assessment.has_value());
+        EXPECT_EQ(corrected.assessment->status, ContentLayoutAssessmentStatus::Ready);
+    }
+
+    TEST_F(ContentLayoutServiceTests, PlacementEditsRejectReservedWindowsDirectoryNames)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({{L"Data/Valid.esp"}});
+        request.placementEdits.directories.push_back(PlacementDirectory{
+            PlacementTarget::Data,
+            GameRelativePath::parseOrThrow(L"CON")
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+        EXPECT_FALSE(plan.canInstall());
+        EXPECT_TRUE(hasFindingFor(plan, ContentLayoutClassification::Unsafe));
+    }
+
+    TEST_F(ContentLayoutServiceTests, CachedTenThousandEntryRevalidationCompletesWithinOneHundredMilliseconds)
+    {
+        std::vector<ContentLayoutArchiveEntry> entries;
+        entries.reserve(10'000);
+        for (std::size_t index = 0; index < 10'000; ++index)
+        {
+            entries.push_back(ContentLayoutArchiveEntry{
+                std::filesystem::path(L"Data/Meshes/Generated") /
+                    (std::to_wstring(index) + L".nif")
+            });
+        }
+        ContentLayoutAnalysisRequest request = skyrimRequest(std::move(entries));
+        request.archiveContentHash = L"ten-thousand-entry-performance-gate";
+        request.gameDefinitionVersion = L"performance-gate-v1";
+        const PlacementPlan initial = service_.analyze(request);
+        ASSERT_TRUE(initial.canInstall());
+        ASSERT_EQ(initial.entries.size(), 10'000U);
+
+        const auto startedAt = std::chrono::steady_clock::now();
+        const PlacementPlan cached = service_.analyze(request);
+        const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startedAt);
+
+        ASSERT_EQ(cached.entries.size(), 10'000U);
+        EXPECT_LT(duration, std::chrono::milliseconds(100));
     }
 
     TEST_F(ContentLayoutServiceTests, LongLayoutAnalysisCanBeCanceled)

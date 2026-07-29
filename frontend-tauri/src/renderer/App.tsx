@@ -75,7 +75,7 @@ import {
   measureListPerformanceStage
 } from './performance/list-performance-benchmark';
 import { useSearchScrollRestoration } from './hooks/useSearchScrollRestoration';
-import { Badge, Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
+import { Badge, Button, EmptyState, LoadingSplash, Skeleton, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
 import {
   LibraryHome,
@@ -129,6 +129,7 @@ import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
 import { watchLaunchProcessSession } from './features/executables/launch-process-session';
+import { managedExecutableDisplay } from './features/executables/managed-executable-display';
 import {
   BUILD_RENAME_NAME_MAX_LENGTH,
   BuildRenameDialog,
@@ -175,6 +176,13 @@ import {
   InstallDialog,
   type InstallDialogState
 } from './features/install/InstallDialog';
+import {
+  downloadArchiveSuffix,
+  downloadRenameBaseName,
+  ItemRenameDialog,
+  itemRenameDialogCopy,
+  type ItemRenameDialogState
+} from './features/rename/ItemRenameDialog';
 import { applyInstallNameSuggestion } from './features/install/install-name-state';
 import {
   attachBackgroundInstallPlan,
@@ -190,6 +198,7 @@ import {
 } from './features/mods/ModCreationDialog';
 import { ModInstallProgressLabel } from './features/mods/ModInstallProgressLabel';
 import { ModRow, ModsListSurface } from './features/mods/ModsListSurface';
+import { createModSeparatorAtEnd } from './features/mods/mod-separator-service';
 import {
   createModDetailsContentCache,
   modDetailsContentCacheKey,
@@ -361,7 +370,6 @@ import {
   type BuildPathDraft
 } from './build-workspace-state';
 import {
-  createPlacementOverrides,
   currentFomodStepValidation,
   defaultInstallModName,
   evaluateFomodWizard,
@@ -399,7 +407,7 @@ import {
   type ModUpdateResultsByProject
 } from './services/mod-update-status';
 import { installRendererRefreshShortcut } from './services/renderer-refresh-shortcut-service';
-import { createPluginWorkspaceSnapshotGate } from './services/plugin-workspace-snapshot-gate';
+import { createWorkspaceOrderMutationGate } from './services/workspace-order-mutation-gate';
 import {
   createPendingPathAccumulator,
   createScopedSequenceTracker,
@@ -443,6 +451,7 @@ import type {
   FluxoraInstalledMod,
   FluxoraInstalledModSummary,
   FluxoraInstallOperation,
+  FluxoraPlacementEditsV2,
   FluxoraModOrganizerImportAnalysis,
   FluxoraModOrganizerImportProgress,
   FluxoraMo2TransferHandoff,
@@ -579,6 +588,11 @@ interface RowContextMenuPosition {
 
 interface BuildRenameDialogRequest extends BuildRenameDialogState {
   project: FluxoraProject;
+}
+
+interface ItemRenameDialogRequest extends ItemRenameDialogState {
+  project: FluxoraProject;
+  targetPath: string;
 }
 
 interface PluginSeparatorDialogRequest extends PluginSeparatorDialogState {
@@ -1269,7 +1283,7 @@ const rowContextMenuPositionFromAnchor = (
   );
 
 const downloadRowMenuEstimatedHeight = (entry: FluxoraDownloadEntry): number => {
-  const itemCount = 3 + (entry.isDownloading ? 1 : 0) + (entry.canResume ? 1 : 0);
+  const itemCount = 5 + (entry.isDownloading ? 1 : 0) + (entry.canResume ? 1 : 0);
   return rowContextMenuPaddingY + itemCount * rowContextMenuItemHeight;
 };
 
@@ -1403,7 +1417,7 @@ export const App = () => {
   const coordinatedWorkspaceLoadSequenceRef = useRef(0);
   const buildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
   const pluginBuildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
-  const pluginWorkspaceSnapshotGate = useMemo(createPluginWorkspaceSnapshotGate, []);
+  const workspaceOrderMutationGate = useMemo(createWorkspaceOrderMutationGate, []);
   const pendingBuildContentModPaths = useMemo(createPendingPathAccumulator, []);
   const installCommitOperationsRef = useRef(new Set<string>());
   const deferredBuildContentRefreshRef = useRef<(() => Promise<void>) | null>(null);
@@ -1575,11 +1589,17 @@ export const App = () => {
     []
   );
   const [modsBusyLabel, setModsBusyLabel] = useState<string | null>(null);
+  const [isCreatingModSeparator, setIsCreatingModSeparator] = useState(false);
+  const [isDeletingModSeparators, setIsDeletingModSeparators] = useState(false);
+  const modsActionsBusy =
+    Boolean(modsBusyLabel) || isCreatingModSeparator || isDeletingModSeparators;
   const [modMenuOrderId, setModMenuOrderId] = useState<string | null>(null);
   const [modMenuPosition, setModMenuPosition] = useState<RowContextMenuPosition | null>(null);
   const [modsToolbarMenuPosition, setModsToolbarMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
   const [modCreationDialog, setModCreationDialog] = useState<ModCreationDialogState | null>(null);
+  const [itemRenameDialog, setItemRenameDialog] =
+    useState<ItemRenameDialogRequest | null>(null);
   const modListVirtualizerRef = useRef<AdaptiveVirtualListHandle | null>(null);
   const modListScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [draggedModOrderIds, setDraggedModOrderIds] = useState<ReadonlySet<string>>(
@@ -1678,6 +1698,8 @@ export const App = () => {
     );
   }, [pluginsWorkspace.collapsedSeparatorOrderIds, pluginsWorkspace.loadState]);
   const [pluginsBusyLabel, setPluginsBusyLabel] = useState<string | null>(null);
+  const [isDeletingPluginSeparators, setIsDeletingPluginSeparators] = useState(false);
+  const pluginsActionsBusy = Boolean(pluginsBusyLabel) || isDeletingPluginSeparators;
   const [pluginMenuOrderId, setPluginMenuOrderId] = useState<string | null>(null);
   const [pluginMenuPosition, setPluginMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
@@ -1779,6 +1801,7 @@ export const App = () => {
   const installSourceByOperationRef = useRef<Map<string, string>>(new Map());
   const installOperationsRef = useRef<Map<string, FluxoraInstallOperation>>(new Map());
   const installRestoreGenerationRef = useRef(0);
+  const installPlacementValidationGenerationRef = useRef(0);
   const downloadsActionsBusy = Boolean(downloadsBusyLabel);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
   const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(() =>
@@ -1835,12 +1858,27 @@ export const App = () => {
       });
     },
     onOperationProgress: (operation) => {
+      const previousOperation = installOperationsRef.current.get(operation.operationId);
       installOperationsRef.current.set(operation.operationId, operation);
-      if (operation.workspaceDelta) {
-        applyIncomingWorkspaceDeltaRef.current(
-          operation.workspaceDelta,
-          operation.operationId
-        );
+      const workspaceDelta = operation.workspaceDelta;
+      if (workspaceDelta) {
+        void workspaceOrderMutationGate
+          .readStable(async () => workspaceDelta)
+          .then((stableDelta) => {
+            applyIncomingWorkspaceDeltaRef.current(
+              stableDelta,
+              operation.operationId,
+              true
+            );
+          })
+          .catch((error) => {
+            void window.fluxora.ui.log({
+              level: 'warning',
+              category: 'WorkspaceDelta',
+              message: `Could not apply the install workspace delta after order saves settled: ${errorMessage(error)}`,
+              operationId: operation.operationId
+            });
+          });
       }
       if (operation.state === 'committing' || operation.state === 'finalizing') {
         installCommitOperationsRef.current.add(operation.operationId);
@@ -1897,15 +1935,17 @@ export const App = () => {
         }
         setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
       } else if (operation.state === 'needsReview') {
-        setMessage(operation.errorMessage || 'The interrupted install needs review.');
         const source = downloadsWorkspaceItemsRef.current.find(
           (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
         );
         if (source) {
           dispatchDownloadsWorkspace({
             type: 'items-upserted',
-            items: [{ ...source, buildStatus: 'Needs review' }]
+            items: [{ ...source, buildStatus: 'Ready' }]
           });
+        }
+        if (previousOperation?.state !== 'needsReview') {
+          reopenInstallForReview(operation);
         }
       } else if (operation.state === 'cancelled') {
         setMessage(`Installation cancelled: ${operation.targetFolder}.`);
@@ -2058,6 +2098,9 @@ export const App = () => {
           message: `Install recovery projected ${restoredSession.rowOrderId}.`,
           operationId: operation.operationId
         });
+        if (operation.state === 'needsReview') {
+          reopenInstallForReview(operation);
+        }
       }
     }).catch((error) => {
       if (
@@ -2945,7 +2988,7 @@ export const App = () => {
       modDropTarget,
       modMenuOrderId,
       modRowViewIndex,
-      modsBusyLabel,
+      modsActionsBusy,
       modsWorkspace.selectedOrderIds,
       pendingInstallSessionByOrderId,
       postInstallRevealOrderId
@@ -2959,7 +3002,7 @@ export const App = () => {
       pluginDropTarget,
       pluginMenuOrderId,
       pluginRowViewIndex,
-      pluginsBusyLabel,
+      pluginsActionsBusy,
       pluginsWorkspace.selectedOrderIds,
       showPluginMissingMastersStatus
     ]
@@ -3221,11 +3264,13 @@ export const App = () => {
       return workspaceDeltaSeedRef.current.promise;
     }
 
-    const promise = window.fluxora.workspace
-      .getDelta(project.projectDirectory, profileName, '', {
-        operationId,
-        templateId: project.templateId
-      })
+    const promise = workspaceOrderMutationGate
+      .readStable(() =>
+        window.fluxora.workspace.getDelta(project.projectDirectory, profileName, '', {
+          operationId,
+          templateId: project.templateId
+        })
+      )
       .then((delta) => {
         const emptyState: WorkspaceDeltaState = {
           projectDirectory: project.projectDirectory,
@@ -3242,7 +3287,7 @@ export const App = () => {
         if (seeded.status !== 'applied') {
           return null;
         }
-        installWorkspaceDeltaState(seeded.state, project);
+        installWorkspaceDeltaState(seeded.state, project, true);
         return seeded.state;
       })
       .catch((error) => {
@@ -3301,6 +3346,52 @@ export const App = () => {
   };
   applyIncomingWorkspaceDeltaRef.current = applyIncomingWorkspaceDelta;
 
+  const reconcileWorkspaceOrderMutation = async (
+    project: FluxoraProject,
+    profileName: string,
+    operationId: string,
+    isCurrent: () => boolean
+  ): Promise<void> => {
+    const baseline = workspaceDeltaStateRef.current;
+    if (
+      baseline?.projectDirectory !== project.projectDirectory ||
+      baseline.profileName !== profileName
+    ) {
+      return;
+    }
+
+    try {
+      const delta = await window.fluxora.workspace.getDelta(
+        project.projectDirectory,
+        profileName,
+        baseline.revision,
+        {
+          operationId,
+          templateId: project.templateId
+        }
+      );
+      if (!isCurrent()) {
+        return;
+      }
+      applyIncomingWorkspaceDelta(delta, operationId, true);
+    } catch (error) {
+      if (!isCurrent()) {
+        return;
+      }
+      void window.fluxora.ui.log({
+        level: 'warning',
+        category: 'WorkspaceDelta',
+        message: `Could not reconcile the workspace after an order mutation: ${errorMessage(error)}`,
+        operationId
+      });
+      queueWorkspaceFullResyncRef.current(
+        project,
+        profileName,
+        'order-mutation-reconciliation-failed'
+      );
+    }
+  };
+
   const loadModsWorkspace = async (
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
@@ -3338,7 +3429,9 @@ export const App = () => {
         ? window.fluxora.mods.getPersistedWorkspace
         : window.fluxora.mods.getWorkspace;
       let { installedMods: nextInstalledMods, modOrder: nextOrder } =
-        await getWorkspace(project.projectDirectory, profileName, { operationId });
+        await workspaceOrderMutationGate.readStable(() =>
+          getWorkspace(project.projectDirectory, profileName, { operationId })
+        );
       let usedExactFallback = false;
       let exactFallbackContentRevision = 0;
       let exactFallbackInvalidationsSettledAtStart = false;
@@ -3363,9 +3456,11 @@ export const App = () => {
         exactFallbackWatchGeneration = buildContentWatchGenerationRef.current;
         exactFallbackWatchKey = buildContentWatchKeyForProject(project, profileName);
         ({ installedMods: nextInstalledMods, modOrder: nextOrder } =
-          await window.fluxora.mods.getWorkspace(project.projectDirectory, profileName, {
-            operationId
-          }));
+          await workspaceOrderMutationGate.readStable(() =>
+            window.fluxora.mods.getWorkspace(project.projectDirectory, profileName, {
+              operationId
+            })
+          ));
         usedExactFallback = true;
       }
 
@@ -3784,6 +3879,7 @@ export const App = () => {
     }
 
     const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     const orderId = item.orderId;
     const previousEnabled = item.isEnabled;
     const optimisticItems = modsWorkspace.items.map((candidate) =>
@@ -3799,19 +3895,28 @@ export const App = () => {
     dispatchModsWorkspace({ type: 'item-enabled-set', orderId, isEnabled });
     updateInstalledModEnabled(item.id, isEnabled);
 
-    try {
-      const operationId = createRendererOperationId('mods_set_enabled');
+    const operationId = createRendererOperationId('mods_set_enabled');
+    const save = workspaceOrderMutationGate.enqueue(async (isCurrent) => {
       await window.fluxora.mods.setEnabled(project.projectDirectory, item.id, isEnabled, {
         operationId
       });
+      if (isCurrent()) {
+        await pendingInstallOrchestrator.rebase(
+          project.projectDirectory,
+          optimisticItems,
+          false
+        );
+      }
+    }, (isCurrent) =>
+      reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+    );
+    trackModOrderSave(save);
+
+    try {
+      await save;
       if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
         await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
-      await pendingInstallOrchestrator.rebase(
-        project.projectDirectory,
-        optimisticItems,
-        false
-      );
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
         await loadModsWorkspace(project, backgroundReorderLoadOptions);
       }
@@ -3834,6 +3939,7 @@ export const App = () => {
     }
 
     const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
     const optimisticItems = modsWorkspace.items.map((item) =>
@@ -3848,11 +3954,25 @@ export const App = () => {
     dispatchModsWorkspace({ type: 'items-loaded', items: optimisticItems });
     updateAllInstalledModsEnabled(isEnabled);
 
-    try {
-      const operationId = createRendererOperationId('mods_set_all_enabled');
+    const operationId = createRendererOperationId('mods_set_all_enabled');
+    const save = workspaceOrderMutationGate.enqueue(async (isCurrent) => {
       await window.fluxora.mods.setAllEnabled(project.projectDirectory, isEnabled, {
         operationId
       });
+      if (isCurrent()) {
+        await pendingInstallOrchestrator.rebase(
+          project.projectDirectory,
+          optimisticItems,
+          false
+        );
+      }
+    }, (isCurrent) =>
+      reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+    );
+    trackModOrderSave(save);
+
+    try {
+      await save;
       if (
         modBulkEnableSequenceRef.current === sequence &&
         pluginCapabilities.bridgeAvailable &&
@@ -3860,11 +3980,6 @@ export const App = () => {
       ) {
         await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
-      await pendingInstallOrchestrator.rebase(
-        project.projectDirectory,
-        optimisticItems,
-        false
-      );
       if (modBulkEnableSequenceRef.current === sequence) {
         await loadModsWorkspace(project, backgroundReorderLoadOptions);
       }
@@ -3914,52 +4029,60 @@ export const App = () => {
     setMessage(null);
     dispatchPluginsWorkspace({ type: 'unlocked-items-enabled-set', isEnabled });
 
-    try {
-      const operationId = createRendererOperationId('plugins_set_all_enabled');
-      let confirmedOrder: FluxoraPluginOrderItem[];
-      if (pluginCapabilities.nativeBulkToggleSupported) {
-        confirmedOrder = await window.fluxora.plugins.setAllEnabled(
-          project.projectDirectory,
-          project.templateId,
-          profileName,
-          isEnabled,
-          { operationId }
-        );
-      } else {
-        confirmedOrder = previousItems;
-        for (const candidate of targetItems) {
-          confirmedOrder = await window.fluxora.plugins.setEnabled(
+    const operationId = createRendererOperationId('plugins_set_all_enabled');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
+        let confirmedOrder: FluxoraPluginOrderItem[];
+        if (pluginCapabilities.nativeBulkToggleSupported) {
+          confirmedOrder = await window.fluxora.plugins.setAllEnabled(
             project.projectDirectory,
             project.templateId,
             profileName,
-            candidate.name,
             isEnabled,
             { operationId }
           );
+        } else {
+          confirmedOrder = previousItems;
+          for (const candidate of targetItems) {
+            confirmedOrder = await window.fluxora.plugins.setEnabled(
+              project.projectDirectory,
+              project.templateId,
+              profileName,
+              candidate.name,
+              isEnabled,
+              { operationId }
+            );
+          }
         }
-      }
 
-      targetItems.forEach((candidate) =>
-        completeLatestPluginEnableSave(candidate.orderId, sequence)
-      );
-      dispatchPluginsWorkspace({
-        type: 'items-loaded',
-        items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
-      });
-    } catch (error) {
-      let shouldRevert = false;
-      targetItems.forEach((candidate) => {
-        if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
-          shouldRevert = true;
+        targetItems.forEach((candidate) =>
+          completeLatestPluginEnableSave(candidate.orderId, sequence)
+        );
+        if (isCurrent()) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+          });
+        }
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+      .catch(async (error) => {
+        let shouldRevert = false;
+        targetItems.forEach((candidate) => {
+          if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
+            shouldRevert = true;
+          }
+        });
+
+        if (shouldRevert) {
+          dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
+          setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all plugins: ${errorMessage(error)}`);
+          await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
       });
-
-      if (shouldRevert) {
-        dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
-        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all plugins: ${errorMessage(error)}`);
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
-      }
-    }
+    trackPluginOrderSave(save);
+    await save;
   };
 
   const setSelectedPluginsEnabled = async (isEnabled: boolean) => {
@@ -4007,45 +4130,53 @@ export const App = () => {
       });
     });
 
-    try {
-      const operationId = createRendererOperationId('plugins_set_selected_enabled');
-      let confirmedOrder = previousItems;
-      for (const candidate of targetItems) {
-        confirmedOrder = await window.fluxora.plugins.setEnabled(
-          project.projectDirectory,
-          project.templateId,
-          profileName,
-          candidate.name,
-          isEnabled,
-          { operationId }
-        );
-      }
+    const operationId = createRendererOperationId('plugins_set_selected_enabled');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
+        let confirmedOrder = previousItems;
+        for (const candidate of targetItems) {
+          confirmedOrder = await window.fluxora.plugins.setEnabled(
+            project.projectDirectory,
+            project.templateId,
+            profileName,
+            candidate.name,
+            isEnabled,
+            { operationId }
+          );
+        }
 
-      targetItems.forEach((candidate) =>
-        completeLatestPluginEnableSave(candidate.orderId, sequence)
-      );
-      dispatchPluginsWorkspace({
-        type: 'items-loaded',
-        items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
-      });
-    } catch (error) {
-      let shouldRevert = false;
-      targetItems.forEach((candidate) => {
-        if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
-          shouldRevert = true;
+        targetItems.forEach((candidate) =>
+          completeLatestPluginEnableSave(candidate.orderId, sequence)
+        );
+        if (isCurrent()) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+          });
+        }
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+      .catch(async (error) => {
+        let shouldRevert = false;
+        targetItems.forEach((candidate) => {
+          if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
+            shouldRevert = true;
+          }
+        });
+
+        if (shouldRevert) {
+          dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
+          const targetLabel =
+            targetItems.length === 1 ? pluginItemTitle(targetItems[0]) : 'selected plugins';
+          setMessage(
+            `Could not ${isEnabled ? 'enable' : 'disable'} ${targetLabel}: ${errorMessage(error)}`
+          );
+          await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
       });
-
-      if (shouldRevert) {
-        dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
-        const targetLabel =
-          targetItems.length === 1 ? pluginItemTitle(targetItems[0]) : 'selected plugins';
-        setMessage(
-          `Could not ${isEnabled ? 'enable' : 'disable'} ${targetLabel}: ${errorMessage(error)}`
-        );
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
-      }
-    }
+    trackPluginOrderSave(save);
+    await save;
   };
 
   const moveModOrderItemToIndex = async (
@@ -4081,15 +4212,17 @@ export const App = () => {
       targetIndex
     });
 
-    const save = (async () => {
-      const operationId = createRendererOperationId('mods_reorder');
-      try {
+    const operationId = createRendererOperationId('mods_reorder');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
         if (movesPendingInstall) {
-          await pendingInstallOrchestrator.rebase(
-            project.projectDirectory,
-            optimisticItems,
-            true
-          );
+          if (isCurrent()) {
+            await pendingInstallOrchestrator.rebase(
+              project.projectDirectory,
+              optimisticItems,
+              true
+            );
+          }
           return;
         }
 
@@ -4100,6 +4233,9 @@ export const App = () => {
           targetIndex,
           { operationId }
         );
+        if (!isCurrent()) {
+          return;
+        }
         const orderWithPendingInstall = pendingInstallOrchestrator.mergeAuthoritativeItems(
           confirmedOrder
         );
@@ -4116,7 +4252,10 @@ export const App = () => {
             items: pendingInstallOrchestrator.mergeAuthoritativeItems(confirmedOrder)
           });
         }
-      } catch (error) {
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+      .catch((error) => {
         const message = errorMessage(error);
         setMessage(`Could not save mod order: ${message}`);
         if (modOrderSaveSequenceRef.current === sequence) {
@@ -4132,8 +4271,7 @@ export const App = () => {
           }, 0);
         }
         throw error;
-      }
-    })();
+      });
 
     trackModOrderSave(save);
   };
@@ -4179,10 +4317,10 @@ export const App = () => {
     modOrderClientRevisionRef.current += 1;
     dispatchModsWorkspace({ type: 'items-loaded', items: optimisticItems });
 
-    const save = (async () => {
-      const operationId = createRendererOperationId('mods_reorder');
-      try {
-        if (movesPendingInstall) {
+    const operationId = createRendererOperationId('mods_reorder');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
+        if (movesPendingInstall && isCurrent()) {
           await pendingInstallOrchestrator.rebase(
             project.projectDirectory,
             optimisticItems,
@@ -4204,6 +4342,9 @@ export const App = () => {
         if (movePlan.length === 0) {
           return;
         }
+        if (!isCurrent()) {
+          return;
+        }
 
         const orderWithPendingInstall = pendingInstallOrchestrator.mergeAuthoritativeItems(
           confirmedOrder
@@ -4221,7 +4362,10 @@ export const App = () => {
             items: pendingInstallOrchestrator.mergeAuthoritativeItems(confirmedOrder)
           });
         }
-      } catch (error) {
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+      .catch((error) => {
         const message = errorMessage(error);
         setMessage(`Could not save mod order: ${message}`);
         if (modOrderSaveSequenceRef.current === sequence) {
@@ -4237,8 +4381,7 @@ export const App = () => {
           }, 0);
         }
         throw error;
-      }
-    })();
+      });
 
     trackModOrderSave(save);
   };
@@ -4281,20 +4424,56 @@ export const App = () => {
       return;
     }
 
-    const targetIndex = modsWorkspace.items.length;
-    await runModMutation('Creating separator', (operationId) =>
-      window.fluxora.mods.createSeparator(
-        selectedProject.projectDirectory,
-        modWorkspaceProfileName,
-        title,
-        targetIndex,
-        { operationId }
-      )
-    );
+    const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
+    const operationId = createRendererOperationId('mods_create_separator');
+    setIsCreatingModSeparator(true);
+    setMessage(null);
+
+    try {
+      await workspaceOrderMutationGate.enqueue(async (isCurrent) => {
+        const result = await createModSeparatorAtEnd({
+          createSeparator: (separatorTitle, targetIndex) =>
+            window.fluxora.mods.createSeparator(
+              project.projectDirectory,
+              profileName,
+              separatorTitle,
+              targetIndex,
+              { operationId }
+            ),
+          items: modsWorkspace.items,
+          title
+        });
+        if (isCurrent()) {
+          const items = pendingInstallOrchestrator.mergeAuthoritativeItems(result.items);
+          dispatchModsWorkspace({ type: 'items-loaded', items });
+          dispatchModsWorkspace({
+            type: 'item-reveal-requested',
+            orderId: result.separatorOrderId
+          });
+          requestPostInstallModReveal({
+            animate: true,
+            installedId: result.separatorOrderId,
+            installedName: title,
+            orderId: result.separatorOrderId
+          });
+        }
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      );
+    } catch (error) {
+      await loadModsWorkspace(project, {
+        ...backgroundReorderLoadOptions,
+        resetScroll: false
+      });
+      setMessage(`Could not create separator: ${errorMessage(error)}`);
+    } finally {
+      setIsCreatingModSeparator(false);
+    }
   };
 
-  const deleteModSeparatorSelection = async (item: FluxoraModOrderItem) => {
-    if (!selectedProject || !item.isSeparator || modsBusyLabel) {
+  const requestDeleteModSeparatorSelection = (item: FluxoraModOrderItem) => {
+    if (!selectedProject || !item.isSeparator || modsActionsBusy) {
       return;
     }
 
@@ -4307,37 +4486,52 @@ export const App = () => {
       return;
     }
 
+    setDeletionConfirmation({
+      kind: 'separator',
+      itemName: modItemTitle(item),
+      itemCount: separatorOrderIds.length,
+      onConfirm: () => deleteModSeparators(separatorOrderIds)
+    });
+  };
+
+  const deleteModSeparators = async (separatorOrderIds: readonly string[]) => {
+    if (!selectedProject || separatorOrderIds.length === 0) {
+      return;
+    }
+
     const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     const previousItems = modsWorkspace.items;
     const removedOrderIds = new Set(separatorOrderIds);
     const operationId = createRendererOperationId('mods_delete_separator');
 
+    setIsDeletingModSeparators(true);
     setMessage(null);
-    setModsBusyLabel(
-      separatorOrderIds.length === 1
-        ? 'Deleting mod separator'
-        : `Deleting ${separatorOrderIds.length} mod separators`
-    );
     dispatchModsWorkspace({
       type: 'items-loaded',
       items: removeModOrderItems(previousItems, removedOrderIds)
     });
 
     try {
-      await deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
-        window.fluxora.mods.deleteSeparator(
-          project.projectDirectory,
-          modWorkspaceProfileName,
-          separatorOrderId,
-          { operationId }
-        )
+      await workspaceOrderMutationGate.enqueue(
+        async () =>
+          deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
+            window.fluxora.mods.deleteSeparator(
+              project.projectDirectory,
+              profileName,
+              separatorOrderId,
+              { operationId }
+            )
+          ),
+        (isCurrent) =>
+          reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
       );
       await loadModsWorkspace(project, backgroundReorderLoadOptions);
     } catch (error) {
       await loadModsWorkspace(project, backgroundReorderLoadOptions);
       setMessage(`Could not delete selected separators: ${errorMessage(error)}`);
     } finally {
-      setModsBusyLabel(null);
+      setIsDeletingModSeparators(false);
     }
   };
 
@@ -4373,10 +4567,17 @@ export const App = () => {
       return;
     }
 
+    const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     await runModMutation('Creating empty mod', (operationId) =>
-      window.fluxora.mods.createEmpty(selectedProject.projectDirectory, modName, {
-        operationId
-      })
+      workspaceOrderMutationGate.enqueue(
+        async () =>
+          window.fluxora.mods.createEmpty(project.projectDirectory, modName, {
+            operationId
+          }),
+        (isCurrent) =>
+          reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
     );
   };
 
@@ -4472,6 +4673,7 @@ export const App = () => {
     }
 
     const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
     const deletedModTitle = modItemTitle(item);
@@ -4481,9 +4683,14 @@ export const App = () => {
     removeDeletedModItems([item]);
 
     try {
-      await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
-        operationId
-      });
+      await workspaceOrderMutationGate.enqueue(
+        async () =>
+          window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
+            operationId
+          }),
+        (isCurrent) =>
+          reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      );
       await refreshAfterModDeletion(project);
     } catch (error) {
       restoreDeletedModItems(previousItems, previousInstalledMods);
@@ -4506,6 +4713,7 @@ export const App = () => {
     }
 
     const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
     const operationId = createRendererOperationId('mods_delete_bulk');
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
@@ -4513,12 +4721,18 @@ export const App = () => {
     removeDeletedModItems(targets);
 
     try {
-      for (let index = 0; index < targets.length; index += 1) {
-        const item = targets[index]!;
-        await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
-          operationId
-        });
-      }
+      await workspaceOrderMutationGate.enqueue(
+        async () => {
+          for (let index = 0; index < targets.length; index += 1) {
+            const item = targets[index]!;
+            await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
+              operationId
+            });
+          }
+        },
+        (isCurrent) =>
+          reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      );
 
       await refreshAfterModDeletion(project);
     } catch (error) {
@@ -4907,7 +5121,7 @@ export const App = () => {
       const listPlugins = options.persistedSnapshot
         ? window.fluxora.plugins.listPersisted
         : window.fluxora.plugins.list;
-      const nextPlugins = await pluginWorkspaceSnapshotGate.readStable(() =>
+      const nextPlugins = await workspaceOrderMutationGate.readStable(() =>
         listPlugins(
           project.projectDirectory,
           project.templateId,
@@ -5060,16 +5274,18 @@ export const App = () => {
       );
       return baseline !== null;
     }
-    const delta = await window.fluxora.workspace.getDelta(
-      project.projectDirectory,
-      profileName,
-      baseline.revision,
-      {
-        operationId,
-        templateId: project.templateId
-      }
+    const delta = await workspaceOrderMutationGate.readStable(() =>
+      window.fluxora.workspace.getDelta(
+        project.projectDirectory,
+        profileName,
+        baseline.revision,
+        {
+          operationId,
+          templateId: project.templateId
+        }
+      )
     );
-    return applyIncomingWorkspaceDelta(delta, operationId);
+    return applyIncomingWorkspaceDelta(delta, operationId, true);
   };
 
   const runPluginMutation = async (
@@ -5123,33 +5339,39 @@ export const App = () => {
     setMessage(null);
     dispatchPluginsWorkspace({ type: 'item-enabled-set', orderId, isEnabled });
 
-    try {
-      const operationId = createRendererOperationId('plugins_set_enabled');
-      const confirmedOrder = await window.fluxora.plugins.setEnabled(
-        project.projectDirectory,
-        project.templateId,
-        profileName,
-        item.name,
-        isEnabled,
-        { operationId }
-      );
+    const operationId = createRendererOperationId('plugins_set_enabled');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
+        const confirmedOrder = await window.fluxora.plugins.setEnabled(
+          project.projectDirectory,
+          project.templateId,
+          profileName,
+          item.name,
+          isEnabled,
+          { operationId }
+        );
 
-      if (completeLatestPluginEnableSave(orderId, sequence)) {
-        dispatchPluginsWorkspace({
-          type: 'items-loaded',
-          items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
-        });
-      }
-    } catch (error) {
-      if (revertLatestPluginEnableSave(orderId, sequence)) {
-        dispatchPluginsWorkspace({
-          type: 'item-enabled-set',
-          orderId,
-          isEnabled: previousEnabled
-        });
-        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${pluginItemTitle(item)}: ${errorMessage(error)}`);
-      }
-    }
+        if (completeLatestPluginEnableSave(orderId, sequence) && isCurrent()) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+          });
+        }
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+      .catch((error) => {
+        if (revertLatestPluginEnableSave(orderId, sequence)) {
+          dispatchPluginsWorkspace({
+            type: 'item-enabled-set',
+            orderId,
+            isEnabled: previousEnabled
+          });
+          setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${pluginItemTitle(item)}: ${errorMessage(error)}`);
+        }
+      });
+    trackPluginOrderSave(save);
+    await save;
   };
 
   const movePluginOrderItemToIndex = async (
@@ -5184,9 +5406,9 @@ export const App = () => {
       targetIndex
     });
 
-    const save = pluginWorkspaceSnapshotGate
-      .enqueue(async () => {
-        const operationId = createRendererOperationId('plugins_reorder');
+    const operationId = createRendererOperationId('plugins_reorder');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
         const confirmedOrder = await window.fluxora.plugins.move(
           project.projectDirectory,
           project.templateId,
@@ -5196,13 +5418,15 @@ export const App = () => {
           { operationId }
         );
 
-        if (pluginOrderSaveSequenceRef.current === sequence) {
+        if (pluginOrderSaveSequenceRef.current === sequence && isCurrent()) {
           dispatchPluginsWorkspace({
             type: 'items-loaded',
             items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
           });
         }
-      })
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
       .catch(async (error) => {
         const message = errorMessage(error);
         setMessage(`Could not save plugin order: ${message}`);
@@ -5247,9 +5471,9 @@ export const App = () => {
     setMessage(null);
     dispatchPluginsWorkspace({ type: 'items-loaded', items: optimisticItems });
 
-    const save = pluginWorkspaceSnapshotGate
-      .enqueue(async () => {
-        const operationId = createRendererOperationId('plugins_reorder');
+    const operationId = createRendererOperationId('plugins_reorder');
+    const save = workspaceOrderMutationGate
+      .enqueue(async (isCurrent) => {
         let confirmedOrder = previousItems;
         for (const move of movePlan) {
           confirmedOrder = await window.fluxora.plugins.move(
@@ -5262,13 +5486,15 @@ export const App = () => {
           );
         }
 
-        if (pluginOrderSaveSequenceRef.current === sequence) {
+        if (pluginOrderSaveSequenceRef.current === sequence && isCurrent()) {
           dispatchPluginsWorkspace({
             type: 'items-loaded',
             items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
           });
         }
-      })
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
       .catch(async (error) => {
         const message = errorMessage(error);
         setMessage(`Could not save plugin order: ${message}`);
@@ -5833,7 +6059,7 @@ export const App = () => {
 
     if (event.key === 'Delete' && item.isSeparator) {
       event.preventDefault();
-      void deleteModSeparatorSelection(item);
+      requestDeleteModSeparatorSelection(item);
       return;
     }
 
@@ -5887,7 +6113,7 @@ export const App = () => {
 
     if (event.key === 'Delete' && item.isSeparator) {
       event.preventDefault();
-      void deletePluginSeparatorSelection(item);
+      requestDeletePluginSeparatorSelection(item);
       return;
     }
 
@@ -6045,51 +6271,57 @@ export const App = () => {
     const previousItems = pluginsWorkspace.items;
     setPluginSeparatorDialog(null);
 
-    await runPluginMutation(copy.creatingLabel, async (operationId) => {
-      const result = await createPluginSeparatorForSelection({
-        api: {
-          createSeparator: (separatorTitle, targetIndex) =>
-            window.fluxora.plugins.createSeparator(
-              project.projectDirectory,
-              project.templateId,
-              profileName,
-              separatorTitle,
-              targetIndex,
-              { operationId }
-            ),
-          deleteSeparator: (separatorOrderId) =>
-            window.fluxora.plugins.deleteSeparator(
-              project.projectDirectory,
-              project.templateId,
-              profileName,
-              separatorOrderId,
-              { operationId }
-            ),
-          move: (orderId, targetIndex) =>
-            window.fluxora.plugins.move(
-              project.projectDirectory,
-              project.templateId,
-              profileName,
-              orderId,
-              targetIndex,
-              { operationId }
-            )
-        },
-        contextOrderId: request.contextOrderId,
-        items: previousItems,
-        selectedOrderIds: new Set(request.selectedOrderIds),
-        title
-      });
-      dispatchPluginsWorkspace({ type: 'items-loaded', items: result.items });
-    });
+    await runPluginMutation(copy.creatingLabel, (operationId) =>
+      workspaceOrderMutationGate.enqueue(async (isCurrent) => {
+        const result = await createPluginSeparatorForSelection({
+          api: {
+            createSeparator: (separatorTitle, targetIndex) =>
+              window.fluxora.plugins.createSeparator(
+                project.projectDirectory,
+                project.templateId,
+                profileName,
+                separatorTitle,
+                targetIndex,
+                { operationId }
+              ),
+            deleteSeparator: (separatorOrderId) =>
+              window.fluxora.plugins.deleteSeparator(
+                project.projectDirectory,
+                project.templateId,
+                profileName,
+                separatorOrderId,
+                { operationId }
+              ),
+            move: (orderId, targetIndex) =>
+              window.fluxora.plugins.move(
+                project.projectDirectory,
+                project.templateId,
+                profileName,
+                orderId,
+                targetIndex,
+                { operationId }
+              )
+          },
+          contextOrderId: request.contextOrderId,
+          items: previousItems,
+          selectedOrderIds: new Set(request.selectedOrderIds),
+          title
+        });
+        if (isCurrent()) {
+          dispatchPluginsWorkspace({ type: 'items-loaded', items: result.items });
+        }
+      }, (isCurrent) =>
+        reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
+      )
+    );
   };
 
-  const deletePluginSeparatorSelection = async (item: FluxoraPluginOrderItem) => {
+  const requestDeletePluginSeparatorSelection = (item: FluxoraPluginOrderItem) => {
     if (
       !selectedProject ||
       !item.isSeparator ||
       !pluginCapabilities.loadOrderSupported ||
-      pluginsBusyLabel
+      pluginsActionsBusy
     ) {
       return;
     }
@@ -6103,38 +6335,53 @@ export const App = () => {
       return;
     }
 
+    setDeletionConfirmation({
+      kind: 'separator',
+      itemName: pluginItemTitle(item),
+      itemCount: separatorOrderIds.length,
+      onConfirm: () => deletePluginSeparators(separatorOrderIds)
+    });
+  };
+
+  const deletePluginSeparators = async (separatorOrderIds: readonly string[]) => {
+    if (!selectedProject || separatorOrderIds.length === 0) {
+      return;
+    }
+
     const project = selectedProject;
+    const profileName = selectedProjectProfileName;
     const previousItems = pluginsWorkspace.items;
     const removedOrderIds = new Set(separatorOrderIds);
     const operationId = createRendererOperationId('plugins_delete_separator');
 
+    setIsDeletingPluginSeparators(true);
     setMessage(null);
-    setPluginsBusyLabel(
-      separatorOrderIds.length === 1
-        ? 'Deleting plugin separator'
-        : `Deleting ${separatorOrderIds.length} plugin separators`
-    );
     dispatchPluginsWorkspace({
       type: 'items-loaded',
       items: previousItems.filter((candidate) => !removedOrderIds.has(candidate.orderId))
     });
 
     try {
-      await deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
-        window.fluxora.plugins.deleteSeparator(
-          project.projectDirectory,
-          project.templateId,
-          selectedProjectProfileName,
-          separatorOrderId,
-          { operationId }
-        )
+      await workspaceOrderMutationGate.enqueue(
+        async () =>
+          deleteSeparatorSelection(separatorOrderIds, (separatorOrderId) =>
+            window.fluxora.plugins.deleteSeparator(
+              project.projectDirectory,
+              project.templateId,
+              profileName,
+              separatorOrderId,
+              { operationId }
+            )
+          ),
+        (isCurrent) =>
+          reconcileWorkspaceOrderMutation(project, profileName, operationId, isCurrent)
       );
       await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
     } catch (error) {
       await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       setMessage(`Could not delete selected plugin separators: ${errorMessage(error)}`);
     } finally {
-      setPluginsBusyLabel(null);
+      setIsDeletingPluginSeparators(false);
     }
   };
 
@@ -6622,21 +6869,25 @@ export const App = () => {
 
     const operationId = createRendererOperationId('executables_launch');
     const launchStartedAtMs = performance.now();
+    const managedDisplay = managedExecutableDisplay(
+      selectedExecutableItem.managedToolKind,
+      selectedProject.name
+    );
     const isManagedBodySlide = selectedExecutableItem.managedToolKind === 'bodySlide';
     let managedSessionId: string | undefined;
     let managedOutcome: 'completed' | 'failed' | 'watcher-error' = 'failed';
     let launchedResult: FluxoraExecutableLaunchResult | null = null;
     let trackedProcessLabel = selectedExecutableItem.displayName;
-    setExecutablesBusyLabel(isManagedBodySlide ? 'Подготовка BodySlide' : 'Launching executable');
+    setExecutablesBusyLabel(managedDisplay?.preparationLabel ?? 'Launching executable');
     setExecutableLaunchResult(null);
     setLaunchSplash({
       operationId,
       appName: selectedExecutableItem.displayName,
       buildName: selectedProject.name,
-      detail: isManagedBodySlide ? 'Подготовка BodySlide' : 'Процесс запускается',
+      detail: managedDisplay?.preparationLabel ?? 'Процесс запускается',
       state: 'starting',
       subtitle: selectedProject.name,
-      title: isManagedBodySlide ? 'Подготовка BodySlide' : 'Процесс запускается'
+      title: managedDisplay?.preparationLabel ?? 'Процесс запускается'
     });
     setMessage(null);
 
@@ -6758,7 +7009,9 @@ export const App = () => {
                 detail: 'Обновление output',
                 state: 'starting',
                 subtitle:
-                  launchedResult?.outputMod?.displayName ?? `${selectedProject.name} - BodySlide Output`,
+                  launchedResult?.outputMod?.displayName ??
+                  managedDisplay?.outputModName ??
+                  selectedProject.name,
                 title: 'Обновление output'
               }
             : current
@@ -6772,7 +7025,7 @@ export const App = () => {
           if (completion.deferred) {
             setMessage(
               completion.warnings[0] ??
-                'BodySlide всё ещё работает; обновление output завершится при следующем запуске.'
+                `${managedDisplay?.toolName ?? trackedProcessLabel} всё ещё работает; обновление output завершится при следующем запуске.`
             );
           } else if (managedOutcome === 'completed') {
             const warning = launchedResult?.warnings?.[0] ?? completion.warnings[0];
@@ -6784,9 +7037,11 @@ export const App = () => {
           }
         } catch (completionError) {
           setMessage(
-            `BodySlide завершён, но output не удалось обновить: ${bodySlideLaunchErrorMessage(
-              completionError
-            )}`
+            `${managedDisplay?.toolName ?? trackedProcessLabel} завершён, но output не удалось обновить: ${
+              isManagedBodySlide
+                ? bodySlideLaunchErrorMessage(completionError)
+                : errorMessage(completionError)
+            }`
           );
         }
       }
@@ -6933,7 +7188,7 @@ export const App = () => {
 
     const detectedDialog: InstallDialogState = {
       ...current,
-      phase: current.installPlan ? 'options' : 'detecting',
+      phase: 'detecting',
       installerKind: 'standard',
       fomodInstaller: null,
       validationMessage: null,
@@ -6987,7 +7242,7 @@ export const App = () => {
         }
         setInstallDialog((current) =>
           current?.operationId === operationId
-            ? attachInstallPlanForDisplay(current, plan)
+            ? attachBackgroundInstallPlan(current, plan)
             : current
         );
       })
@@ -7008,7 +7263,8 @@ export const App = () => {
   const analyzeInstallLayout = async (
     source: InstallSource,
     operationId: string,
-    project: FluxoraProject | null = selectedProject
+    project: FluxoraProject | null = selectedProject,
+    placementEdits?: FluxoraPlacementEditsV2
   ): Promise<FluxoraContentLayoutPreview> => {
     if (!project) {
       throw new Error('Open a build before installing mods.');
@@ -7018,10 +7274,66 @@ export const App = () => {
       {
         projectDirectory: project.projectDirectory,
         downloadPath: source.sourcePath,
-        existingModMode: 0
+        existingModMode: 0,
+        placementEdits
       },
       { operationId }
     );
+  };
+
+  const watchStandardInstallReady = (
+    operationId: string,
+    fallbackName: string,
+    source: InstallSource,
+    project: FluxoraProject,
+    detectionPromise: Promise<FluxoraFomodInstaller>,
+    planPromise: Promise<FluxoraInstallPlan>
+  ) => {
+    void detectionPromise.then((fomodInstaller) => {
+      if (fomodInstaller.isFomod || installDetectionPromiseRef.current?.promise !== detectionPromise) {
+        return;
+      }
+      const layoutPromise = analyzeInstallLayout(
+        source,
+        operationId,
+        project,
+        { schemaVersion: 2, files: [], directories: [], excludedSourcePaths: [] }
+      );
+      void Promise.all([planPromise, layoutPromise])
+        .then(([plan, layoutPreview]) => {
+          if (
+            installDetectionPromiseRef.current?.promise !== detectionPromise ||
+            installPlanPromiseRef.current?.promise !== planPromise
+          ) {
+            return;
+          }
+          setInstallDialog((current) => {
+            if (!current || current.operationId !== operationId || current.phase === 'error') {
+              return current;
+            }
+            const detected = installDialogWithDetection(current, fallbackName, fomodInstaller);
+            const planned = attachBackgroundInstallPlan(detected, plan);
+            return {
+              ...planned,
+              phase: 'options',
+              layoutPreview,
+              placementValidationPending: false,
+              validationMessage: null,
+              errorMessage: null
+            };
+          });
+        })
+        .catch((error) => {
+          const message = errorMessage(error);
+          setInstallDialogPatchForOperation(operationId, {
+            phase: 'error',
+            errorMessage: message,
+            isSubmitting: false,
+            placementValidationPending: false
+          });
+          setMessage(message);
+        });
+    });
   };
 
   const planInstallSource = (
@@ -7095,6 +7407,8 @@ export const App = () => {
       modOrderPlacement: placement,
       existingModMode: 0,
       placementOverrides: {},
+      placementEdits: { schemaVersion: 2, files: [], directories: [], excludedSourcePaths: [] },
+      placementValidationPending: false,
       draggedSourcePath: null,
       validationMessage: null,
       errorMessage: null,
@@ -7111,9 +7425,17 @@ export const App = () => {
     const planPromise = planInstallSource(source, project, operationId);
     watchInstallDetection(operationId, fallbackName, detectionPromise);
     watchInstallPlan(operationId, planPromise);
+    watchStandardInstallReady(
+      operationId,
+      fallbackName,
+      source,
+      project,
+      detectionPromise,
+      planPromise
+    );
   };
 
-  const reopenInstallForReview = (operation: FluxoraInstallOperation) => {
+  function reopenInstallForReview(operation: FluxoraInstallOperation) {
     const project = selectedProject;
     if (!project || operation.state !== 'needsReview') {
       return;
@@ -7128,32 +7450,61 @@ export const App = () => {
       displayName: sourceEntry ? downloadTitle(sourceEntry) : operation.targetFolder,
       fileName: sourceEntry?.fileName || fileNameFromPath(operation.sourcePath)
     };
-    const placementOverrides = ((): PlacementOverrideMap => {
+    const placementPayload = ((): {
+      placementOverrides: PlacementOverrideMap;
+      placementEdits: FluxoraPlacementEditsV2;
+    } => {
       try {
         const saved = JSON.parse(operation.placementOverridesJson || '[]') as unknown;
-        if (!Array.isArray(saved)) {
-          return {};
-        }
-        return Object.fromEntries(saved.flatMap((candidate) => {
+        const files = Array.isArray(saved)
+          ? saved
+          : saved && typeof saved === 'object' && 'schemaVersion' in saved &&
+              saved.schemaVersion === 2 && 'files' in saved && Array.isArray(saved.files)
+            ? saved.files
+            : [];
+        const directories = saved && typeof saved === 'object' && !Array.isArray(saved) &&
+            'schemaVersion' in saved && saved.schemaVersion === 2 &&
+            'directories' in saved && Array.isArray(saved.directories)
+          ? saved.directories.flatMap((candidate) =>
+              candidate && typeof candidate === 'object' &&
+              'target' in candidate && typeof candidate.target === 'string' &&
+              (candidate.target === 'data' || candidate.target === 'gameRoot') &&
+              'targetRelativePath' in candidate && typeof candidate.targetRelativePath === 'string'
+                ? [{ target: candidate.target, targetRelativePath: candidate.targetRelativePath }]
+                : [])
+          : [];
+        const excludedSourcePaths = saved && typeof saved === 'object' && !Array.isArray(saved) &&
+            'schemaVersion' in saved && saved.schemaVersion === 2 &&
+            'excludedSourcePaths' in saved && Array.isArray(saved.excludedSourcePaths)
+          ? saved.excludedSourcePaths.filter((candidate): candidate is string => typeof candidate === 'string')
+          : [];
+        const validFiles = files.flatMap((candidate) => {
           if (
-            !candidate ||
-            typeof candidate !== 'object' ||
-            !('sourcePath' in candidate) ||
-            !('target' in candidate) ||
-            !('targetRelativePath' in candidate) ||
-            typeof candidate.sourcePath !== 'string' ||
-            typeof candidate.target !== 'string' ||
-            typeof candidate.targetRelativePath !== 'string'
+            !candidate || typeof candidate !== 'object' ||
+            !('sourcePath' in candidate) || typeof candidate.sourcePath !== 'string' ||
+            !('target' in candidate) || typeof candidate.target !== 'string' ||
+            !('targetRelativePath' in candidate) || typeof candidate.targetRelativePath !== 'string'
           ) {
             return [];
           }
-          return [[candidate.sourcePath, {
+          return [{
+            sourcePath: candidate.sourcePath,
             target: candidate.target,
             targetRelativePath: candidate.targetRelativePath
-          }]];
-        }));
+          }];
+        });
+        return {
+          placementOverrides: Object.fromEntries(validFiles.map((candidate) => [candidate.sourcePath, {
+            target: candidate.target,
+            targetRelativePath: candidate.targetRelativePath
+          }])),
+          placementEdits: { schemaVersion: 2, files: validFiles, directories, excludedSourcePaths }
+        };
       } catch {
-        return {};
+        return {
+          placementOverrides: {},
+          placementEdits: { schemaVersion: 2, files: [], directories: [], excludedSourcePaths: [] }
+        };
       }
     })();
 
@@ -7175,7 +7526,9 @@ export const App = () => {
       modNameSource: 'user',
       modOrderPlacement: null,
       existingModMode: operation.existingModMode,
-      placementOverrides,
+      placementOverrides: placementPayload.placementOverrides,
+      placementEdits: placementPayload.placementEdits,
+      placementValidationPending: false,
       draggedSourcePath: null,
       validationMessage: null,
       errorMessage: null,
@@ -7198,7 +7551,15 @@ export const App = () => {
     );
     watchInstallDetection(operation.operationId, operation.targetFolder, detectionPromise);
     watchInstallPlan(operation.operationId, planPromise);
-  };
+    watchStandardInstallReady(
+      operation.operationId,
+      operation.targetFolder,
+      source,
+      project,
+      detectionPromise,
+      planPromise
+    );
+  }
 
   const resolveInstallDialogPlan = async (
     currentDialog: InstallDialogState
@@ -7221,9 +7582,9 @@ export const App = () => {
     return attachBackgroundInstallPlan(currentDialog, plan);
   };
 
-  const openInstallDetails = async () => {
+  const openInstallDetails = () => {
     const currentDialog = installDialog;
-    if (!currentDialog) {
+    if (!currentDialog || !currentDialog.layoutPreview) {
       return;
     }
 
@@ -7232,46 +7593,54 @@ export const App = () => {
       phase: 'details',
       validationMessage: null
     });
+  };
 
-    try {
-      if (currentDialog.layoutPreview) {
-        return;
-      }
-
-      const layoutPromise = analyzeInstallLayout(
-        currentDialog.source,
-        currentDialog.operationId,
-        selectedProject
-      );
-      void layoutPromise
-        .then((layoutPreview) => {
-          setInstallDialog((current) =>
-            current?.operationId === currentDialog.operationId
-              ? {
-                  ...current,
-                  layoutPreview,
-                  errorMessage: null
-                }
-              : current
-          );
-        })
-        .catch((error) => {
-          const message = errorMessage(error);
-          setInstallDialogPatchForOperation(currentDialog.operationId, {
-            phase: 'error',
-            errorMessage: message,
-            isSubmitting: false
-          });
-          setMessage(message);
-        });
-    } catch (error) {
-      const message = errorMessage(error);
-      restoreInstallDialog(currentDialog, {
-        phase: 'error',
-        errorMessage: message
-      });
-      setMessage(message);
+  const updateInstallPlacementEdits = (placementEdits: FluxoraPlacementEditsV2) => {
+    const currentDialog = installDialog;
+    const project = selectedProject;
+    if (!currentDialog || !project || currentDialog.installerKind !== 'standard') {
+      return;
     }
+    const generation = ++installPlacementValidationGenerationRef.current;
+    setInstallDialogPatchForOperation(currentDialog.operationId, {
+      placementEdits,
+      placementValidationPending: true,
+      validationMessage: null
+    });
+    void analyzeInstallLayout(
+      currentDialog.source,
+      currentDialog.operationId,
+      project,
+      placementEdits
+    ).then(
+      (layoutPreview) => {
+        if (installPlacementValidationGenerationRef.current !== generation) {
+          return;
+        }
+        setInstallDialog((current) =>
+          current?.operationId === currentDialog.operationId
+            ? {
+                ...current,
+                placementEdits,
+                layoutPreview,
+                placementValidationPending: false,
+                validationMessage: null,
+                errorMessage: null
+              }
+            : current
+        );
+      },
+      (error) => {
+        if (installPlacementValidationGenerationRef.current !== generation) {
+          return;
+        }
+        setInstallDialogPatchForOperation(currentDialog.operationId, {
+          placementEdits,
+          placementValidationPending: false,
+          validationMessage: errorMessage(error)
+        });
+      }
+    );
   };
 
   const loadDownloadsWorkspace = async (
@@ -7364,6 +7733,154 @@ export const App = () => {
       setMessage(errorMessage(error));
     } finally {
       setDownloadsBusyLabel(null);
+    }
+  };
+
+  const openModRenameDialog = (item: FluxoraModOrderItem) => {
+    if (!selectedProject || !item.isMod || modsActionsBusy) {
+      return;
+    }
+
+    const currentName = normalizeInstallModName(modItemTitle(item));
+    setItemRenameDialog({
+      currentName,
+      isSubmitting: false,
+      kind: 'mod',
+      maxNameLength: 255,
+      name: currentName,
+      project: selectedProject,
+      targetPath: item.id,
+      validationMessage: null
+    });
+  };
+
+  const openDownloadRenameDialog = (entry: FluxoraDownloadEntry) => {
+    if (!selectedProject || !entry.canInstall || downloadsActionsBusy) {
+      return;
+    }
+
+    const fileName = entry.fileName || fileNameFromPath(downloadPath(entry));
+    const currentName = downloadRenameBaseName(fileName);
+    const suffix = downloadArchiveSuffix(fileName);
+    setItemRenameDialog({
+      currentName,
+      isSubmitting: false,
+      kind: 'download',
+      maxNameLength: Math.max(1, 255 - suffix.length),
+      name: currentName,
+      project: selectedProject,
+      targetPath: downloadPath(entry),
+      validationMessage: null
+    });
+  };
+
+  const updateItemRenameDialogName = (name: string) => {
+    setItemRenameDialog((current) =>
+      current
+        ? {
+            ...current,
+            name,
+            validationMessage: null
+          }
+        : current
+    );
+  };
+
+  const submitItemRenameDialog = async () => {
+    const request = itemRenameDialog;
+    if (!request || request.isSubmitting) {
+      return;
+    }
+
+    const newName = normalizeInstallModName(request.name);
+    const validationMessage =
+      newName.length > request.maxNameLength
+        ? `The name must be ${request.maxNameLength} characters or fewer.`
+        : validateInstallModName(newName);
+    const copy = itemRenameDialogCopy(bridgeStatus?.language, request.kind);
+    if (validationMessage || newName === request.currentName) {
+      setItemRenameDialog((current) =>
+        current
+          ? {
+              ...current,
+              validationMessage: validationMessage || copy.unchangedMessage
+            }
+          : current
+      );
+      return;
+    }
+
+    setItemRenameDialog((current) =>
+      current ? { ...current, isSubmitting: true, name: newName, validationMessage: null } : current
+    );
+
+    try {
+      const operationId = createRendererOperationId(
+        request.kind === 'mod' ? 'mods_rename_installed' : 'downloads_rename'
+      );
+      if (request.kind === 'mod') {
+        await window.fluxora.mods.renameInstalled(
+          request.project.projectDirectory,
+          request.targetPath,
+          newName,
+          { operationId }
+        );
+        setItemRenameDialog(null);
+        if (selectedProject?.id === request.project.id) {
+          await Promise.all([
+            loadModsWorkspace(request.project, {
+              operationId,
+              resetScroll: false,
+              showBusy: false,
+              showLoading: false
+            }),
+            loadPluginsWorkspace(request.project, {
+              operationId,
+              resetScroll: false,
+              showBusy: false,
+              showLoading: false
+            })
+          ]);
+        }
+      } else {
+        await window.fluxora.downloads.rename(
+          request.project.projectDirectory,
+          request.targetPath,
+          newName,
+          { operationId }
+        );
+        setItemRenameDialog(null);
+        if (selectedProject?.id === request.project.id) {
+          await loadDownloadsWorkspace(request.project, {
+            operationId,
+            resetScroll: false,
+            showBusy: false,
+            showLoading: false
+          });
+        }
+      }
+      setMessage(`${copy.renameLabel}: ${newName}`);
+    } catch (error) {
+      setItemRenameDialog((current) =>
+        current
+          ? {
+              ...current,
+              isSubmitting: false,
+              validationMessage: errorMessage(error)
+            }
+          : current
+      );
+    }
+  };
+
+  const copyDownloadPath = async (entry: FluxoraDownloadEntry) => {
+    const path = downloadPath(entry);
+    const copy = itemRenameDialogCopy(bridgeStatus?.language, 'download');
+    try {
+      await window.fluxora.clipboard.writeText(path);
+      setMessage(`${copy.copyPathLabel}: ${path}`);
+    } catch (error) {
+      setMessage(errorMessage(error));
     }
   };
 
@@ -8108,13 +8625,16 @@ export const App = () => {
       }
 
       const layoutPreview = submissionDialog.layoutPreview;
-      const placementOverrides = layoutPreview
-        ? createPlacementOverrides(layoutPreview, submissionDialog.placementOverrides)
-        : [];
-      if (layoutPreview && !layoutPreview.canInstall && placementOverrides.length === 0) {
+      if (
+        submissionDialog.installerKind === 'standard' &&
+        (submissionDialog.placementValidationPending ||
+          Boolean(submissionDialog.validationMessage) ||
+          !layoutPreview?.canInstall)
+      ) {
         restoreInstallDialog(submissionDialog, {
-          phase: 'options',
-          validationMessage: 'The archive is blocked by placement rules. Open Details and move files before installing.',
+          phase: 'details',
+          validationMessage: submissionDialog.validationMessage ||
+            'The archive is blocked by placement rules. Fix the marked items before installing.',
           isSubmitting: false
         });
         return;
@@ -8152,7 +8672,9 @@ export const App = () => {
       };
 
       const placementOverridesJson =
-        placementOverrides.length > 0 ? JSON.stringify(placementOverrides) : undefined;
+        submissionDialog.installerKind === 'standard'
+          ? JSON.stringify(submissionDialog.placementEdits)
+          : undefined;
       const fomodContextId =
         submissionDialog.fomodInstaller?.autoSelection?.contextId ||
         submissionDialog.fomodInstaller?.profileContext?.contextId ||
@@ -9312,7 +9834,8 @@ export const App = () => {
         dispatchDownloadsWorkspace({
           type: 'delta-applied',
           upserts: event.upserts,
-          removedIds: event.removedIds
+          removedIds: event.removedIds,
+          placements: event.placements
         });
       });
     });
@@ -12382,7 +12905,7 @@ export const App = () => {
             <button
               type="button"
               role="menuitem"
-              disabled={Boolean(modsBusyLabel)}
+              disabled={modsActionsBusy}
               onClick={() => {
                 setModMenuOrderId(null);
                 void setAllModsEnabled(true);
@@ -12394,7 +12917,7 @@ export const App = () => {
             <button
               type="button"
               role="menuitem"
-              disabled={Boolean(modsBusyLabel)}
+              disabled={modsActionsBusy}
               onClick={() => {
                 setModMenuOrderId(null);
                 void setAllModsEnabled(false);
@@ -12473,6 +12996,19 @@ export const App = () => {
               <MenuIcon source={menuFolderOpenIcon} />
               <span>Open folder</span>
             </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={modsActionsBusy}
+              onClick={() => {
+                setModMenuOrderId(null);
+                setModMenuPosition(null);
+                openModRenameDialog(item);
+              }}
+            >
+              <Pencil size={14} aria-hidden="true" />
+              <span>{itemRenameDialogCopy(bridgeStatus?.language, 'mod').menuRenameLabel}</span>
+            </button>
           </>
         ) : null}
         {item.isSeparator ? (
@@ -12482,7 +13018,7 @@ export const App = () => {
             role="menuitem"
             onClick={() => {
               setModMenuOrderId(null);
-              void deleteModSeparatorSelection(item);
+              requestDeleteModSeparatorSelection(item);
             }}
             aria-keyshortcuts="Delete"
           >
@@ -12525,13 +13061,13 @@ export const App = () => {
       !selectedProject ||
       !buildHeaderCapabilities.refreshAvailable ||
       !nexusConnectionReady ||
-      Boolean(modsBusyLabel) ||
+      modsActionsBusy ||
       Boolean(operationOverlay?.isRunning);
     const installFluxPackDisabled = !bridgeStatus?.ready || Boolean(operationOverlay?.isRunning);
     const modCreationDisabled =
       !selectedProject ||
       !bridgeStatus?.ready ||
-      Boolean(modsBusyLabel) ||
+      modsActionsBusy ||
       Boolean(operationOverlay?.isRunning);
 
     return createPortal(
@@ -12642,23 +13178,23 @@ export const App = () => {
             key={`mod-skeleton-${index}`}
             role="row"
           >
-            <span className="workspace-skeleton workspace-skeleton--priority" role="cell" />
+            <Skeleton className="workspace-skeleton--priority" role="cell" />
             <div className="mod-list-row__identity" role="cell">
-              <span className="workspace-skeleton workspace-skeleton--toggle" />
+              <Skeleton className="workspace-skeleton--toggle" />
               <div className="mod-list-row__title">
-                <span
-                  className="workspace-skeleton workspace-skeleton--title"
+                <Skeleton
+                  className="workspace-skeleton--title"
                   style={{ width: skeletonWidth(index) }}
                 />
-                <span
-                  className="workspace-skeleton workspace-skeleton--meta"
+                <Skeleton
+                  className="workspace-skeleton--meta"
                   style={{ width: skeletonWidth(index, 2) }}
                 />
               </div>
             </div>
-            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-            <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
+            <Skeleton className="workspace-skeleton--cell" role="cell" />
+            <Skeleton className="workspace-skeleton--cell" role="cell" />
+            <Skeleton className="workspace-skeleton--status" role="cell" />
           </div>
         ))}
       </div>
@@ -12745,7 +13281,7 @@ export const App = () => {
             const dropPlacement = isInstallDropTarget
               ? downloadInstallDropTarget?.placement
               : modDropTarget?.placement;
-            const canDragModRow = !modsBusyLabel && !isOverwrite;
+            const canDragModRow = !modsActionsBusy && !isOverwrite;
             const rowPresentationKey = [
               modOrderItemPresentationKey(item),
               rowView ? modRowViewPresentationKey(rowView) : '',
@@ -12918,14 +13454,15 @@ export const App = () => {
                         onClick={(event) => event.stopPropagation()}
                       >
                         <input
+                          className="flx-checkbox__native"
                           type="checkbox"
                           checked={item.isEnabled}
-                          disabled={Boolean(modsBusyLabel) || isPendingInstall}
+                          disabled={modsActionsBusy || isPendingInstall}
                           aria-label={item.isEnabled ? `Disable ${modItemTitle(item)}` : `Enable ${modItemTitle(item)}`}
                           title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
                           onChange={(event) => void setModEnabled(item, event.currentTarget.checked)}
                         />
-                        <span aria-hidden="true" />
+                        <span aria-hidden="true" className="flx-checkbox__box" />
                       </label>
                       <div className="mod-list-row__title">
                         <strong>{modItemTitle(item)}</strong>
@@ -12966,7 +13503,6 @@ export const App = () => {
                             operationId={pendingInstallSession.operationId}
                             orderId={item.orderId}
                             progressStore={pendingInstallOrchestrator.progressStore}
-                            onNeedsReview={reopenInstallForReview}
                           />
                         ) : (
                           <StatusDot
@@ -13399,7 +13935,7 @@ export const App = () => {
               type="button"
               role="menuitem"
               disabled={
-                Boolean(pluginsBusyLabel) ||
+                pluginsActionsBusy ||
                 !pluginCapabilities.loadOrderSupported
               }
               onClick={() => {
@@ -13427,7 +13963,7 @@ export const App = () => {
               type="button"
               role="menuitem"
               disabled={
-                Boolean(pluginsBusyLabel) ||
+                pluginsActionsBusy ||
                 !pluginCapabilities.bulkToggleSupported ||
                 selectedPluginEnableTargets.length === 0
               }
@@ -13446,7 +13982,7 @@ export const App = () => {
             <button
               type="button"
               role="menuitem"
-              disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.bulkToggleSupported}
+              disabled={pluginsActionsBusy || !pluginCapabilities.bulkToggleSupported}
               onClick={() => {
                 setPluginMenuOrderId(null);
                 void setAllPluginsEnabled(true);
@@ -13458,7 +13994,7 @@ export const App = () => {
             <button
               type="button"
               role="menuitem"
-              disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.bulkToggleSupported}
+              disabled={pluginsActionsBusy || !pluginCapabilities.bulkToggleSupported}
               onClick={() => {
                 setPluginMenuOrderId(null);
                 void setAllPluginsEnabled(false);
@@ -13518,7 +14054,7 @@ export const App = () => {
             role="menuitem"
             onClick={() => {
               setPluginMenuOrderId(null);
-              void deletePluginSeparatorSelection(item);
+              requestDeletePluginSeparatorSelection(item);
             }}
             aria-keyshortcuts="Delete"
           >
@@ -13555,23 +14091,23 @@ export const App = () => {
             role="row"
           >
             <span className="plugin-hex-index" role="cell">
-              <span className="workspace-skeleton workspace-skeleton--hex" />
+              <Skeleton className="workspace-skeleton--hex" />
             </span>
             <div className="mod-row__main plugin-row__main" role="cell">
-              <span className="workspace-skeleton workspace-skeleton--toggle" />
+              <Skeleton className="workspace-skeleton--toggle" />
               <div className="plugin-row__title">
-                <span
-                  className="workspace-skeleton workspace-skeleton--title"
+                <Skeleton
+                  className="workspace-skeleton--title"
                   style={{ width: skeletonWidth(index, 1) }}
                 />
-                <span
-                  className="workspace-skeleton workspace-skeleton--meta"
+                <Skeleton
+                  className="workspace-skeleton--meta"
                   style={{ width: skeletonWidth(index, 3) }}
                 />
               </div>
             </div>
-            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-            <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
+            <Skeleton className="workspace-skeleton--cell" role="cell" />
+            <Skeleton className="workspace-skeleton--status" role="cell" />
           </div>
         ))}
       </div>
@@ -13639,7 +14175,7 @@ export const App = () => {
               isDropTarget ? pluginDropTarget?.blockedReason ?? null : null;
             const canDragPluginRow =
               pluginCapabilities.loadOrderSupported &&
-              !pluginsBusyLabel &&
+              !pluginsActionsBusy &&
               canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
             const missingMasterSummary =
               rowView?.missingMasterSummary ??
@@ -13777,18 +14313,19 @@ export const App = () => {
                       onClick={(event) => event.stopPropagation()}
                     >
                         <input
+                          className="flx-checkbox__native"
                           type="checkbox"
                           checked={item.isEnabled}
-                          disabled={item.isLocked || Boolean(pluginsBusyLabel)}
+                          disabled={item.isLocked || pluginsActionsBusy}
                           aria-label={
                             item.isEnabled
                               ? `Disable ${pluginItemTitle(item)}`
                             : `Enable ${pluginItemTitle(item)}`
                         }
                         title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
-                        onChange={(event) => void setPluginEnabled(item, event.currentTarget.checked)}
-                      />
-                      <span aria-hidden="true" />
+                          onChange={(event) => void setPluginEnabled(item, event.currentTarget.checked)}
+                        />
+                      <span aria-hidden="true" className="flx-checkbox__box" />
                     </label>
                   ) : null}
                   <div className="plugin-row__title">
@@ -13999,6 +14536,31 @@ export const App = () => {
           Show in folder
         </button>
         <button
+          type="button"
+          role="menuitem"
+          disabled={!entry.canInstall || downloadsActionsBusy}
+          onClick={() => {
+            setDownloadMenuId(null);
+            setDownloadMenuPosition(null);
+            openDownloadRenameDialog(entry);
+          }}
+        >
+          <Pencil size={14} aria-hidden="true" />
+          <span>{itemRenameDialogCopy(bridgeStatus?.language, 'download').menuRenameLabel}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setDownloadMenuId(null);
+            setDownloadMenuPosition(null);
+            void copyDownloadPath(entry);
+          }}
+        >
+          <Copy size={14} aria-hidden="true" />
+          <span>{itemRenameDialogCopy(bridgeStatus?.language, 'download').copyPathLabel}</span>
+        </button>
+        <button
           className="mod-row-menu__danger"
           type="button"
           role="menuitem"
@@ -14037,8 +14599,8 @@ export const App = () => {
         {downloadSkeletonRows.map((row) => (
           <div className="mod-row download-row download-row--skeleton" role="row" key={row.id}>
             <div className="mod-row__main" role="cell">
-              <span
-                className="download-skeleton download-skeleton--title"
+              <Skeleton
+                className="download-skeleton--title"
                 style={{ width: `${row.titleWidth}%` }}
               />
             </div>
@@ -14047,22 +14609,25 @@ export const App = () => {
                 className="download-progress__bar download-progress__bar--skeleton"
                 aria-hidden="true"
               >
-                <span style={{ width: `${row.barWidth}%` }} />
+                <Skeleton
+                  className="download-progress__fill-skeleton"
+                  style={{ width: `${row.barWidth}%` }}
+                />
               </div>
-              <span
-                className="download-skeleton download-skeleton--progress-text"
+              <Skeleton
+                className="download-skeleton--progress-text"
                 style={{ width: `${row.progressWidth}%` }}
               />
             </div>
             <span role="cell">
-              <span
-                className="download-skeleton download-skeleton--size"
+              <Skeleton
+                className="download-skeleton--size"
                 style={{ width: `${row.sizeWidth}%` }}
               />
             </span>
             <span role="cell">
-              <span
-                className="download-skeleton download-skeleton--source"
+              <Skeleton
+                className="download-skeleton--source"
                 style={{ width: `${row.sourceWidth}%` }}
               />
             </span>
@@ -14330,21 +14895,21 @@ export const App = () => {
           role="treeitem"
           style={{ paddingLeft: `${6 + (index % 4) * 16}px` }}
         >
-          <span className="workspace-skeleton workspace-skeleton--toggle" />
-          <span className="workspace-skeleton workspace-skeleton--toggle" />
-          <span
-            className="workspace-skeleton workspace-skeleton--title"
+          <Skeleton className="workspace-skeleton--toggle" />
+          <Skeleton className="workspace-skeleton--toggle" />
+          <Skeleton
+            className="workspace-skeleton--title"
             style={{ width: skeletonWidth(index) }}
           />
-          <span
-            className="workspace-skeleton workspace-skeleton--cell"
+          <Skeleton
+            className="workspace-skeleton--cell"
             style={{ width: skeletonWidth(index, 2) }}
           />
-          <span
-            className="workspace-skeleton workspace-skeleton--badge"
+          <Skeleton
+            className="workspace-skeleton--badge"
             style={{ width: skeletonWidth(index, 3) }}
           />
-          <span className="workspace-skeleton workspace-skeleton--action" />
+          <Skeleton className="workspace-skeleton--action" />
         </div>
       ))}
     </>
@@ -14696,12 +15261,14 @@ export const App = () => {
       evaluation={installFomodEvaluation}
       existingModName={installExistingModName}
       installDialog={installDialog}
+      language={bridgeStatus?.language}
       onArchiveTreeScrollTopChange={setArchiveTreeScrollTop}
       onClose={() => setInstallDialog(null)}
       onContinueFromFomod={() => void continueFromFomod()}
       onMoveFomodStep={(direction) => void moveInstallFomodStep(direction)}
       onOpenDetails={() => void openInstallDetails()}
       onPatch={setInstallDialogPatch}
+      onPlacementEditsChange={updateInstallPlacementEdits}
       onRecalculateFomod={() => void recalculateFomodSmartSelection(false)}
       onResetFomod={() => void recalculateFomodSmartSelection(true)}
       onResolveExistingMod={(mode) => void submitInstallOptions(mode)}
@@ -14744,6 +15311,16 @@ export const App = () => {
       onCancel={closeBuildRenameDialog}
       onNameChange={updateBuildRenameDialogName}
       onSubmit={() => void submitBuildRenameDialog()}
+    />
+  );
+
+  const renderItemRenameDialog = () => (
+    <ItemRenameDialog
+      language={bridgeStatus?.language}
+      state={itemRenameDialog}
+      onCancel={() => setItemRenameDialog(null)}
+      onNameChange={updateItemRenameDialogName}
+      onSubmit={() => void submitItemRenameDialog()}
     />
   );
 
@@ -14937,18 +15514,18 @@ export const App = () => {
                 key={`profile-skeleton-${index}`}
               >
                 <div className="mod-row__main" role="cell">
-                  <span
-                    className="workspace-skeleton workspace-skeleton--title"
+                  <Skeleton
+                    className="workspace-skeleton--title"
                     style={{ width: skeletonWidth(index) }}
                   />
-                  <span
-                    className="workspace-skeleton workspace-skeleton--meta"
+                  <Skeleton
+                    className="workspace-skeleton--meta"
                     style={{ width: skeletonWidth(index, 1) }}
                   />
                 </div>
-                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-                <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
-                <span className="workspace-skeleton workspace-skeleton--action" role="cell" />
+                <Skeleton className="workspace-skeleton--cell" role="cell" />
+                <Skeleton className="workspace-skeleton--status" role="cell" />
+                <Skeleton className="workspace-skeleton--action" role="cell" />
               </div>
             ))}
           </div>
@@ -15274,19 +15851,19 @@ export const App = () => {
                 key={`executable-skeleton-${index}`}
               >
                 <div className="mod-row__main" role="cell">
-                  <span
-                    className="workspace-skeleton workspace-skeleton--title"
+                  <Skeleton
+                    className="workspace-skeleton--title"
                     style={{ width: skeletonWidth(index) }}
                   />
-                  <span
-                    className="workspace-skeleton workspace-skeleton--meta"
+                  <Skeleton
+                    className="workspace-skeleton--meta"
                     style={{ width: skeletonWidth(index, 2) }}
                   />
                 </div>
-                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
-                <span className="workspace-skeleton workspace-skeleton--action" role="cell" />
+                <Skeleton className="workspace-skeleton--cell" role="cell" />
+                <Skeleton className="workspace-skeleton--cell" role="cell" />
+                <Skeleton className="workspace-skeleton--cell" role="cell" />
+                <Skeleton className="workspace-skeleton--action" role="cell" />
               </div>
             ))}
           </div>
@@ -15335,6 +15912,10 @@ export const App = () => {
         <div className="mod-table__body">
           {filteredExecutableItems.map((entry) => {
             const isSelected = entry.id === executablesWorkspace.selectedId;
+            const managedDisplay = managedExecutableDisplay(
+              entry.managedToolKind,
+              selectedProject?.name ?? 'Build'
+            );
             return (
               <div
                 className="mod-row executable-row"
@@ -15349,10 +15930,10 @@ export const App = () => {
                 <div className="mod-row__main" role="cell">
                   <strong>{executableTitle(entry)}</strong>
                   <span>{entry.id}</span>
-                  {entry.managedToolKind === 'bodySlide' ? (
+                  {managedDisplay ? (
                     <>
-                      <Badge tone="accent">BodySlide · VFS</Badge>
-                      <span>{selectedProject?.name ?? 'Build'} - BodySlide Output</span>
+                      <Badge tone="accent">{managedDisplay.badgeLabel}</Badge>
+                      <span>{managedDisplay.outputModName}</span>
                     </>
                   ) : null}
                 </div>
@@ -15401,8 +15982,13 @@ export const App = () => {
     );
   };
 
-  const renderExecutablesInspector = () => (
-    <aside className="inspector executables-inspector" aria-label="Selected executable details">
+  const renderExecutablesInspector = () => {
+    const managedDisplay = managedExecutableDisplay(
+      selectedExecutableItem?.managedToolKind,
+      selectedProject?.name ?? 'Build'
+    );
+    return (
+      <aside className="inspector executables-inspector" aria-label="Selected executable details">
       <div className="surface-header surface-header--compact">
         <div>
           <p className="eyebrow">Executable editor</p>
@@ -15516,19 +16102,19 @@ export const App = () => {
             <div>
               <dt>Launch</dt>
               <dd>
-                {selectedExecutableItem?.managedToolKind === 'bodySlide'
-                  ? 'BodySlide · VFS'
+                {managedDisplay
+                  ? managedDisplay.badgeLabel
                   : executableCapabilities.launchAvailable
                     ? 'available'
                     : 'limited'}
               </dd>
             </div>
-            {selectedExecutableItem?.managedToolKind === 'bodySlide' ? (
+            {managedDisplay ? (
               <div>
                 <dt>Output</dt>
                 <dd>
                   {executableLaunchResult?.outputMod?.displayName ??
-                    `${selectedProject?.name ?? 'Build'} - BodySlide Output`}
+                    managedDisplay.outputModName}
                 </dd>
               </div>
             ) : null}
@@ -15554,8 +16140,9 @@ export const App = () => {
           ) : null}
         </div>
       ) : null}
-    </aside>
-  );
+      </aside>
+    );
+  };
 
   const renderExecutablesWorkspace = () => {
     if (!selectedProject) {
@@ -15904,8 +16491,6 @@ export const App = () => {
       );
     }
 
-    const activeRightPaneTabIndex = rightPaneTabs.findIndex((tab) => tab.id === activeRightPane);
-
     return (
       <section className="build-page" aria-label="Selected build">
         <BuildDetailHeader
@@ -16014,7 +16599,6 @@ export const App = () => {
                 className="right-pane-tabs"
                 role="tablist"
                 aria-label="Right pane tabs"
-                data-active-index={activeRightPaneTabIndex}
               >
                 {rightPaneTabs.map(({ id, label, icon: Icon }) => (
                   <button
@@ -16569,6 +17153,7 @@ export const App = () => {
                 {renderInstallDialog()}
                 {renderDownloadDuplicateDecision()}
                 {renderBuildRenameDialog()}
+                {renderItemRenameDialog()}
                 {renderModCreationDialog()}
                 {renderPluginSeparatorDialog()}
                 {renderFluxPackExportDialog()}

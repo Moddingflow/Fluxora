@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const app = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
 
 describe('install completion UI contract', () => {
-  it('updates the archive immediately and applies the terminal workspace delta without a full reload', () => {
+  it('updates the archive immediately and applies the terminal delta after order mutations settle', () => {
     const operationProgress =
       app.match(/onOperationProgress: \(operation\) => \{[\s\S]*?pluginOrderSaveSequenceRef/)?.[0] ??
       '';
@@ -13,13 +13,29 @@ describe('install completion UI contract', () => {
       /if \(operation\.state === 'completed'\) \{[\s\S]*?\} else if \(operation\.state === 'needsReview'\)/
     )?.[0] ?? '';
 
-    expect(operationProgress).toContain('if (operation.workspaceDelta)');
+    expect(operationProgress).toContain('const workspaceDelta = operation.workspaceDelta');
+    expect(operationProgress).toContain('workspaceOrderMutationGate');
+    expect(operationProgress).toContain('.readStable(async () => workspaceDelta)');
     expect(operationProgress).toContain('applyIncomingWorkspaceDeltaRef.current(');
     expect(operationProgress).toContain('operation.operationId');
+    expect(operationProgress).toContain('true');
     expect(completion).toContain("buildStatus: 'Installed'");
     expect(completion).not.toContain('loadDownloadsWorkspace(');
     expect(operationProgress).not.toContain('loadModsWorkspace(');
     expect(operationProgress).not.toContain('loadPluginsWorkspace(');
     expect(completion).not.toContain('refreshCurrentViewRef.current');
+  });
+
+  it('keeps the previous layout visible and rejects stale placement validation responses', () => {
+    const revalidation = app.match(
+      /const updateInstallPlacementEdits = \(placementEdits:[\s\S]*?\n  };/
+    )?.[0] ?? '';
+
+    expect(revalidation).toContain('const generation = ++installPlacementValidationGenerationRef.current');
+    expect(revalidation).toContain('placementValidationPending: true');
+    expect(revalidation).not.toContain('layoutPreview: null');
+    expect(revalidation.match(/installPlacementValidationGenerationRef\.current !== generation/g)).toHaveLength(2);
+    expect(revalidation).toContain('layoutPreview,');
+    expect(revalidation).toContain('placementValidationPending: false');
   });
 });

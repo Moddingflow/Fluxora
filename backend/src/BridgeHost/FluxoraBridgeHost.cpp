@@ -662,6 +662,22 @@ namespace
                     typedCode == L"BODYSLIDE_SESSION_ACTIVE"};
             }
         }
+        constexpr std::wstring_view lodGeneratorPrefix = L"lod-generator:";
+        if (message.starts_with(lodGeneratorPrefix))
+        {
+            const std::size_t codeEnd = message.find(L':', lodGeneratorPrefix.size());
+            if (codeEnd != std::wstring::npos)
+            {
+                const std::wstring typedCode = message.substr(
+                    lodGeneratorPrefix.size(),
+                    codeEnd - lodGeneratorPrefix.size());
+                return BridgeError{
+                    typedCode,
+                    message.substr(codeEnd + 1),
+                    ErrorCategory::Core,
+                    typedCode == L"LOD_GENERATOR_SESSION_ACTIVE"};
+            }
+        }
         if (message == L"install.identityPlanStale")
         {
             return BridgeError{
@@ -1896,6 +1912,25 @@ namespace
         return writer.str();
     }
 
+    std::wstring payloadRenameInstalledMod(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring newName = requiredStringField(params, L"newName");
+        return payloadFromCoreJson(
+            L"core.modRenameFailed",
+            [&projectDirectory, &modPath, &newName](wchar_t* buffer, int length)
+            {
+                return fluxora_rename_installed_mod(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    newName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadCreateEmptyMod(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2826,6 +2861,25 @@ namespace
         return writer.str();
     }
 
+    std::wstring payloadRenameDownload(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring downloadPath = requiredStringField(params, L"downloadPath");
+        const std::wstring newBaseName = requiredStringField(params, L"newBaseName");
+        return payloadFromCoreJson(
+            L"core.downloadRenameFailed",
+            [&projectDirectory, &downloadPath, &newBaseName](wchar_t* buffer, int length)
+            {
+                return fluxora_rename_download(
+                    projectDirectory.c_str(),
+                    downloadPath.c_str(),
+                    newBaseName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadCancelDownload(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -3152,14 +3206,16 @@ namespace
         const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
         const std::wstring downloadPath = requiredStringField(params, L"downloadPath");
         const int existingModMode = optionalIntField(params, L"existingModMode", 0);
+        const std::wstring placementEditsJson = optionalStringField(&params, L"placementEditsJson");
         return payloadFromCoreJson(
             L"core.downloadContentLayoutAnalyzeFailed",
-            [&projectDirectory, &downloadPath, existingModMode](wchar_t* buffer, int length)
+            [&projectDirectory, &downloadPath, existingModMode, &placementEditsJson](wchar_t* buffer, int length)
             {
-                return fluxora_analyze_download_content_layout(
+                return fluxora_analyze_download_content_layout_with_edits(
                     projectDirectory.c_str(),
                     downloadPath.c_str(),
                     existingModMode,
+                    placementEditsJson.empty() ? nullptr : placementEditsJson.c_str(),
                     buffer,
                     length);
             });
@@ -3784,6 +3840,10 @@ namespace
         {
             return payloadDeleteInstalledMod(request);
         }
+        if (request.method == L"mods.renameInstalled")
+        {
+            return payloadRenameInstalledMod(request);
+        }
         if (request.method == L"mods.createEmpty")
         {
             return payloadCreateEmptyMod(request);
@@ -3971,6 +4031,10 @@ namespace
         if (request.method == L"downloads.delete")
         {
             return payloadDeleteDownload(request);
+        }
+        if (request.method == L"downloads.rename")
+        {
+            return payloadRenameDownload(request);
         }
         if (request.method == L"downloads.cancel")
         {

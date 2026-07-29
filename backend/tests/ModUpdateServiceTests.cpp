@@ -28,6 +28,8 @@ namespace fluxora::tests
         public:
             NexusModFilesResponse filesResponse;
             std::map<std::wstring, NexusModFilesResponse> filesResponsesByModId;
+            std::map<std::wstring, NexusUpdateApiErrorKind> fileErrorsByModId;
+            std::map<std::wstring, std::size_t> transientNetworkFailuresRemainingByModId;
             NexusRecentUpdatesResponse recentResponse;
             std::vector<std::pair<std::wstring, std::wstring>> fileRequests;
             std::vector<std::pair<std::wstring, std::wstring>> recentRequests;
@@ -69,7 +71,17 @@ namespace fluxora::tests
                     response = perMod == filesResponsesByModId.end()
                         ? filesResponse
                         : perMod->second;
-                    errorKind = fileErrorKind;
+                    const auto perModError = fileErrorsByModId.find(std::wstring(modId));
+                    errorKind = perModError == fileErrorsByModId.end()
+                        ? fileErrorKind
+                        : std::optional<NexusUpdateApiErrorKind>{perModError->second};
+                    if (auto transient = transientNetworkFailuresRemainingByModId.find(std::wstring(modId));
+                        transient != transientNetworkFailuresRemainingByModId.end() &&
+                        transient->second > 0)
+                    {
+                        --transient->second;
+                        errorKind = NexusUpdateApiErrorKind::Network;
+                    }
                     errorQuota = fileErrorQuota;
                     errorRetryAt = fileErrorRetryAt;
                 }
@@ -148,6 +160,7 @@ namespace fluxora::tests
             {
                 ModUpdateServiceOptions options;
                 options.cachePath = temp_.path() / L"nexus-update-cache.sqlite3";
+                options.transientMetadataRetryDelay = std::chrono::milliseconds(0);
                 if (!nowUtc_.empty())
                 {
                     options.nowUtc = [this]() { return nowUtc_; };
@@ -168,6 +181,25 @@ namespace fluxora::tests
             FakeNexusUpdateApi api_;
             std::wstring nowUtc_;
         };
+    }
+
+    TEST(NexusUpdateHttpApiTests, ResourceFailuresAreNotAuthenticationFailures)
+    {
+        EXPECT_EQ(
+            nexusUpdateApiErrorKindForHttpStatus(403),
+            NexusUpdateApiErrorKind::ResourceUnavailable);
+        EXPECT_EQ(
+            nexusUpdateApiErrorKindForHttpStatus(404),
+            NexusUpdateApiErrorKind::ResourceUnavailable);
+        EXPECT_EQ(
+            nexusUpdateApiErrorKindForHttpStatus(410),
+            NexusUpdateApiErrorKind::ResourceUnavailable);
+        EXPECT_EQ(
+            nexusUpdateApiErrorKindForHttpStatus(401),
+            NexusUpdateApiErrorKind::AuthenticationUnavailable);
+        EXPECT_EQ(
+            nexusUpdateApiErrorKindForHttpStatus(429),
+            NexusUpdateApiErrorKind::RateLimited);
     }
 
     TEST(ModUpdateServiceTests, CheckUsesTheInstalledNexusFileVersionInsteadOfTheModPageVersion)
@@ -252,6 +284,95 @@ namespace fluxora::tests
         EXPECT_TRUE(result.mods.front().hasUpdate);
         EXPECT_EQ(result.counters.checked, 1U);
         EXPECT_EQ(result.counters.updates, 1U);
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        ConfirmedInstalledFileRepairsImportedModOrganizerDecimalVersion)
+    {
+        registerNexusMod(L"JS Common Cages SE", L"f1.03", L"68236", L"288677");
+        api_.filesResponse.files = {
+            NexusFileMetadata{
+                L"288677",
+                L"1.03",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100}
+        };
+
+        const ModUpdateCheckResult result = check();
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"1.03");
+        EXPECT_EQ(installed.front().source.latestVersion, L"1.03");
+        EXPECT_EQ(installed.front().source.latestFileId, L"288677");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        ImportedDecimalVersionRepairPreservesRealUpdateDetection)
+    {
+        registerNexusMod(L"Decimal Update", L"f1.01", L"71", L"710");
+        api_.filesResponse.files = {
+            NexusFileMetadata{
+                L"710",
+                L"1.01",
+                L"1",
+                true,
+                NexusFileAvailability::Old,
+                100},
+            NexusFileMetadata{
+                L"711",
+                L"1.02",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                200}
+        };
+        api_.filesResponse.fileUpdates = {
+            NexusFileUpdateLink{L"710", L"711", 200}
+        };
+
+        const ModUpdateCheckResult result = check();
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(result.mods.size(), 1U);
+        EXPECT_EQ(result.mods.front().latestVersion, L"1.02");
+        EXPECT_EQ(result.mods.front().latestFileId, L"711");
+        EXPECT_TRUE(result.mods.front().hasUpdate);
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"1.01");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        ARealNexusVersionBeginningWithFIsNotRewritten)
+    {
+        registerNexusMod(L"Literal F Version", L"f1.03", L"70", L"700");
+        api_.filesResponse.files = {
+            NexusFileMetadata{
+                L"700",
+                L"f1.03",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100}
+        };
+
+        const ModUpdateCheckResult result = check();
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"f1.03");
+        EXPECT_EQ(installed.front().source.latestVersion, L"f1.03");
     }
 
     TEST_F(ModUpdateServiceFixture, ProgressNamesTheInstalledModBeingChecked)
@@ -382,23 +503,41 @@ namespace fluxora::tests
         EXPECT_EQ(result.counters.updates, 0U);
     }
 
-    TEST_F(ModUpdateServiceFixture, AUniqueNewerActiveFileInTheSameCategoryIsASafeFallback)
+    TEST_F(ModUpdateServiceFixture, ParallelMainFileVariantsDoNotBecomeUpdatesWithoutExplicitLineage)
     {
-        registerNexusMod(L"Heuristic Mod", L"1.0", L"45", L"100");
+        registerNexusMod(
+            L"Arcs Bear Trap redux",
+            L"1",
+            L"115412",
+            L"485654",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"115412",
+                L"485654",
+                L"nxm://skyrimspecialedition/mods/115412/files/485654",
+                L"2026-07-26T10:00:00Z",
+                L"2",
+                L"485831",
+                L"completed",
+                L"2026-07-26T10:00:00Z"});
         api_.filesResponse.files = {
-            NexusFileMetadata{L"100", L"1.0", L"4", true, NexusFileAvailability::Active, 100},
-            NexusFileMetadata{L"200", L"2.0", L"4", true, NexusFileAvailability::Active, 200},
-            NexusFileMetadata{L"300", L"3.0", L"5", true, NexusFileAvailability::Active, 300}
+            NexusFileMetadata{L"485654", L"1", L"1", false, NexusFileAvailability::Active, 1'711'801'631},
+            NexusFileMetadata{L"485657", L"1", L"7", false, NexusFileAvailability::Archived, 1'711'801'720},
+            NexusFileMetadata{L"485831", L"2", L"1", false, NexusFileAvailability::Active, 1'711'838'727}
+        };
+        api_.filesResponse.fileUpdates = {
+            NexusFileUpdateLink{L"485657", L"485831", 1'711'838'727}
         };
 
         const ModUpdateCheckResult result = check();
 
         ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
         ASSERT_EQ(result.mods.size(), 1U);
-        EXPECT_EQ(result.mods.front().latestFileId, L"200");
-        EXPECT_EQ(result.mods.front().latestVersion, L"2.0");
-        EXPECT_TRUE(result.mods.front().hasUpdate);
-        EXPECT_EQ(result.counters.updates, 1U);
+        EXPECT_EQ(result.mods.front().latestFileId, L"485654");
+        EXPECT_EQ(result.mods.front().latestVersion, L"1");
+        EXPECT_FALSE(result.mods.front().hasUpdate);
+        EXPECT_EQ(result.counters.updates, 0U);
     }
 
     TEST_F(ModUpdateServiceFixture, ABranchedUpdateChainPreservesThePreviousLatestValue)
@@ -515,7 +654,7 @@ namespace fluxora::tests
         }
     }
 
-    TEST_F(ModUpdateServiceFixture, PrimaryFlagMakesTheSafeHeuristicUnambiguous)
+    TEST_F(ModUpdateServiceFixture, PrimaryFlagDoesNotProveFileLineage)
     {
         registerNexusMod(L"Primary Heuristic Mod", L"1.0", L"49", L"100");
         api_.filesResponse.files = {
@@ -528,9 +667,9 @@ namespace fluxora::tests
 
         ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
         ASSERT_EQ(result.mods.size(), 1U);
-        EXPECT_EQ(result.mods.front().latestFileId, L"200");
-        EXPECT_EQ(result.mods.front().latestVersion, L"2.0");
-        EXPECT_TRUE(result.mods.front().hasUpdate);
+        EXPECT_EQ(result.mods.front().latestFileId, L"100");
+        EXPECT_EQ(result.mods.front().latestVersion, L"1.0");
+        EXPECT_FALSE(result.mods.front().hasUpdate);
     }
 
     TEST_F(ModUpdateServiceFixture, AutomaticCheckUsesTheDailyTtlWithoutANetworkRequest)
@@ -554,6 +693,54 @@ namespace fluxora::tests
         EXPECT_EQ(second.counters.apiRequests, 0U);
         EXPECT_TRUE(api_.fileRequests.empty());
         EXPECT_EQ(second.nextEligibleAt, L"2026-07-17T10:00:00Z");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        DailyTtlStillRepairsAStoredVersionConfirmedByTheSameNexusFile)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        registerNexusMod(L"Daily Anchor", L"1.0", L"50", L"100");
+        api_.filesResponse.files = {
+            NexusFileMetadata{L"100", L"1.0", L"1", true, NexusFileAvailability::Active, 100}
+        };
+        ASSERT_EQ(check(ModUpdateCheckMode::Automatic).state, ModUpdateCheckState::Completed);
+
+        registerNexusMod(
+            L"JS Attunement Sphere and Lexicons SE",
+            L"f1.01",
+            L"69073",
+            L"288669",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"69073",
+                L"288669",
+                L"nxm://skyrimspecialedition/mods/69073/files/288669",
+                L"2026-07-16T10:00:00Z",
+                L"1.01",
+                L"288669",
+                L"completed",
+                L"2026-07-16T10:00:00Z"});
+
+        api_.fileRequests.clear();
+        nowUtc_ = L"2026-07-17T09:59:59Z";
+        const ModUpdateCheckResult result = check(ModUpdateCheckMode::Automatic);
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+        const auto repaired = std::find_if(
+            installed.begin(),
+            installed.end(),
+            [](const InstalledModRecord& mod)
+            {
+                return mod.folderName == L"JS Attunement Sphere and Lexicons SE";
+            });
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Skipped);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::DailyTtl);
+        EXPECT_TRUE(api_.fileRequests.empty());
+        ASSERT_NE(repaired, installed.end());
+        EXPECT_EQ(repaired->version, L"1.01");
     }
 
     TEST_F(ModUpdateServiceFixture, TheSharedFileCacheIsReusedAcrossProjects)
@@ -807,6 +994,174 @@ namespace fluxora::tests
         EXPECT_LE(api_.maxActiveFileRequests.load(), 4U);
     }
 
+    TEST_F(ModUpdateServiceFixture, ResourceUnavailableForOneModDoesNotStopTheRemainingManualSweep)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        for (int index = 0; index < 5; ++index)
+        {
+            const std::wstring modId = std::to_wstring(170 + index);
+            const std::wstring fileId = std::to_wstring(270 + index);
+            registerNexusMod(
+                L"Resource Availability Mod " + std::to_wstring(index),
+                L"1.0",
+                modId,
+                fileId);
+            NexusModFilesResponse response;
+            response.files.push_back(NexusFileMetadata{
+                fileId,
+                L"1.0",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100 + index});
+            response.quota = NexusQuotaSnapshot{
+                2'000,
+                1'800 - index,
+                L"2026-07-16T11:00:00Z",
+                20'000,
+                19'200 - index,
+                L"2026-07-17T00:00:00Z",
+                nowUtc_};
+            api_.filesResponsesByModId.emplace(modId, std::move(response));
+        }
+        api_.fileErrorsByModId[L"170"] = NexusUpdateApiErrorKind::ResourceUnavailable;
+
+        const ModUpdateCheckResult result = check(ModUpdateCheckMode::Manual);
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Partial);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::MetadataUnavailable);
+        EXPECT_EQ(result.counters.apiRequests, 5U);
+        EXPECT_EQ(result.counters.checked, 4U);
+        EXPECT_EQ(result.counters.failed, 1U);
+        EXPECT_EQ(api_.fileRequests.size(), 5U);
+    }
+
+    TEST_F(ModUpdateServiceFixture, IsolatedNetworkFailureDoesNotStopTheRemainingManualSweep)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        for (int index = 0; index < 6; ++index)
+        {
+            const std::wstring modId = std::to_wstring(180 + index);
+            const std::wstring fileId = std::to_wstring(280 + index);
+            registerNexusMod(
+                L"Network Resilience Mod " + std::to_wstring(index),
+                L"1.0",
+                modId,
+                fileId);
+            NexusModFilesResponse response;
+            response.files.push_back(NexusFileMetadata{
+                fileId,
+                L"1.0",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100 + index});
+            response.quota = NexusQuotaSnapshot{
+                2'000,
+                1'800 - index,
+                L"2026-07-16T11:00:00Z",
+                20'000,
+                19'200 - index,
+                L"2026-07-17T00:00:00Z",
+                nowUtc_};
+            api_.filesResponsesByModId.emplace(modId, std::move(response));
+        }
+        api_.fileErrorsByModId[L"182"] = NexusUpdateApiErrorKind::Network;
+
+        std::vector<std::tuple<std::size_t, std::size_t, std::wstring>> progress;
+        ModUpdateServiceOptions options;
+        options.cachePath = temp_.path() / L"isolated-network-failure-cache.sqlite3";
+        options.nowUtc = [this]() { return nowUtc_; };
+        options.transientMetadataRetryDelay = std::chrono::milliseconds(0);
+        options.progress = [&progress](
+            std::size_t completed,
+            std::size_t total,
+            std::wstring_view currentItem)
+        {
+            progress.emplace_back(completed, total, currentItem);
+        };
+        ModUpdateService service(logger_, pathSettings_, api_, std::move(options));
+
+        const ModUpdateCheckResult result = service.check(ModUpdateCheckRequest{
+            project_,
+            ModUpdateCheckMode::Manual});
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Partial);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::NetworkError);
+        EXPECT_EQ(result.counters.apiRequests, 6U);
+        EXPECT_EQ(result.counters.checked, 5U);
+        EXPECT_EQ(result.counters.failed, 1U);
+        EXPECT_EQ(api_.fileRequests.size(), 8U);
+        ASSERT_EQ(progress.size(), 6U);
+        EXPECT_EQ(std::get<0>(progress.back()), 6U);
+        EXPECT_EQ(std::get<1>(progress.back()), 6U);
+    }
+
+    TEST_F(ModUpdateServiceFixture, TransientNetworkFailureIsRetriedWithoutLeavingAPartialSweep)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        for (int index = 0; index < 3; ++index)
+        {
+            const std::wstring modId = std::to_wstring(190 + index);
+            const std::wstring fileId = std::to_wstring(290 + index);
+            registerNexusMod(
+                L"Transient Network Mod " + std::to_wstring(index),
+                L"1.0",
+                modId,
+                fileId);
+            NexusModFilesResponse response;
+            response.files.push_back(NexusFileMetadata{
+                fileId,
+                L"1.0",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100 + index});
+            response.quota = NexusQuotaSnapshot{
+                2'000,
+                1'800 - index,
+                L"2026-07-16T11:00:00Z",
+                20'000,
+                19'200 - index,
+                L"2026-07-17T00:00:00Z",
+                nowUtc_};
+            api_.filesResponsesByModId.emplace(modId, std::move(response));
+        }
+        api_.transientNetworkFailuresRemainingByModId[L"191"] = 1;
+
+        const ModUpdateCheckResult result = check(ModUpdateCheckMode::Manual);
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Completed);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::None);
+        EXPECT_EQ(result.counters.apiRequests, 3U);
+        EXPECT_EQ(result.counters.checked, 3U);
+        EXPECT_EQ(result.counters.failed, 0U);
+        EXPECT_EQ(api_.fileRequests.size(), 4U);
+    }
+
+    TEST_F(ModUpdateServiceFixture, ConfirmedNetworkOutageStopsBeforeFloodingTheRemainingSweep)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        for (int index = 0; index < 20; ++index)
+        {
+            registerNexusMod(
+                L"Outage Mod " + std::to_wstring(index),
+                L"1.0",
+                std::to_wstring(200 + index),
+                std::to_wstring(300 + index));
+        }
+        api_.fileErrorKind = NexusUpdateApiErrorKind::Network;
+
+        const ModUpdateCheckResult result = check(ModUpdateCheckMode::Manual);
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Partial);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::NetworkError);
+        EXPECT_EQ(result.counters.apiRequests, 5U);
+        EXPECT_EQ(result.counters.checked, 0U);
+        EXPECT_EQ(result.counters.failed, 5U);
+        EXPECT_EQ(api_.fileRequests.size(), 15U);
+    }
+
     TEST_F(ModUpdateServiceFixture, RateLimitPersistsRetryAtAndBlocksAnotherRequest)
     {
         nowUtc_ = L"2026-07-16T10:00:00Z";
@@ -852,7 +1207,7 @@ namespace fluxora::tests
         ASSERT_EQ(failed.state, ModUpdateCheckState::Partial);
         EXPECT_EQ(failed.reason, ModUpdateCheckReason::NetworkError);
         EXPECT_EQ(failed.nextEligibleAt, L"2026-07-16T10:15:00Z");
-        EXPECT_EQ(api_.fileRequests.size(), 1U);
+        EXPECT_EQ(api_.fileRequests.size(), 3U);
 
         api_.fileErrorKind.reset();
         api_.filesResponse.files = {
@@ -862,13 +1217,13 @@ namespace fluxora::tests
         const ModUpdateCheckResult blocked = check();
         EXPECT_EQ(blocked.state, ModUpdateCheckState::Skipped);
         EXPECT_EQ(blocked.reason, ModUpdateCheckReason::OfflineBackoff);
-        EXPECT_EQ(api_.fileRequests.size(), 1U);
+        EXPECT_EQ(api_.fileRequests.size(), 3U);
 
         nowUtc_ = L"2026-07-16T10:16:00Z";
         const ModUpdateCheckResult recovered = check();
         EXPECT_EQ(recovered.state, ModUpdateCheckState::Completed);
         EXPECT_EQ(recovered.counters.checked, 1U);
-        EXPECT_EQ(api_.fileRequests.size(), 2U);
+        EXPECT_EQ(api_.fileRequests.size(), 4U);
     }
 
     TEST_F(ModUpdateServiceFixture, CancellationStopsBeforeIssuingMetadataRequests)

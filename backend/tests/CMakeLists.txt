@@ -46,6 +46,7 @@ add_executable(FluxoraCoreTests
     FluxPackServiceTests.cpp
     GrassCacheServiceTests.cpp
     LoggerTests.cpp
+    LodGeneratorIntegrationServiceTests.cpp
     ModFileOperationsIntegrationTests.cpp
     ModIdentityResolverTests.cpp
     ModUpdateServiceTests.cpp
@@ -105,6 +106,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/InstallScheduler.cpp
     ../src/Services/InstallTransactionJournal.cpp
     ../src/Services/Logger.cpp
+    ../src/Services/LodGeneratorIntegrationService.cpp
     ../src/Services/ModOrganizerExecutableImportService.cpp
     ../src/Services/ModOrganizerImportService.cpp
     ../src/Services/ModService.cpp
@@ -224,19 +226,30 @@ add_custom_command(
 
 if(WIN32 AND FLUXORA_ENABLE_VFS)
     add_executable(FluxoraBodySlideVfsProbe BodySlideVfsProbe.cpp)
+    add_executable(FluxoraLodGeneratorVfsProbe LodGeneratorVfsProbe.cpp)
     add_executable(FluxoraUniversalVfsProbe UniversalVfsProbe.cpp)
     target_compile_features(FluxoraBodySlideVfsProbe PRIVATE cxx_std_20)
+    target_compile_features(FluxoraLodGeneratorVfsProbe PRIVATE cxx_std_20)
     target_compile_features(FluxoraUniversalVfsProbe PRIVATE cxx_std_20)
     if(MSVC)
         target_compile_options(FluxoraBodySlideVfsProbe PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(FluxoraLodGeneratorVfsProbe PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(FluxoraUniversalVfsProbe PRIVATE /W4 /permissive- /utf-8)
     endif()
-    add_dependencies(FluxoraCoreApiTests FluxoraBodySlideVfsProbe FluxoraUniversalVfsProbe FluxoraVfs)
+    add_dependencies(
+        FluxoraCoreApiTests
+        FluxoraBodySlideVfsProbe
+        FluxoraLodGeneratorVfsProbe
+        FluxoraUniversalVfsProbe
+        FluxoraVfs)
     add_custom_command(
         TARGET FluxoraCoreApiTests
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:FluxoraBodySlideVfsProbe>
+            $<TARGET_FILE_DIR:FluxoraCoreApiTests>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:FluxoraLodGeneratorVfsProbe>
             $<TARGET_FILE_DIR:FluxoraCoreApiTests>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:FluxoraUniversalVfsProbe>

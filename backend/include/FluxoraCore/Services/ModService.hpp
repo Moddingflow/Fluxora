@@ -168,6 +168,10 @@ namespace fluxora
         [[nodiscard]] InstalledModEntry createEmptyMod(
             const std::filesystem::path& projectDirectory,
             std::wstring_view modName) const;
+        [[nodiscard]] InstalledModEntry renameInstalledMod(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view newName) const;
         void deleteInstalledMod(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath) const;

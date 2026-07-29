@@ -1,4 +1,5 @@
 #include "FluxoraCore/GameSupport/SkyrimSpecialEditionSupport.hpp"
+#include "FluxoraCore/Services/ContentLayoutService.hpp"
 
 #include <filesystem>
 #include <set>
@@ -93,6 +94,8 @@ namespace fluxora
         }
 
         manifestMigrationRules_.supportsAutomaticMigration = true;
+        components_ = DefinitionBackedGameSupport::components();
+        components_.contentLayoutAssessmentPolicy = this;
     }
 
     GameId SkyrimSpecialEditionSupport::gameId()
@@ -118,5 +121,32 @@ namespace fluxora
     const ManifestMigrationRules& SkyrimSpecialEditionSupport::manifestMigrationRules() const noexcept
     {
         return manifestMigrationRules_;
+    }
+
+    const GameSupportComponents& SkyrimSpecialEditionSupport::components() const noexcept
+    {
+        return components_;
+    }
+
+    ContentLayoutAssessment SkyrimSpecialEditionSupport::assess(const PlacementPlan& plan) const
+    {
+        if (!plan.canInstall())
+        {
+            return ContentLayoutAssessment{
+                ContentLayoutAssessmentStatus::Blocked,
+                {L"skyrimse.layout.blocked"}
+            };
+        }
+        if (plan.summary.hasWarnings)
+        {
+            return ContentLayoutAssessment{
+                ContentLayoutAssessmentStatus::Warning,
+                {L"skyrimse.layout.warning"}
+            };
+        }
+        return ContentLayoutAssessment{
+            ContentLayoutAssessmentStatus::Ready,
+            {L"skyrimse.layout.ready"}
+        };
     }
 }

@@ -270,4 +270,29 @@ describe('mod update coordinator', () => {
     expect(checkUpdates).toHaveBeenCalledTimes(2);
     coordinator.stop();
   });
+
+  it('keeps a resource-specific metadata failure out of connection recovery', async () => {
+    const partial = {
+      ...result(),
+      state: 'partial' as const,
+      reason: 'metadataUnavailable' as const
+    };
+    const onAuthenticationUnavailable = vi.fn();
+    const coordinator = createModUpdateCoordinator({
+      api: {
+        checkUpdates: vi.fn(async () => partial),
+        cancel: vi.fn(async () => undefined)
+      },
+      createOperationId: () => 'op-resource-unavailable',
+      onApplied: vi.fn(),
+      onAuthenticationUnavailable
+    });
+
+    coordinator.activate('C:\\Builds\\A');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onAuthenticationUnavailable).not.toHaveBeenCalled();
+    coordinator.stop();
+  });
 });

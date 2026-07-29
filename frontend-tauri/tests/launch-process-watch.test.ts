@@ -26,6 +26,14 @@ describe('launch process watch wiring', () => {
       app.indexOf('const launchExecutable = async () =>'),
       app.indexOf('const requestGrassCacheGeneration = () =>')
     );
+    const managedDisplay = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'executables',
+      'managed-executable-display.ts'
+    );
 
     expect(shared).toContain('processesWatchLaunchReady');
     expect(shared).toContain('processesWaitForExit');
@@ -40,7 +48,8 @@ describe('launch process watch wiring', () => {
     expect(processPlatform).toContain('find_processes_using_module');
     expect(rustShell).toContain('Native process exit signal unavailable; using fallback polling');
     expect(rustShell).toContain('Tracked process exited but a VFS holder remains');
-    expect(launchFlow).toContain('Подготовка BodySlide');
+    expect(managedDisplay).toContain('Подготовка BodySlide');
+    expect(launchFlow).toContain('managedDisplay?.preparationLabel');
     expect(launchFlow).toContain('Запуск через VFS');
     expect(launchFlow).toContain('Обновление output');
     expect(launchFlow).toMatch(

@@ -44,16 +44,6 @@ namespace fluxora
         std::vector<std::wstring> warnings;
     };
 
-    struct ManagedLaunchCompletion
-    {
-        std::wstring sessionId;
-        std::wstring outcome;
-        ManagedOutputMod outputMod;
-        bool finalized{false};
-        bool deferred{false};
-        std::vector<std::wstring> warnings;
-    };
-
     class BodySlideIntegrationService final : public IService
     {
     public:

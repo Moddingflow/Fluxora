@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FluxoraCore/GameSupport/IGameSupport.hpp"
+#include "FluxoraCore/GameSupport/ContentLayoutAssessment.hpp"
 
 #include <atomic>
 #include <filesystem>
@@ -71,6 +72,20 @@ namespace fluxora
         std::optional<GameRelativePath> targetRelativePath;
     };
 
+    struct PlacementDirectory
+    {
+        PlacementTarget target{PlacementTarget::Data};
+        GameRelativePath targetRelativePath;
+    };
+
+    struct PlacementEdits
+    {
+        int schemaVersion{2};
+        std::vector<PlacementOverride> files;
+        std::vector<PlacementDirectory> directories;
+        std::vector<GameRelativePath> excludedSourcePaths;
+    };
+
     struct PlacementPlanEntry
     {
         GameRelativePath sourcePath;
@@ -81,6 +96,7 @@ namespace fluxora
         std::wstring explanation;
         bool manualOverrideAllowed{false};
         std::vector<PlacementTarget> safeManualTargets;
+        bool included{true};
     };
 
     struct ContentLayoutSummary
@@ -109,6 +125,11 @@ namespace fluxora
         std::vector<ValidationFinding> validationFindings;
         UserExplanation userExplanation;
         std::vector<ManualOverrideOption> manualOverrideOptions;
+        std::vector<PlacementDirectory> directories;
+        std::optional<ContentLayoutAssessment> assessment;
+        std::wstring archiveContentFingerprint;
+        std::wstring editFingerprint;
+        std::wstring placementFingerprint;
 
         [[nodiscard]] bool canInstall() const noexcept
         {
@@ -129,9 +150,14 @@ namespace fluxora
         std::wstring archiveContentHash;
         std::wstring gameDefinitionVersion;
         std::vector<PlacementOverride> manualOverrides;
+        PlacementEdits placementEdits;
+        const IContentLayoutAssessmentPolicy* assessmentPolicy{nullptr};
         const std::atomic_bool* cancellationRequested{nullptr};
         const Logger* logger{nullptr};
     };
+
+    [[nodiscard]] PlacementEdits parsePlacementEditsJson(std::wstring_view json);
+    [[nodiscard]] std::wstring placementEditsFingerprint(const PlacementEdits& edits);
 
     class ContentLayoutService final
     {

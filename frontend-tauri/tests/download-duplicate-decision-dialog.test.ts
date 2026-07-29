@@ -56,14 +56,20 @@ const renderDialog = (entry: FluxoraDownloadEntry): string =>
   }));
 
 describe('download duplicate decision dialog', () => {
-  it('renders an accessible modal with all three decisions and file versions', () => {
+  it('renders the new-version status with two designed actions and no redundant cancel action', () => {
     const markup = renderDialog(duplicateEntry('upgrade'));
 
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
+    expect(markup).toContain('aria-labelledby="download-duplicate-status"');
+    expect(markup).toContain('id="download-duplicate-status"');
+    expect(markup).toContain('Найдена новая версия');
     expect(markup).toContain('Заменить');
     expect(markup).toContain('Сохранить оба');
-    expect(markup).toContain('Отмена');
+    expect(markup.match(/class="flx-button download-duplicate-dialog__action/g)).toHaveLength(2);
+    expect(markup).not.toContain('>Обновление архива Nexus<');
+    expect(markup).not.toContain('>Отмена<');
+    expect(markup).toContain('aria-label="Отменить загрузку"');
     expect(markup).toContain('SkyUI 1.0.1.7z');
     expect(markup).toContain('SkyUI 1.0.0.7z');
   });

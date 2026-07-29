@@ -9,6 +9,8 @@
 
 namespace fluxora
 {
+    class IContentLayoutAssessmentPolicy;
+
     struct GameIdentityRules
     {
         GameId id;
@@ -203,6 +205,7 @@ namespace fluxora
         const ILaunchRulesProvider* launchRulesProvider{nullptr};
         const IVfsRulesProvider* vfsRulesProvider{nullptr};
         const IContentLayoutRulesProvider* contentLayoutRulesProvider{nullptr};
+        const IContentLayoutAssessmentPolicy* contentLayoutAssessmentPolicy{nullptr};
         const IUiRulesProvider* uiRulesProvider{nullptr};
         const IManifestMigrationProvider* manifestMigrationProvider{nullptr};
     };

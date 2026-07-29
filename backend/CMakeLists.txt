@@ -173,6 +173,7 @@ add_library(FluxoraCore SHARED
     src/Services/GrassCacheService.cpp
     src/Services/ManagedAiOverrideService.cpp
     src/Services/Logger.cpp
+    src/Services/LodGeneratorIntegrationService.cpp
     src/Services/ModService.cpp
     src/Services/ModUpdateService.cpp
     src/Services/NexusDownloadDuplicateResolver.cpp

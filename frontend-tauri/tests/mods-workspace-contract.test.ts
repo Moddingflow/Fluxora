@@ -90,7 +90,8 @@ describe('mods workspace bridge contract', () => {
 
     expect(loader).toContain('window.fluxora.mods.getPersistedWorkspace');
     expect(loader).toContain('window.fluxora.mods.getWorkspace');
-    expect(loader).toContain('await getWorkspace(');
+    expect(loader).toContain('await workspaceOrderMutationGate.readStable(() =>');
+    expect(loader).toContain('getWorkspace(project.projectDirectory, profileName, { operationId })');
     expect(loader).not.toContain('window.fluxora.mods.listInstalled(');
     expect(loader).not.toContain('window.fluxora.mods.getOrder(');
   });

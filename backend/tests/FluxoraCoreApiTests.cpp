@@ -551,6 +551,12 @@ namespace fluxora::tests
                 L"BodySlide x64.exe",
             "MZ");
         writeTextFile(
+            project / L"mods" / L"DynDOLOD" / L"TexGenx64.exe",
+            "MZ");
+        writeTextFile(
+            project / L"mods" / L"DynDOLOD" / L"DynDOLODx64.exe",
+            "MZ");
+        writeTextFile(
             config,
             "{"
             "\"id\":\"managed\",\"name\":\"Managed Build\","
@@ -560,6 +566,12 @@ namespace fluxora::tests
             "\"defaultProfile\":\"Default\",\"launchExecutables\":[{"
             "\"id\":\"bodyslide\",\"displayName\":\"BodySlide\","
             "\"executablePath\":\"mods/BodySlide/CalienteTools/BodySlide/BodySlide x64.exe\","
+            "\"arguments\":\"\",\"workingDirectory\":\"\"},{"
+            "\"id\":\"texgen\",\"displayName\":\"TexGen\","
+            "\"executablePath\":\"mods/DynDOLOD/TexGenx64.exe\","
+            "\"arguments\":\"\",\"workingDirectory\":\"\"},{"
+            "\"id\":\"dyndolod\",\"displayName\":\"DynDOLOD\","
+            "\"executablePath\":\"mods/DynDOLOD/DynDOLODx64.exe\","
             "\"arguments\":\"\",\"workingDirectory\":\"\"}]}"
         );
 
@@ -572,6 +584,8 @@ namespace fluxora::tests
             FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
         const std::wstring listed = copyBufferedApiOutput();
         EXPECT_NE(listed.find(L"\"managedToolKind\":\"bodySlide\""), std::wstring::npos);
+        EXPECT_NE(listed.find(L"\"managedToolKind\":\"texGen\""), std::wstring::npos);
+        EXPECT_NE(listed.find(L"\"managedToolKind\":\"dynDoLod\""), std::wstring::npos);
 
         std::array<wchar_t, 256> completion{};
         EXPECT_EQ(
@@ -583,6 +597,15 @@ namespace fluxora::tests
             FluxoraCoreResultCoreError);
         EXPECT_TRUE(lastCoreError().starts_with(
             L"bodyslide:BODYSLIDE_SESSION_NOT_FOUND:"));
+        EXPECT_EQ(
+            fluxora_complete_managed_executable_launch(
+                L"lodgen-texGen-missing",
+                L"completed",
+                completion.data(),
+                static_cast<int>(completion.size())),
+            FluxoraCoreResultCoreError);
+        EXPECT_TRUE(lastCoreError().starts_with(
+            L"lod-generator:LOD_GENERATOR_SESSION_NOT_FOUND:"));
         fluxora_core_shutdown();
     }
 
@@ -745,6 +768,137 @@ namespace fluxora::tests
                 static_cast<int>(completion.size())),
             FluxoraCoreResultOk) << toUtf8(lastCoreError());
         EXPECT_NE(std::wstring(completion.data()).find(L"\"finalized\":true"), std::wstring::npos);
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, TexGenVfsProbeUsesManagedArgumentsAndPublishesAtomically)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        const std::filesystem::path game = temp.path() / L"Source Game";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"TexGen VFS Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue created = JsonReader::parse(copyBufferedApiOutput());
+        const std::filesystem::path project(created.find(L"projectDirectory")->asString());
+        const std::filesystem::path config(created.find(L"configPath")->asString());
+        const std::filesystem::path gameData =
+            std::filesystem::path(created.find(L"gamePath")->asString()) / L"Data";
+
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"Active Textures",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+        writeTextFile(
+            project / L"mods" / L"Active Textures" / L"textures" / L"active-source.dds",
+            "active-profile-source");
+
+        const std::filesystem::path toolDirectory = project / L"mods" / L"DynDOLOD";
+        const std::filesystem::path probeSource =
+            std::filesystem::path(currentTestExecutablePath()).parent_path() /
+            L"FluxoraLodGeneratorVfsProbe.exe";
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeSource));
+        const std::filesystem::path texGenExecutable = toolDirectory / L"TexGenx64.exe";
+        std::filesystem::create_directories(toolDirectory);
+        std::filesystem::copy_file(
+            probeSource,
+            texGenExecutable,
+            std::filesystem::copy_options::overwrite_existing);
+        ASSERT_EQ(fluxora_set_all_installed_mods_enabled(project.c_str(), 1), FluxoraCoreResultOk);
+
+        const std::filesystem::path priorOutput = project / L"mods" / L"TexGen Output";
+        writeTextFile(priorOutput / L"prior-output.marker", "preserve-until-success");
+        const std::filesystem::path probeStatus = temp.path() / L"texgen-vfs-probe-status.txt";
+        JsonWriter executables;
+        executables.beginArray()
+            .beginObject()
+                .field(L"id", L"texgen")
+                .field(L"displayName", L"TexGen")
+                .field(L"executablePath", texGenExecutable.wstring())
+                .field(
+                    L"arguments",
+                    L"-tes5 -o:\"C:\\old-output\" --fluxora-probe-status \"" +
+                        probeStatus.wstring() + L"\" --fluxora-game-data \"" +
+                        gameData.wstring() + L"\"")
+                .field(L"workingDirectory", toolDirectory.wstring())
+                .field(L"iconPath", L"")
+            .endObject()
+            .endArray();
+        ASSERT_EQ(
+            fluxora_save_game_executables(
+                config.c_str(),
+                executables.str().c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+
+        ASSERT_EQ(
+            fluxora_launch_game_executable(
+                config.c_str(),
+                L"texgen",
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue launch = JsonReader::parse(copyBufferedApiOutput());
+        ASSERT_EQ(launch.find(L"managedToolKind")->asString(), L"texGen");
+        ASSERT_NE(launch.find(L"managedSessionId"), nullptr);
+        ASSERT_NE(launch.find(L"outputMod"), nullptr);
+        const std::filesystem::path output(
+            launch.find(L"outputMod")->find(L"path")->asString());
+        EXPECT_EQ(output.filename(), L"TexGen Output");
+        EXPECT_TRUE(std::filesystem::is_directory(project / L"mods" / L"DynDOLOD Output"));
+
+        const std::uint32_t processId = static_cast<std::uint32_t>(
+            std::stoul(launch.find(L"processId")->asNumber()));
+        const HANDLE process = OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE,
+            processId);
+        ASSERT_NE(process, nullptr);
+        ASSERT_EQ(WaitForSingleObject(process, 30'000), WAIT_OBJECT_0);
+        DWORD exitCode = 0;
+        ASSERT_TRUE(GetExitCodeProcess(process, &exitCode));
+        CloseHandle(process);
+        ASSERT_EQ(exitCode, 0U);
+
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeStatus));
+        const std::string status = readTextFile(probeStatus);
+        EXPECT_TRUE(status.starts_with("ok|C:\\Fluxora Tool Output\\")) << status;
+        EXPECT_EQ(status.find(project.string()), std::string::npos);
+        EXPECT_EQ(readTextFile(output / L"prior-output.marker"), "preserve-until-success");
+        EXPECT_FALSE(std::filesystem::exists(output / L"meshes" / L"texgen-output.nif"));
+
+        std::array<wchar_t, 2048> completion{};
+        ASSERT_EQ(
+            fluxora_complete_managed_executable_launch(
+                launch.find(L"managedSessionId")->asString().c_str(),
+                L"completed",
+                completion.data(),
+                static_cast<int>(completion.size())),
+            FluxoraCoreResultOk) << toUtf8(lastCoreError());
+        EXPECT_NE(std::wstring(completion.data()).find(L"\"finalized\":true"), std::wstring::npos);
+        EXPECT_FALSE(std::filesystem::exists(output / L"prior-output.marker"));
+        EXPECT_EQ(
+            readTextFile(output / L"meshes" / L"texgen-output.nif"),
+            "generated-through-managed-o");
+        EXPECT_FALSE(std::filesystem::exists(gameData / L"meshes" / L"texgen-output.nif"));
         fluxora_core_shutdown();
     }
 
@@ -1044,6 +1198,107 @@ namespace fluxora::tests
         fluxora_core_shutdown();
     }
 #endif
+
+    TEST(FluxoraCoreApiTests, DownloadContentLayoutPreviewUsesArchiveIndexAndAcceptsV2Edits)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API content-layout preview test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"AppRoot";
+        ScopedEnvironmentVariable fluxoraAppRoot(L"FLUXORA_APP_ROOT", appRoot.wstring());
+        std::filesystem::create_directories(appRoot);
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Index Preview Build";
+        const std::filesystem::path download =
+            appRoot / L"Downloads" / L"skyrimse" / L"Index Preview.zip";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeZipArchive(
+            download,
+            {
+                ZipEntry{L"Data/IndexPreview.esp", "plugin"},
+                ZipEntry{L"Data/Meshes/IndexPreview/model.nif", "mesh"}
+            });
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Index Preview Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        constexpr wchar_t editsJson[] =
+            LR"json({"schemaVersion":2,"files":[],"directories":[{"target":"data","targetRelativePath":"Generated"}],"excludedSourcePaths":["Data/Meshes/IndexPreview/model.nif"]})json";
+        ASSERT_EQ(
+            fluxora_analyze_download_content_layout_with_edits(
+                project.c_str(),
+                download.c_str(),
+                0,
+                editsJson,
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+
+        const std::wstring json = copyBufferedApiOutput();
+        EXPECT_NE(json.find(L"\"targetRelativePath\":\"Generated\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"archiveContentFingerprint\":"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"editFingerprint\":"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"placementFingerprint\":"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"included\":false"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"assessment\":{\"status\":\"ready\""), std::wstring::npos);
+        EXPECT_FALSE(std::filesystem::exists(appRoot / L"Downloads" / L".install-staging-cache"));
+        EXPECT_FALSE(std::filesystem::exists(project / L"mods" / L".Index Preview.installing"));
+
+        const auto warmedStartedAt = std::chrono::steady_clock::now();
+        ASSERT_EQ(
+            fluxora_analyze_download_content_layout_with_edits(
+                project.c_str(),
+                download.c_str(),
+                0,
+                editsJson,
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const auto warmedDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - warmedStartedAt);
+        (void)copyBufferedApiOutput();
+        EXPECT_LT(warmedDuration, std::chrono::milliseconds(500));
+
+        const int installResult = fluxora_install_download_with_layout(
+            project.c_str(),
+            download.c_str(),
+            L"Index Preview",
+            0,
+            editsJson,
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (installResult == FluxoraCoreResultCoreError && isMissingExtractorError(lastCoreError()))
+        {
+            fluxora_core_shutdown();
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(installResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        (void)copyBufferedApiOutput();
+
+        const std::filesystem::path installed = project / L"mods" / L"Index Preview";
+        EXPECT_TRUE(std::filesystem::is_regular_file(installed / L"IndexPreview.esp"));
+        EXPECT_FALSE(std::filesystem::exists(installed / L"Meshes" / L"IndexPreview" / L"model.nif"));
+        EXPECT_TRUE(std::filesystem::is_directory(installed / L"Generated"));
+
+        fluxora_core_shutdown();
+#endif
+    }
 
     TEST(FluxoraCoreApiTests, SkyrimModMutationsSynchronizePluginStateFiles)
     {
@@ -1825,15 +2080,22 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(project / L"mods" / L"Smart API Mod"));
 
         writeTextFile(project / L"profiles" / L"Default" / L"plugins.txt", "*Lux.esp\n");
+        const std::filesystem::path analyzedArchiveDownload =
+            downloadsDirectory / L"Smart API Source.zip";
+        std::filesystem::copy_file(
+            archive,
+            analyzedArchiveDownload,
+            std::filesystem::copy_options::overwrite_existing);
         ASSERT_EQ(
             fluxora_analyze_fomod_download_for_profile(
                 project.c_str(),
-                archive.c_str(),
+                analyzedArchiveDownload.c_str(),
                 L"Default",
                 nullptr,
                 smallBuffer.data(),
                 static_cast<int>(smallBuffer.size())),
-            FluxoraCoreResultBufferTooSmall);
+            FluxoraCoreResultBufferTooSmall)
+            << toUtf8(lastCoreError());
         const JsonValue freshAnalysis = JsonReader::parse(copyBufferedApiOutput());
         const JsonValue* freshAuto = freshAnalysis.find(L"autoSelection");
         ASSERT_NE(freshAuto, nullptr);
@@ -2133,6 +2395,7 @@ namespace fluxora::tests
         EXPECT_NE(deltaJson.find(L"\"sequence\":1"), std::wstring::npos);
         EXPECT_NE(deltaJson.find(L"\"upserts\":["), std::wstring::npos);
         EXPECT_NE(deltaJson.find(L"\"removedIds\":[]"), std::wstring::npos);
+        EXPECT_NE(deltaJson.find(L"\"placements\":["), std::wstring::npos);
         EXPECT_NE(deltaJson.find(L"\"reason\":\"created\""), std::wstring::npos);
         EXPECT_NE(deltaJson.find(L"\"fullResyncRequired\":false"), std::wstring::npos);
 

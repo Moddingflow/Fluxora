@@ -94,8 +94,12 @@ namespace fluxora
         RateLimited,
         Offline,
         Network,
+        ResourceUnavailable,
         InvalidResponse
     };
+
+    [[nodiscard]] NexusUpdateApiErrorKind nexusUpdateApiErrorKindForHttpStatus(
+        unsigned long statusCode) noexcept;
 
     class NexusUpdateApiError final : public std::runtime_error
     {
@@ -192,6 +196,8 @@ namespace fluxora
         std::function<bool()> cancellationRequested;
         std::function<void(std::size_t, std::size_t, std::wstring_view)> progress;
         std::size_t maxConcurrentMetadataRequests{4};
+        std::size_t maxTransientMetadataRetries{2};
+        std::chrono::milliseconds transientMetadataRetryDelay{std::chrono::milliseconds(200)};
         std::chrono::milliseconds overallTimeout{std::chrono::seconds(60)};
         std::chrono::milliseconds requestTimeoutBudget{std::chrono::seconds(8)};
     };

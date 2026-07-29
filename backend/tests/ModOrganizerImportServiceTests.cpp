@@ -403,7 +403,7 @@ namespace fluxora::tests
         writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
         writeTextFile(
             source / L"mods" / L"SkyUI" / L"meta.ini",
-            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\nnewestVersion=5.2\n");
+            "[General]\nname=SkyUI\nversion=f1.01\nmodid=3863\nfileid=123\nnewestVersion=5.2\n");
         writeTextFile(source / L"mods" / L"Address Library" / L"skse" / L"plugins" / L"versionlib.bin", "lib");
         writeTextFile(
             source / L"mods" / L"Address Library" / L"meta.ini",
@@ -480,11 +480,12 @@ namespace fluxora::tests
                 return mod.folderName == L"SkyUI";
             });
         ASSERT_NE(skyUi, importedMods.end());
+        EXPECT_EQ(skyUi->version, L"1.01");
         EXPECT_EQ(skyUi->source.provider, L"nexus");
         EXPECT_EQ(skyUi->source.remoteModId, L"3863");
         EXPECT_EQ(skyUi->source.remoteFileId, L"123");
         EXPECT_EQ(skyUi->source.url, L"nxm://skyrimspecialedition/mods/3863/files/123");
-        EXPECT_EQ(skyUi->source.latestVersion, L"1");
+        EXPECT_EQ(skyUi->source.latestVersion, L"1.01");
         EXPECT_EQ(skyUi->source.latestFileId, L"123");
         EXPECT_EQ(skyUi->source.updateCheckState, L"baseline_pending");
         EXPECT_TRUE(skyUi->sourceIsNexus);
