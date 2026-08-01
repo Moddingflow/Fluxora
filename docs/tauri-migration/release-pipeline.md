@@ -227,8 +227,10 @@ Production mode is fail-closed and non-forceful:
    separate checkpoint commit. Existing local commits are allowed and are
    included in the later atomic push. The worktree must then be clean. Open the
    update-manifest signing key only after repository-controlled build/test gates.
-   Update every owned version source as one recoverable local step. A failure
-   before remote mutation restores the original version files.
+   Update every owned version source and regenerate its deterministic dependency
+   inventory as one recoverable local step. This refresh is required because the
+   inventory hashes version-owned package and Cargo inputs. A failure before
+   remote mutation restores both the original version files and inventory.
 3. Build the native updater ABI prerequisite, then run the full unit, component,
    integration, API-contract and UI gates plus the ordinary local release build.
    Production treats a missing real native full/delta ABI test target as a hard

@@ -129,7 +129,8 @@ function Get-VersionPaths {
         'frontend-tauri\src-tauri\tauri.conf.json',
         'frontend-tauri\package.json',
         'frontend-tauri\src-tauri\Cargo.toml',
-        'frontend-tauri\src-tauri\Cargo.lock'
+        'frontend-tauri\src-tauri\Cargo.lock',
+        'legal\desktop\dependency-inventory.json'
     )
     if (Test-Path -LiteralPath (Join-Path $projectRoot 'frontend-tauri\package-lock.json') -PathType Leaf) {
         $paths += 'frontend-tauri\package-lock.json'
@@ -365,6 +366,13 @@ try {
 
     Invoke-ReleaseStep "Applying product version $targetVersion" {
         Set-FluxoraProductVersion -ProjectRoot $projectRoot -Version $targetVersion
+    }
+
+    Invoke-ReleaseStep 'Refreshing deterministic dependency inventory for the release version' {
+        [void](Invoke-ReleaseCommand -FilePath 'pwsh' -Arguments @(
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', (Join-Path $projectRoot 'scripts\release\Test-DesktopLegalAndAssetCompliance.ps1'),
+            '-UpdateInventory'))
         $script:expectedVersionSnapshots = @(Get-FluxoraFileSnapshots -ProjectRoot $projectRoot -RelativePaths $versionPaths)
     }
 

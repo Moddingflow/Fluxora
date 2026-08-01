@@ -1654,6 +1654,8 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $signingOpenOffset = $source.IndexOf("Opening isolated signing identity after all repository gates", [StringComparison]::Ordinal)
     $versionMenuOffset = $source.IndexOf('Resolve-FluxoraProductionVersion', [StringComparison]::Ordinal)
     $githubAuthOffset = $source.IndexOf('Authenticating GitHub release transport', [StringComparison]::Ordinal)
+    $versionApplyOffset = $source.IndexOf('Applying product version', [StringComparison]::Ordinal)
+    $dependencyInventoryRefreshOffset = $source.IndexOf('Refreshing deterministic dependency inventory for the release version', [StringComparison]::Ordinal)
     $buildOffset = $source.IndexOf('Building the complete local release', [StringComparison]::Ordinal)
     $strictContractOffset = $source.IndexOf('Running strict release contract tests against built native artifacts', [StringComparison]::Ordinal)
     $updateAssetOffset = $source.IndexOf('Creating and verifying signed full/delta update assets', [StringComparison]::Ordinal)
@@ -1661,6 +1663,9 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($secretClearOffset -ge 0 -and $secretClearOffset -lt $moduleImportOffset) 'The CI signing secret must be cleared before repository release code is imported.'
     Assert-True ($signingOpenOffset -gt $lastGateOffset) 'DPAPI or in-memory signing identity must not be opened before repository-controlled gates finish.'
     Assert-True ($versionMenuOffset -ge 0 -and $versionMenuOffset -lt $githubAuthOffset) 'Version selection and cancellation must happen before remote release prerequisites.'
+    Assert-True ($versionApplyOffset -ge 0 -and $dependencyInventoryRefreshOffset -gt $versionApplyOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must refresh deterministic dependency evidence after changing version-owned inputs and before the full build.'
+    Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
+    Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
     Assert-True ($buildOffset -ge 0 -and $strictContractOffset -gt $buildOffset) 'Production must build native artifacts before running the strict release contract suite.'
     Assert-True ($updateAssetOffset -gt $lastGateOffset -and $inventoryOffset -gt $updateAssetOffset) 'Detached update assets must be signed before the release inventory.'
     Assert-True (-not $source.Contains('Authenticode')) 'Production must not require paid Authenticode code signing.'
