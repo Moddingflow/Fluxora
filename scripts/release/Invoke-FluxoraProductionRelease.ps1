@@ -494,11 +494,13 @@ try {
     if (-not (Test-Path -LiteralPath $packagedUpdaterPath -PathType Leaf)) {
         throw "Release payload is missing the self-contained updater runtime '$packagedUpdaterPath'."
     }
-    $unexpectedInstallerRuntime = Get-ChildItem `
-        -LiteralPath (Join-Path $outputDirectory 'resources\native') `
-        -File `
-        -Filter 'FluxoraInstallerCore.*' `
-        -ErrorAction SilentlyContinue
+    $unexpectedInstallerRuntime = @(
+        Get-ChildItem `
+            -LiteralPath (Join-Path $outputDirectory 'resources\native') `
+            -File `
+            -Filter 'FluxoraInstallerCore.*' `
+            -ErrorAction SilentlyContinue
+    )
     if ($unexpectedInstallerRuntime.Count -ne 0) {
         throw 'Release payload contains a loose installer-core runtime even though Setup and Updater must link it statically.'
     }

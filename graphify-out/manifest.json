@@ -895,7 +895,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785576141.2308736,
+    "mtime": 1785577920.2107248,
     "ast_hash": "b03e7fa8d25a293ad6ff7cccc6364b10",
     "semantic_hash": ""
   },
@@ -925,7 +925,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785576141.2308736,
+    "mtime": 1785577920.2107248,
     "ast_hash": "89467c08ba71c0d40bca5d7566331142",
     "semantic_hash": ""
   },
@@ -6085,13 +6085,13 @@
     "semantic_hash": ""
   },
   "scripts/tests/Fluxora.Release.Tests.ps1": {
-    "mtime": 1785572518.6791418,
-    "ast_hash": "9b099e78ea72dc74ec2782685870a8e0",
+    "mtime": 1785577945.7236001,
+    "ast_hash": "a77d3951dcc152008e79df7f83277ce8",
     "semantic_hash": ""
   },
   "scripts/release/Invoke-FluxoraProductionRelease.ps1": {
-    "mtime": 1785572558.585381,
-    "ast_hash": "872691febcafcf1bc66b21a2b9ae410d",
+    "mtime": 1785577966.637389,
+    "ast_hash": "3d5ff973c939d3c55b926867ff10c63b",
     "semantic_hash": ""
   },
   "scripts/release/New-FluxoraUpdateArtifacts.ps1": {
@@ -6465,7 +6465,7 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785576141.2298732,
+    "mtime": 1785577920.2117252,
     "ast_hash": "793288c638388d225b8a0389f0994f97",
     "semantic_hash": ""
   },

@@ -1680,6 +1680,7 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($playwrightSetupRendererOffset -gt $playwrightGateOffset -and $playwrightUpdaterRendererOffset -gt $playwrightSetupRendererOffset -and $playwrightOutputArgumentOffset -gt $playwrightUpdaterRendererOffset) 'Production must restage both specialized installer renderers after the main Vite build and before Playwright.'
     Assert-True ($source.Contains('build\backend\$Configuration\FluxoraInstallerCore.lib')) 'Production must link the canonical configured installer core instead of a recursively selected test library.'
     Assert-True ($source.Contains('CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS')) 'Production native boundary tests must preserve the static MSVC runtime contract.'
+    Assert-True ($source.Contains('$unexpectedInstallerRuntime = @(')) 'Production must normalize an empty or singleton loose-runtime probe to an array before checking Count.'
     Assert-True ($updateAssetOffset -gt $lastGateOffset -and $inventoryOffset -gt $updateAssetOffset) 'Detached update assets must be signed before the release inventory.'
     Assert-True (-not $source.Contains('Authenticode')) 'Production must not require paid Authenticode code signing.'
     Assert-True (-not $source.Contains('signtool')) 'Production must not discover or invoke signtool.'
