@@ -921,7 +921,15 @@ namespace fluxora::tests
                 return entry.fileName == L"Cabbage CS Preset.7z" && entry.canInstall;
             },
             std::chrono::seconds(30));
-        ASSERT_TRUE(completed.has_value());
+        if (!completed.has_value())
+        {
+            downloads.shutdown();
+            pathSettings.shutdown();
+            settings.shutdown();
+            const std::filesystem::path logPath = logger.logPath();
+            logger.shutdown();
+            FAIL() << "Queued Nexus worker did not complete. Core log:\n" << readTextFile(logPath);
+        }
 
         downloads.shutdown();
         const std::vector<DownloadEntry> reloaded = downloads.listDownloads(projectDirectory);

@@ -405,8 +405,8 @@
     "semantic_hash": ""
   },
   "backend/src/Storage/AtomicFileStore.cpp": {
-    "mtime": 1783714761.380193,
-    "ast_hash": "1391960463b6b3c0dcdd4c539daa003b",
+    "mtime": 1785566798.4359355,
+    "ast_hash": "a1447bbcc8974c3a0281e81e53c73fbf",
     "semantic_hash": ""
   },
   "backend/src/Storage/InstanceMetadataStore.cpp": {
@@ -425,8 +425,8 @@
     "semantic_hash": ""
   },
   "backend/tests/AtomicFileStoreTests.cpp": {
-    "mtime": 1783714691.0151906,
-    "ast_hash": "0440fc0467ab647de4848823db77dd2c",
+    "mtime": 1785566766.1747003,
+    "ast_hash": "a2dc314ea676196a103b544ee2f7d011",
     "semantic_hash": ""
   },
   "backend/tests/BuildPathSettingsServiceTests.cpp": {
@@ -440,8 +440,8 @@
     "semantic_hash": ""
   },
   "backend/tests/DownloadServiceTests.cpp": {
-    "mtime": 1785252949.732311,
-    "ast_hash": "ec92293c7eb63e52a37762c8cfe34529",
+    "mtime": 1785566652.3903441,
+    "ast_hash": "4949cbfeee6bdabeb5524fff1b64bb72",
     "semantic_hash": ""
   },
   "backend/tests/ExecutableServiceTests.cpp": {
@@ -895,7 +895,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785564715.678193,
+    "mtime": 1785566340.6255684,
     "ast_hash": "b03e7fa8d25a293ad6ff7cccc6364b10",
     "semantic_hash": ""
   },
@@ -925,7 +925,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785564715.6766903,
+    "mtime": 1785566340.62457,
     "ast_hash": "89467c08ba71c0d40bca5d7566331142",
     "semantic_hash": ""
   },
@@ -4640,7 +4640,7 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ArchiveCatalogService.cpp": {
-    "mtime": 1785169223.0360777,
+    "mtime": 1785566766.1736991,
     "ast_hash": "66c1621c33498d06b37f01f11dc8a0eb",
     "semantic_hash": ""
   },
@@ -5630,8 +5630,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ModdingFlowAuthServiceTests.cpp": {
-    "mtime": 1785519297.058192,
-    "ast_hash": "e69e0458d46e757764597ec1a90b9c88",
+    "mtime": 1785566538.2936754,
+    "ast_hash": "709081a05b3997f57cdfe5c874a4d1cd",
     "semantic_hash": ""
   },
   "backend/tests/SecureCredentialStoreTests.cpp": {
@@ -6465,7 +6465,7 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785561625.321845,
+    "mtime": 1785566340.6255684,
     "ast_hash": "793288c638388d225b8a0389f0994f97",
     "semantic_hash": ""
   },

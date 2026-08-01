@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 #ifdef _WIN32
@@ -366,6 +367,15 @@ namespace fluxora
                 ;
         }
 
+#ifdef _WIN32
+        bool isTransientReplaceError(DWORD error) noexcept
+        {
+            return error == ERROR_ACCESS_DENIED ||
+                error == ERROR_SHARING_VIOLATION ||
+                error == ERROR_LOCK_VIOLATION;
+        }
+#endif
+
         void throwFromSystemError(
             const std::filesystem::path& path,
             const AtomicFileWriteOptions& options,
@@ -461,14 +471,27 @@ namespace fluxora
             const std::filesystem::path& target)
         {
 #ifdef _WIN32
-            if (!MoveFileExW(
-                    source.c_str(),
-                    target.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            constexpr int maximumReplaceAttempts = 8;
+            for (int attempt = 0; attempt < maximumReplaceAttempts; ++attempt)
             {
-                throwFromSystemError(target, AtomicFileWriteOptions{}, std::error_code(
-                    static_cast<int>(GetLastError()),
-                    std::system_category()));
+                if (MoveFileExW(
+                        source.c_str(),
+                        target.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                {
+                    break;
+                }
+
+                const DWORD error = GetLastError();
+                if (!isTransientReplaceError(error) || attempt + 1 == maximumReplaceAttempts)
+                {
+                    throwFromSystemError(target, AtomicFileWriteOptions{}, std::error_code(
+                        static_cast<int>(error),
+                        std::system_category()));
+                }
+
+                const int delayExponent = (std::min)(attempt, 4);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1 << delayExponent));
             }
 #else
             std::error_code error;

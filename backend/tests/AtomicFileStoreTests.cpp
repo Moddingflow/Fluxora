@@ -10,6 +10,16 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace fluxora::tests
 {
     TEST(AtomicFileStoreTests, SimulatedCrashDuringManifestWriteRecoversOldManifest)
@@ -102,6 +112,41 @@ namespace fluxora::tests
 
         EXPECT_EQ(readTextFile(manifest), R"({"schemaVersion":"1","name":"old"})");
     }
+
+#ifdef _WIN32
+    TEST(AtomicFileStoreTests, RetriesTransientWindowsReaderShareViolation)
+    {
+        TempDirectory temp;
+        const std::filesystem::path manifest = temp.path() / L"manifest.json";
+        writeTextFile(manifest, R"({"schemaVersion":"1","name":"old"})");
+
+        const HANDLE reader = CreateFileW(
+            manifest.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        ASSERT_NE(reader, INVALID_HANDLE_VALUE);
+
+        std::jthread releaseReader([reader]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            CloseHandle(reader);
+        });
+
+        AtomicFileStore store;
+        EXPECT_NO_THROW(store.writeTextFile(
+            manifest,
+            R"({"schemaVersion":"1","name":"new"})",
+            AtomicFileWriteOptions{
+                L"project manifest",
+                ProjectStateValidation::JsonObject
+            }));
+        EXPECT_EQ(readTextFile(manifest), R"({"schemaVersion":"1","name":"new"})");
+    }
+#endif
 
     TEST(AtomicFileStoreTests, BackupPathUsesCompactSiblingName)
     {

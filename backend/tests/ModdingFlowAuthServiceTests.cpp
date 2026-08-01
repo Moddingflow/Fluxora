@@ -174,7 +174,11 @@ namespace fluxora::tests
         EXPECT_EQ(
             configuration.refreshCredentialTarget(),
             L"Fluxora/OAuth/production/moddingflow/desktop_mod_manager/refresh-token");
-        EXPECT_EQ(configuration.userAgent(), L"Fluxora/0.0.0 ModdingFlow");
+        const std::string productVersion = FLUXORA_PRODUCT_VERSION;
+        const std::wstring wideProductVersion(productVersion.begin(), productVersion.end());
+        EXPECT_EQ(
+            configuration.userAgent(),
+            std::wstring(L"Fluxora/") + wideProductVersion + L" ModdingFlow");
 
         EXPECT_NO_THROW(configuration.validateRedirectUri(
             "http://127.0.0.1:49152/oauth/fluxora/callback"));
