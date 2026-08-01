@@ -1658,6 +1658,9 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $dependencyInventoryRefreshOffset = $source.IndexOf('Refreshing deterministic dependency inventory for the release version', [StringComparison]::Ordinal)
     $buildOffset = $source.IndexOf('Building the complete local release', [StringComparison]::Ordinal)
     $strictContractOffset = $source.IndexOf('Running strict release contract tests against built native artifacts', [StringComparison]::Ordinal)
+    $nativeBoundaryOffset = $source.IndexOf('Running native Tauri Setup and updater boundary suites', [StringComparison]::Ordinal)
+    $nativeUpdaterRendererOffset = $source.IndexOf("'run', 'build:updater:frontend'", $nativeBoundaryOffset, [StringComparison]::Ordinal)
+    $nativeCargoTestOffset = $source.IndexOf("'test', '--release', '--locked'", $nativeBoundaryOffset, [StringComparison]::Ordinal)
     $updateAssetOffset = $source.IndexOf('Creating and verifying signed full/delta update assets', [StringComparison]::Ordinal)
     $inventoryOffset = $source.IndexOf('Creating signed release inventory', [StringComparison]::Ordinal)
     Assert-True ($secretClearOffset -ge 0 -and $secretClearOffset -lt $moduleImportOffset) 'The CI signing secret must be cleared before repository release code is imported.'
@@ -1667,6 +1670,9 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
     Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
     Assert-True ($buildOffset -ge 0 -and $strictContractOffset -gt $buildOffset) 'Production must build native artifacts before running the strict release contract suite.'
+    Assert-True ($nativeBoundaryOffset -gt $strictContractOffset -and $nativeUpdaterRendererOffset -gt $nativeBoundaryOffset -and $nativeCargoTestOffset -gt $nativeUpdaterRendererOffset) 'Production must restage the updater renderer immediately before recompiling its native boundary tests.'
+    Assert-True ($source.Contains('build\backend\$Configuration\FluxoraInstallerCore.lib')) 'Production must link the canonical configured installer core instead of a recursively selected test library.'
+    Assert-True ($source.Contains('CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS')) 'Production native boundary tests must preserve the static MSVC runtime contract.'
     Assert-True ($updateAssetOffset -gt $lastGateOffset -and $inventoryOffset -gt $updateAssetOffset) 'Detached update assets must be signed before the release inventory.'
     Assert-True (-not $source.Contains('Authenticode')) 'Production must not require paid Authenticode code signing.'
     Assert-True (-not $source.Contains('signtool')) 'Production must not discover or invoke signtool.'

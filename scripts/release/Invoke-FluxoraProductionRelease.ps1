@@ -406,23 +406,39 @@ try {
     }
 
     Invoke-ReleaseStep 'Running native Tauri Setup and updater boundary suites' {
-        $installerCoreLibrary = @(
-            Get-ChildItem -LiteralPath (Join-Path $projectRoot 'build\backend') `
-                -Recurse `
-                -Filter 'FluxoraInstallerCore.lib' `
-                -File `
-                -ErrorAction SilentlyContinue |
-                Sort-Object LastWriteTimeUtc -Descending |
-                Select-Object -First 1
-        )
-        if ($installerCoreLibrary.Count -ne 1) {
-            throw 'The production boundary suite requires the built static FluxoraInstallerCore.lib.'
+        $installerCoreLibraryPath = Join-Path $projectRoot "build\backend\$Configuration\FluxoraInstallerCore.lib"
+        if (-not (Test-Path -LiteralPath $installerCoreLibraryPath -PathType Leaf)) {
+            throw "The production boundary suite requires the configured static installer core '$installerCoreLibraryPath'."
         }
+
+        & (Join-Path $projectRoot 'frontend-tauri\scripts\ensure-libclang.ps1')
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
+            'run', 'build:setup:frontend') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
+            'run', 'build:updater:frontend') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+
         $previousInstallerCoreLibraryDirectory = [Environment]::GetEnvironmentVariable(
             'FLUXORA_INSTALLER_CORE_LIB_DIR',
             'Process')
+        $installerRustFlagsVariable = 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS'
+        $previousInstallerRustFlags = [Environment]::GetEnvironmentVariable(
+            $installerRustFlagsVariable,
+            'Process')
         try {
-            $env:FLUXORA_INSTALLER_CORE_LIB_DIR = $installerCoreLibrary[0].DirectoryName
+            $env:FLUXORA_INSTALLER_CORE_LIB_DIR = Split-Path -Parent $installerCoreLibraryPath
+            $staticCrtFlag = '-C target-feature=+crt-static'
+            if ([string]::IsNullOrWhiteSpace($previousInstallerRustFlags)) {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    $staticCrtFlag,
+                    'Process')
+            }
+            elseif ($previousInstallerRustFlags -notmatch '(?:^|\s)-C\s+target-feature=\+crt-static(?:\s|$)') {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    "$previousInstallerRustFlags $staticCrtFlag",
+                    'Process')
+            }
             [void](Invoke-ReleaseCommand -FilePath 'cargo' -Arguments @(
                 'test', '--release', '--locked',
                 '--features', 'installer-native,custom-protocol',
@@ -435,6 +451,15 @@ try {
             }
             else {
                 $env:FLUXORA_INSTALLER_CORE_LIB_DIR = $previousInstallerCoreLibraryDirectory
+            }
+            if ($null -eq $previousInstallerRustFlags) {
+                Remove-Item -LiteralPath "Env:$installerRustFlagsVariable" -ErrorAction SilentlyContinue
+            }
+            else {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    $previousInstallerRustFlags,
+                    'Process')
             }
         }
     }
