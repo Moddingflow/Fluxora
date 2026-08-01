@@ -5,18 +5,27 @@ import { describe, expect, it } from 'vitest';
 const app = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
 
 describe('install completion UI contract', () => {
-  it('updates the archive immediately and applies the terminal delta after order mutations settle', () => {
+  it('settles the projection, terminal delta and archive after order mutations settle', () => {
     const operationProgress =
-      app.match(/onOperationProgress: \(operation\) => \{[\s\S]*?pluginOrderSaveSequenceRef/)?.[0] ??
+      app.match(
+        /onOperationProgress: \(operation, finalizePendingProjection\) => \{[\s\S]*?pluginOrderSaveSequenceRef/
+      )?.[0] ??
       '';
-    const completion = app.match(
+    const completion = operationProgress.match(
       /if \(operation\.state === 'completed'\) \{[\s\S]*?\} else if \(operation\.state === 'needsReview'\)/
     )?.[0] ?? '';
 
     expect(operationProgress).toContain('const workspaceDelta = operation.workspaceDelta');
     expect(operationProgress).toContain('workspaceOrderMutationGate');
     expect(operationProgress).toContain('.readStable(async () => workspaceDelta)');
+    expect(operationProgress).toContain('finalizePendingProjection?.()');
     expect(operationProgress).toContain('applyIncomingWorkspaceDeltaRef.current(');
+    expect(operationProgress.indexOf('finalizePendingProjection?.()')).toBeLessThan(
+      operationProgress.indexOf('applyIncomingWorkspaceDeltaRef.current(')
+    );
+    expect(operationProgress.indexOf('applyIncomingWorkspaceDeltaRef.current(')).toBeLessThan(
+      operationProgress.lastIndexOf('settleOperation();')
+    );
     expect(operationProgress).toContain('operation.operationId');
     expect(operationProgress).toContain('true');
     expect(completion).toContain("buildStatus: 'Installed'");
