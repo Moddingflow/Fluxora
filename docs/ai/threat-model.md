@@ -15,8 +15,9 @@ Trust boundaries:
 2. Sandboxed renderer to the typed Tauri facade.
 3. Rust shell/tool broker to the AI sidecar and native bridge.
 4. Native bridge to C++ core and registered filesystem roots.
-5. Desktop host to the Supabase Edge gateway.
-6. Gateway to Google/Gemini and a separate web-only model-native Search round.
+5. C++ OAuth store to Tauri shell to AI sidecar over private native pipes.
+6. Desktop host to the fixed Moddingflow Website gateway with OAuth `agent:run`.
+7. Website gateway to Google/Gemini and model-native Google Search.
 
 The model, model output, grounding results, local file contents, filenames, and
 tool arguments are never trusted authorities.
@@ -224,10 +225,14 @@ or extraction of the managed Gemini key.
 
 Mitigations:
 
-- authenticated Edge Function invocation and method/model allowlists;
-- 64 MiB body limit and 120-second upstream abort;
+- verified first-party OAuth client, `agent:run`, Premium, revocation/access
+  revision, and method/model allowlists;
+- 32 MiB body limit and bounded upstream timeout;
+- atomic maximum-cost reservation, settlement from actual provider usage,
+  two-generation concurrency limit, and stable idempotency;
 - server-side Vault/service-role access only;
-- raw streaming response rather than a key or credential response;
+- exactly one native token refresh/retry on 401 and no old-gateway or direct
+  Gemini fallback;
 - no-store headers and no application-table persistence of request bodies;
 - secret/auth-header redaction in local logs.
 
@@ -242,7 +247,7 @@ Mitigations:
 - event and error payloads are validated/redacted at the Rust boundary;
 - prompts, file bodies, absolute paths, keys/tokens, checkpoints, and raw diffs
   are excluded from standard logs and support output;
-- renderer never receives the managed provider key.
+- renderer never receives the managed provider key or OAuth access token.
 
 ### Unclear transfer, retention, or deletion behavior
 
@@ -251,7 +256,10 @@ Users cannot tell what leaves the device or how local tabs are removed.
 Mitigations and open gate:
 
 - localized privacy/terms identify prompt/history/summary, skill/tool context,
-  bounded selected file fragments, Supabase gateway, Gemini, and Search;
+  bounded selected file fragments, Website gateway, Gemini, and Search;
+- Website accounting retains only aggregate identifiers/HMAC/usage/cost state;
+  terminal history is cleaned after 24 months and unresolved reservations stay
+  until reconciliation;
 - local tabs are retained until closed/cleared or application data is removed;
 - closing a tab deletes it from local AI session storage;
 - owner/legal review must confirm GDPR/DSGVO legal bases, processor roles,

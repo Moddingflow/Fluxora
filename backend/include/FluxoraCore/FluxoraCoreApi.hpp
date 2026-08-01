@@ -113,7 +113,7 @@ extern "C"
     // Returns a JSON array describing the available game templates that can be
     // layered on top of the base template. Deprecated compatibility fields remain
     // in place while additive game-definition fields include uiTemplateId,
-    // gameCapabilities, archiveExtensions and requiredFiles:
+    // gameCapabilities, externalProviderGameSlugs, archiveExtensions and requiredFiles:
     //   [ { "id", "displayName", "gameName", "summary", ... }, ... ]
     FLUXORA_CORE_API int fluxora_get_game_templates(
         wchar_t* jsonBuffer,
@@ -122,7 +122,7 @@ extern "C"
     // Returns a JSON object with the fully resolved (base + game) template for a
     // given template id. Deprecated compatibility fields remain in place while
     // the frontend migrates; additive game-definition fields include
-    // uiTemplateId, gameCapabilities, archiveExtensions, requiredFiles,
+    // uiTemplateId, gameCapabilities, externalProviderGameSlugs, archiveExtensions, requiredFiles,
     // contentLayoutSummary, executableDisplayMetadata and launchTrackingMetadata.
     FLUXORA_CORE_API int fluxora_resolve_template(
         const wchar_t* templateId,
@@ -145,7 +145,8 @@ extern "C"
 
     // Returns a JSON array of lightweight build descriptors from a directory of
     // Fluxora build configs. This is intended for the UI catalog and does not
-    // fully open or mutate each project instance.
+    // fully open or mutate each project instance. Each descriptor includes the
+    // provider-neutral externalProviderGameSlugs allowlist and defaultProfile.
     FLUXORA_CORE_API int fluxora_list_project_configs(
         const wchar_t* buildConfigsDirectory,
         wchar_t* jsonBuffer,
@@ -155,8 +156,9 @@ extern "C"
     // descriptor:
     //   { "id", "name", "gameName", "gamePath", "installRootDirectory",
     //     "projectDirectory", "configPath", "template": { ...resolved... },
-    //     "gameCapabilities", "gameHealthSummary", "projectFingerprint",
-    //     "contentLayoutSummary", "uiTemplateId" }
+    //     "gameCapabilities", "externalProviderGameSlugs", "defaultProfile",
+    //     "gameHealthSummary", "projectFingerprint", "contentLayoutSummary",
+    //     "uiTemplateId" }
     FLUXORA_CORE_API int fluxora_open_project_config(
         const wchar_t* configPath,
         wchar_t* jsonBuffer,
@@ -385,6 +387,77 @@ extern "C"
         const wchar_t* operationId,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
+
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    enum FluxoraModdingFlowCallbackKind
+    {
+        FluxoraModdingFlowCallbackSuccess = 0,
+        FluxoraModdingFlowCallbackError = 1
+    };
+
+    enum FluxoraModdingFlowArtifactLookupAuthMode
+    {
+        FluxoraModdingFlowArtifactLookupAnonymous = 0,
+        FluxoraModdingFlowArtifactLookupBearerModsRead = 1
+    };
+
+    // Private Tauri-shell OAuth boundary. These exports are absent from the
+    // default build and must never be surfaced through the renderer facade.
+    FLUXORA_CORE_API int fluxora_moddingflow_begin_connect(
+        const wchar_t* redirectUri,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_moddingflow_complete_connect(
+        const wchar_t* transactionId,
+        int callbackKind,
+        const wchar_t* authorizationCode,
+        const wchar_t* oauthError,
+        const wchar_t* errorDescription,
+        const wchar_t* state,
+        const wchar_t* issuer,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_moddingflow_cancel_pending_connect(
+        const wchar_t* transactionId,
+        const wchar_t* operationId);
+
+    // Private Tauri-shell managed-AI boundary. The JSON result contains one
+    // short-lived agent:run access token and must never be exposed to the
+    // renderer, logs, support bundles, or persisted state.
+    FLUXORA_CORE_API int fluxora_moddingflow_get_managed_ai_access_token(
+        int forceRefresh,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Private Tauri-shell control-plane lookup. The JSON projection contains
+    // metadata only; credentials, grants, jobs, sessions, URLs, storage keys
+    // and representation validators are deliberately absent.
+    FLUXORA_CORE_API int fluxora_moddingflow_lookup_artifact_preview(
+        const wchar_t* artifactId,
+        int authMode,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Private Tauri-shell install-plan preview. The response contains only
+    // stable ids, order, hashes, sizes and conflict metadata; it cannot carry
+    // credentials, signed URLs, storage keys or local paths. Optional
+    // dependencies are deliberately disabled for the v1 website handoff.
+    FLUXORA_CORE_API int fluxora_moddingflow_preview_activation_plan(
+        const wchar_t* artifactId,
+        const wchar_t* gameSlug,
+        const wchar_t* gameVersion,
+        int includeOptional,
+        const wchar_t* idempotencyKey,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+#endif
 
     FLUXORA_CORE_API int fluxora_get_app_language(
         wchar_t* languageBuffer,
@@ -742,6 +815,18 @@ extern "C"
         const wchar_t* projectDirectory,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
+
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+    FLUXORA_CORE_API int fluxora_queue_moddingflow_download(
+        const wchar_t* projectDirectory,
+        const wchar_t* artifactId,
+        const wchar_t* modId,
+        const wchar_t* versionId,
+        const wchar_t* jobId,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+#endif
 
     FLUXORA_CORE_API int fluxora_get_downloads_delta(
         const wchar_t* projectDirectory,
@@ -1171,6 +1256,17 @@ extern "C"
         const wchar_t* beforeOrderId,
         const wchar_t* afterOrderId,
         int fallbackTargetIndex,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_rebase_pending_install_with_anchors_and_revision(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        int fallbackTargetIndex,
+        long long expectedRevision,
+        int applyIfCompleted,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

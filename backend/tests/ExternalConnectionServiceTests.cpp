@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -57,6 +59,36 @@ namespace fluxora::tests
         private:
             std::wstring id_;
             std::chrono::milliseconds delay_;
+        };
+
+        class ObservedConnectionProvider final : public FakeConnectionProvider
+        {
+        public:
+            ObservedConnectionProvider(
+                std::wstring id,
+                std::chrono::milliseconds delay,
+                std::function<void()> onRestore,
+                std::function<void()> onComplete = {})
+                : FakeConnectionProvider(std::move(id), delay),
+                  onRestore_(std::move(onRestore)),
+                  onComplete_(std::move(onComplete))
+            {
+            }
+
+            ExternalConnectionStatus restore(const ExternalConnectionRestoreContext& context) override
+            {
+                onRestore_();
+                ExternalConnectionStatus status = FakeConnectionProvider::restore(context);
+                if (onComplete_)
+                {
+                    onComplete_();
+                }
+                return status;
+            }
+
+        private:
+            std::function<void()> onRestore_;
+            std::function<void()> onComplete_;
         };
     }
 
@@ -129,5 +161,75 @@ namespace fluxora::tests
         EXPECT_EQ(snapshot.providers[0].state, ExternalConnectionState::NotLinked);
         EXPECT_FALSE(snapshot.timedOut);
         EXPECT_LT(snapshot.durationMs, 20);
+    }
+
+    TEST(ExternalConnectionServiceTests, OneRestorePerProviderLetsNexusCompleteBeforeModdingFlowDeadline)
+    {
+        Logger logger;
+        ExternalConnectionService service(logger);
+        std::atomic<int> moddingFlowRestores{0};
+        std::atomic<int> nexusRestores{0};
+        std::atomic<long long> nexusCompletedAfterMs{-1};
+        const auto started = std::chrono::steady_clock::now();
+        service.registerProvider(std::make_shared<ObservedConnectionProvider>(
+            L"moddingflow",
+            std::chrono::milliseconds(200),
+            [&] { ++moddingFlowRestores; }));
+        service.registerProvider(std::make_shared<ObservedConnectionProvider>(
+            L"nexus",
+            std::chrono::milliseconds(0),
+            [&] { ++nexusRestores; },
+            [&]
+            {
+                nexusCompletedAfterMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started).count();
+            }));
+
+        const ExternalConnectionSnapshot snapshot = service.restoreAll(
+            L"startup-connection-restore",
+            std::chrono::milliseconds(35));
+
+        ASSERT_EQ(snapshot.providers.size(), 2U);
+        EXPECT_EQ(moddingFlowRestores.load(), 1);
+        EXPECT_EQ(nexusRestores.load(), 1);
+        EXPECT_GE(nexusCompletedAfterMs.load(), 0);
+        EXPECT_LT(nexusCompletedAfterMs.load(), 30);
+        EXPECT_EQ(snapshot.providers[0].state, ExternalConnectionState::TemporarilyUnavailable);
+        EXPECT_EQ(snapshot.providers[1].state, ExternalConnectionState::Ready);
+        EXPECT_TRUE(snapshot.timedOut);
+        EXPECT_LT(snapshot.durationMs, 100);
+    }
+
+    TEST(ExternalConnectionServiceTests, DedicatedRestoreTouchesOnlyRequestedProviderAndKeepsDeadline)
+    {
+        Logger logger;
+        ExternalConnectionService service(logger);
+        std::atomic<int> moddingFlowRestores{0};
+        std::atomic<int> nexusRestores{0};
+        service.registerProvider(std::make_shared<ObservedConnectionProvider>(
+            L"moddingflow",
+            std::chrono::milliseconds(250),
+            [&] { ++moddingFlowRestores; }));
+        service.registerProvider(std::make_shared<ObservedConnectionProvider>(
+            L"nexus",
+            std::chrono::milliseconds(0),
+            [&] { ++nexusRestores; }));
+
+        const auto started = std::chrono::steady_clock::now();
+        const ExternalConnectionStatus status = service.restoreProvider(
+            L"moddingflow",
+            L"operation-moddingflow-only",
+            std::chrono::milliseconds(35),
+            3U);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started);
+
+        EXPECT_EQ(moddingFlowRestores.load(), 1);
+        EXPECT_EQ(nexusRestores.load(), 0);
+        EXPECT_EQ(status.providerId, L"moddingflow");
+        EXPECT_EQ(status.operationId, L"operation-moddingflow-only");
+        EXPECT_EQ(status.state, ExternalConnectionState::TemporarilyUnavailable);
+        EXPECT_TRUE(status.retryable);
+        EXPECT_LT(elapsed, std::chrono::milliseconds(100));
     }
 }

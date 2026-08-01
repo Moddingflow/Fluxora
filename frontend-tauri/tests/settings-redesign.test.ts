@@ -53,6 +53,11 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   apiLimitProviders: [],
   apiLimitsBusy: false,
   appInfo,
+  appUpdate: {
+    state: 'upToDate',
+    currentVersion: appInfo.version,
+    onCheck: () => undefined
+  },
   bridgeStatus: null,
   developerModeEnabled: false,
   isTransferRunning: false,
@@ -60,6 +65,7 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   microphoneAllowed: false,
   microphonePermissionBusy: false,
   lastBuildDate: '2026-07-03T10:15:00.000Z',
+  connectionBusyAction: null,
   connectionBusyProviderId: null,
   connectionProviders: [],
   section: 'developers',
@@ -71,6 +77,7 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
     transferCancellationAvailable: false
   },
   onDeveloperModeChange: () => undefined,
+  onOpenManagerDefaultApps: async () => undefined,
   onResetMicrophonePermission: () => undefined,
   onOpenRepository: () => undefined,
   onOpenTransfer: () => undefined,
@@ -321,6 +328,7 @@ describe('settings redesign', () => {
     expect(html).toContain('aria-checked="false"');
     expect(html).toContain('Дата последней сборки');
     expect(html).toContain('2026-07-03 10:15 UTC');
+    expect(html).toContain('Версия Fluxora');
     expect(html).toContain('Tauri 2 / React / TypeScript');
     expect(html).toContain('Rust shell / C++ core');
     expect(html).toContain('0.0.0-test');
@@ -383,9 +391,99 @@ describe('settings redesign', () => {
     });
 
     expect(html).toContain('Example Cloud');
-    expect(html).toContain('Sign in again - Cached user');
+    expect(html).toContain('Reconnect - Cached user');
     expect(html).toContain('data-status="error"');
-    expect(html).toContain('lucide-plug');
+    expect(html).toContain('data-icon="plug"');
     expect(html).not.toContain('settings-service-icon--nexus');
+  });
+
+  it('presents provider-neutral connect, cancel, reconnect, and disconnect actions', () => {
+    const moddingFlow = {
+      ...cachedNexusStatus,
+      providerId: 'moddingflow',
+      label: 'ModdingFlow',
+      state: 'notLinked' as const,
+      accountName: '',
+      hasStoredSession: false,
+      retryable: false
+    };
+    const capabilities = {
+      ...baseSettingsWorkspaceProps.settingsCapabilities,
+      settingsAvailable: true
+    };
+
+    const connecting = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [moddingFlow],
+      connectionBusyAction: 'connect',
+      connectionBusyProviderId: 'moddingflow',
+      settingsCapabilities: capabilities
+    });
+    expect(connecting).toContain('Connecting');
+    expect(connecting).toContain('Cancel');
+    expect(connecting).not.toContain('disabled=""');
+
+    const reconnect = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [{ ...moddingFlow, state: 'reauthRequired' }],
+      settingsCapabilities: capabilities
+    });
+    expect(reconnect).toContain('Reconnect');
+
+    const disconnect = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [{ ...moddingFlow, state: 'ready', accountName: 'Valerii' }],
+      settingsCapabilities: capabilities
+    });
+    expect(disconnect).toContain('Disconnect');
+  });
+
+  it('renders the branded ModdingFlow account row with the connected account name', () => {
+    const html = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [{
+        ...cachedNexusStatus,
+        providerId: 'moddingflow',
+        label: 'ModdingFlow',
+        state: 'ready',
+        accountName: 'Valerii',
+        hasStoredSession: true,
+        retryable: false
+      }],
+      settingsCapabilities: {
+        ...baseSettingsWorkspaceProps.settingsCapabilities,
+        settingsAvailable: true
+      }
+    });
+
+    expect(html).toContain('settings-service-icon--moddingflow');
+    expect(html).toMatch(/settings-service-icon settings-service-icon--moddingflow"><img src=/);
+    expect(html).toContain('Connected - Valerii');
+    expect(html).toContain('aria-label="ModdingFlow account"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).not.toContain('data-icon="plug"');
+  });
+
+  it('shows a core-advertised unavailable provider as disabled without leaking OAuth details', () => {
+    const html = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [{
+        ...cachedNexusStatus,
+        providerId: 'moddingflow',
+        label: 'ModdingFlow',
+        state: 'notConfigured',
+        accountName: '',
+        hasStoredSession: false,
+        message: 'ModdingFlow connection is not available in this build.'
+      }],
+      settingsCapabilities: {
+        ...baseSettingsWorkspaceProps.settingsCapabilities,
+        settingsAvailable: true
+      }
+    });
+
+    expect(html).toContain('ModdingFlow connection is not available in this build.');
+    expect(html).toContain('disabled=""');
+    expect(html).not.toMatch(/authorization|callback|token/i);
   });
 });

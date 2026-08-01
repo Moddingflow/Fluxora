@@ -133,7 +133,7 @@ namespace fluxora::tests
                 .empty());
     }
 
-    TEST(LodGeneratorIntegrationServiceTests, TexGenPreparationCreatesBothOutputsAndEnforcesManagedArguments)
+    TEST(LodGeneratorIntegrationServiceTests, TexGenPreparationCreatesOnlyTexGenOutputAndEnforcesManagedArguments)
     {
         TempDirectory temp;
         LodGeneratorFixture fixture(temp.path());
@@ -142,21 +142,29 @@ namespace fluxora::tests
             fixture.resolved(texGenManagedToolKind),
             L"Default");
 
-        const std::filesystem::path texGenOutput = fixture.mods / L"TexGen Output";
-        const std::filesystem::path dynDoLodOutput = fixture.mods / L"DynDOLOD Output";
+        const std::filesystem::path texGenOutput =
+            fixture.mods / L"Сборка LOD - TexGen Output";
+        const std::filesystem::path dynDoLodOutput =
+            fixture.mods / L"Сборка LOD - DynDOLOD Output";
         EXPECT_EQ(prepared.outputMod.path, texGenOutput);
         EXPECT_EQ(prepared.outputMod.provider, texGenGeneratedProvider);
         EXPECT_TRUE(std::filesystem::is_directory(texGenOutput));
-        EXPECT_TRUE(std::filesystem::is_directory(dynDoLodOutput));
+        EXPECT_FALSE(std::filesystem::exists(dynDoLodOutput));
         EXPECT_TRUE(std::filesystem::is_directory(prepared.stagingDirectory));
         EXPECT_TRUE(std::filesystem::is_empty(prepared.stagingDirectory));
+        EXPECT_EQ(
+            prepared.virtualOutputDirectory.filename(),
+            L"Сборка LOD - TexGen Output");
         EXPECT_EQ(prepared.activeProfileMods.size(), 1U);
         EXPECT_EQ(prepared.activeProfileMods.front().path, fixture.toolMod);
 
         EXPECT_NE(prepared.commandLine.find(L"-sse"), std::wstring::npos);
         EXPECT_NE(prepared.commandLine.find(L"-qac"), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find(L"-d:"), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find((fixture.game / L"Data").wstring()), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find(L"-o:"), std::wstring::npos);
         EXPECT_NE(
-            prepared.commandLine.find(L"-o:\"" + prepared.virtualOutputDirectory.wstring() + L"\""),
+            prepared.commandLine.find(prepared.virtualOutputDirectory.wstring()),
             std::wstring::npos);
         EXPECT_EQ(prepared.commandLine.find(L"-tes5"), std::wstring::npos);
         EXPECT_EQ(prepared.commandLine.find(L"C:\\Old Output"), std::wstring::npos);
@@ -166,11 +174,218 @@ namespace fluxora::tests
                 fixture.project,
                 L"Default",
                 fixture.mods);
-        ASSERT_GE(order.size(), 3U);
-        EXPECT_EQ(order[order.size() - 2].mod.folderName, L"TexGen Output");
-        EXPECT_EQ(order.back().mod.folderName, L"DynDOLOD Output");
-        EXPECT_EQ(order[order.size() - 2].mod.state, L"installed");
+        ASSERT_GE(order.size(), 2U);
+        EXPECT_EQ(order.back().mod.folderName, L"Сборка LOD - TexGen Output");
         EXPECT_EQ(order.back().mod.state, L"installed");
+
+        fixture.service.abandonLaunch(prepared.sessionId);
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, DynDoLodPreparationRequiresExistingTexGenOutput)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+
+        try
+        {
+            static_cast<void>(fixture.service.prepareLaunch(
+                fixture.config,
+                fixture.resolved(dynDoLodManagedToolKind),
+                L"Default"));
+            FAIL() << "DynDOLOD must not create a placeholder TexGen output.";
+        }
+        catch (const LodGeneratorIntegrationError& error)
+        {
+            EXPECT_EQ(error.code(), L"LOD_GENERATOR_TEXGEN_OUTPUT_REQUIRED");
+        }
+
+        EXPECT_FALSE(std::filesystem::exists(
+            fixture.mods / L"Сборка LOD - TexGen Output"));
+        EXPECT_FALSE(std::filesystem::exists(
+            fixture.mods / L"Сборка LOD - DynDOLOD Output"));
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, TexGenPreparationMigratesOnlyItsLegacyOutput)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+        const std::filesystem::path legacyTexGen = fixture.mods / L"TexGen Output";
+        const std::filesystem::path legacyDynDoLod = fixture.mods / L"DynDOLOD Output";
+        writeTextFile(legacyTexGen / L"textures" / L"legacy-texgen.dds", "texgen");
+        writeTextFile(legacyDynDoLod / L"legacy-dyndolod.esm", "dyndolod");
+        const InstalledModRecord texGenRecord = InstanceMetadataStore::registerInstalledMod(
+            fixture.project,
+            legacyTexGen,
+            L"TexGen Output",
+            {},
+            ModSourceRecord{std::wstring(texGenGeneratedProvider)});
+        const InstalledModRecord dynDoLodRecord = InstanceMetadataStore::registerInstalledMod(
+            fixture.project,
+            legacyDynDoLod,
+            L"DynDOLOD Output",
+            {},
+            ModSourceRecord{std::wstring(dynDoLodGeneratedProvider)});
+
+        const LodGeneratorLaunchPreparation prepared = fixture.service.prepareLaunch(
+            fixture.config,
+            fixture.resolved(texGenManagedToolKind),
+            L"Default");
+
+        const std::filesystem::path texGenOutput =
+            fixture.mods / L"Сборка LOD - TexGen Output";
+        EXPECT_EQ(prepared.outputMod.id, texGenRecord.uuid);
+        EXPECT_FALSE(std::filesystem::exists(legacyTexGen));
+        EXPECT_TRUE(std::filesystem::exists(legacyDynDoLod));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            texGenOutput / L"textures" / L"legacy-texgen.dds"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            legacyDynDoLod / L"legacy-dyndolod.esm"));
+        const std::optional<InstalledModRecord> unchangedDynDoLod =
+            InstanceMetadataStore::installedModByUuid(fixture.project, dynDoLodRecord.uuid);
+        ASSERT_TRUE(unchangedDynDoLod.has_value());
+        EXPECT_EQ(unchangedDynDoLod->path, legacyDynDoLod);
+        EXPECT_EQ(unchangedDynDoLod->displayName, L"DynDOLOD Output");
+
+        fixture.service.abandonLaunch(prepared.sessionId);
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, PreparationRefusesUnownedPrefixedOutput)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+        const std::filesystem::path occupied =
+            fixture.mods / L"Сборка LOD - TexGen Output";
+        writeTextFile(occupied / L"user.txt", "user-owned");
+
+        try
+        {
+            static_cast<void>(fixture.service.prepareLaunch(
+                fixture.config,
+                fixture.resolved(texGenManagedToolKind),
+                L"Default"));
+            FAIL() << "An unowned output directory must not be adopted as generated content.";
+        }
+        catch (const LodGeneratorIntegrationError& error)
+        {
+            EXPECT_EQ(error.code(), L"LOD_GENERATOR_OUTPUT_CONFLICT");
+        }
+
+        EXPECT_EQ(readTextFile(occupied / L"user.txt"), "user-owned");
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, TexGenPreparationReplacesLegacyQtEscapedDataPath)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+        ResolvedExecutableLaunch resolved = fixture.resolved(texGenManagedToolKind);
+        resolved.executable.arguments =
+            LR"(-D:\"E:\\\\Foundation Edition\\\\Stock Game\\\\Data\\\" -sse\n -qac)";
+        resolved.commandLine =
+            L"\"" + resolved.resolvedExecutablePath.wstring() + L"\" " +
+            resolved.executable.arguments;
+
+        const LodGeneratorLaunchPreparation prepared = fixture.service.prepareLaunch(
+            fixture.config,
+            resolved,
+            L"Default");
+
+        EXPECT_NE(prepared.commandLine.find(L"-d:"), std::wstring::npos);
+        EXPECT_NE(
+            prepared.commandLine.find(
+                (fixture.game.filename() / L"Data").wstring()),
+            std::wstring::npos);
+        EXPECT_EQ(prepared.commandLine.find(L"Foundation Edition"), std::wstring::npos);
+        EXPECT_EQ(prepared.commandLine.find(L"\\n"), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find(L"-qac"), std::wstring::npos);
+
+        fixture.service.abandonLaunch(prepared.sessionId);
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, TexGenPreparationRewritesPresetOutputPathToManagedOutput)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+        const std::filesystem::path preset =
+            fixture.toolDirectory /
+            L"Edit Scripts" /
+            L"DynDOLOD" /
+            L"Presets" /
+            L"DynDOLOD_SSE_TexGen.ini";
+        writeTextFile(
+            preset,
+            "[TexGen]\r\n"
+            "OutputPath=E:\\Foundation Edition\\tools\\DynDOLOD\\TexGen_Output\\\r\n"
+            "DiffuseFormat=225\r\n"
+            "\r\n"
+            "[DynDOLOD]\r\n"
+            "OutputPath=E:\\Keep DynDOLOD Output\\\r\n");
+        ResolvedExecutableLaunch resolved = fixture.resolved(texGenManagedToolKind);
+        resolved.projectName = L"Foundation Edition";
+
+        const LodGeneratorLaunchPreparation prepared = fixture.service.prepareLaunch(
+            fixture.config,
+            resolved,
+            L"Default");
+
+        const std::string updated = readTextFile(preset);
+        EXPECT_NE(
+            updated.find(
+                "OutputPath=" +
+                prepared.virtualOutputDirectory.string() +
+                "\\"),
+            std::string::npos);
+        EXPECT_EQ(updated.find("E:\\Foundation Edition"), std::string::npos);
+        EXPECT_NE(updated.find("DiffuseFormat=225"), std::string::npos);
+        EXPECT_NE(
+            updated.find("OutputPath=E:\\Keep DynDOLOD Output\\"),
+            std::string::npos);
+
+        fixture.service.abandonLaunch(prepared.sessionId);
+    }
+
+    TEST(LodGeneratorIntegrationServiceTests, DynDoLodPreparationRewritesOnlyItsPresetOutputPath)
+    {
+        TempDirectory temp;
+        LodGeneratorFixture fixture(temp.path());
+        const LodGeneratorLaunchPreparation texGen = fixture.service.prepareLaunch(
+            fixture.config,
+            fixture.resolved(texGenManagedToolKind),
+            L"Default");
+        fixture.service.abandonLaunch(texGen.sessionId);
+        const std::filesystem::path preset =
+            fixture.toolDirectory /
+            L"Edit Scripts" /
+            L"DynDOLOD" /
+            L"Presets" /
+            L"DynDOLOD_SSE_Preset.ini";
+        writeTextFile(
+            preset,
+            "[TexGen]\n"
+            "OutputPath=E:\\Keep TexGen Output\\\n"
+            "\n"
+            "[DynDOLOD]\n"
+            "OutputPath=E:\\Foundation Edition\\tools\\DynDOLOD\\DynDOLOD_Output\\\n"
+            "Preset=High\n");
+        ResolvedExecutableLaunch resolved = fixture.resolved(dynDoLodManagedToolKind);
+        resolved.projectName = L"Foundation Edition";
+
+        const LodGeneratorLaunchPreparation prepared = fixture.service.prepareLaunch(
+            fixture.config,
+            resolved,
+            L"Default");
+
+        const std::string updated = readTextFile(preset);
+        EXPECT_NE(
+            updated.find(
+                "OutputPath=" +
+                prepared.virtualOutputDirectory.string() +
+                "\\"),
+            std::string::npos);
+        EXPECT_EQ(updated.find("E:\\Foundation Edition"), std::string::npos);
+        EXPECT_NE(
+            updated.find("OutputPath=E:\\Keep TexGen Output\\"),
+            std::string::npos);
+        EXPECT_NE(updated.find("Preset=High"), std::string::npos);
 
         fixture.service.abandonLaunch(prepared.sessionId);
     }
@@ -246,6 +461,8 @@ namespace fluxora::tests
         EXPECT_TRUE(completed.finalized);
         EXPECT_FALSE(completed.deferred);
         EXPECT_TRUE(completed.warnings.empty());
+        EXPECT_EQ(completed.outputMod.displayName, L"Сборка LOD - TexGen Output");
+        EXPECT_EQ(completed.outputMod.folderName, L"Сборка LOD - TexGen Output");
         EXPECT_FALSE(std::filesystem::exists(prepared.outputMod.path / L"old-output.txt"));
         EXPECT_TRUE(std::filesystem::is_regular_file(
             prepared.outputMod.path / L"textures" / L"terrain" / L"tamriel.dds"));
@@ -296,6 +513,11 @@ namespace fluxora::tests
     {
         TempDirectory temp;
         LodGeneratorFixture fixture(temp.path());
+        const LodGeneratorLaunchPreparation texGen = fixture.service.prepareLaunch(
+            fixture.config,
+            fixture.resolved(texGenManagedToolKind),
+            L"Default");
+        fixture.service.abandonLaunch(texGen.sessionId);
         const LodGeneratorLaunchPreparation prepared = fixture.service.prepareLaunch(
             fixture.config,
             fixture.resolved(dynDoLodManagedToolKind),
@@ -305,9 +527,15 @@ namespace fluxora::tests
         EXPECT_EQ(prepared.activeProfileMods.front().path, fixture.toolMod);
         EXPECT_EQ(
             normalized(prepared.activeProfileMods.back().path),
-            normalized(fixture.mods / L"TexGen Output"));
-        EXPECT_EQ(prepared.outputMod.path, fixture.mods / L"DynDOLOD Output");
+            normalized(fixture.mods / L"Сборка LOD - TexGen Output"));
+        EXPECT_EQ(
+            prepared.outputMod.path,
+            fixture.mods / L"Сборка LOD - DynDOLOD Output");
         EXPECT_EQ(prepared.outputMod.provider, dynDoLodGeneratedProvider);
+        EXPECT_NE(prepared.commandLine.find(L"-sse"), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find(L"-d:"), std::wstring::npos);
+        EXPECT_NE(prepared.commandLine.find((fixture.game / L"Data").wstring()), std::wstring::npos);
+        EXPECT_EQ(prepared.commandLine.find(L"-tes5"), std::wstring::npos);
 
         writeTextFile(prepared.outputMod.path / L"previous" / L"DynDOLOD.esm", "stable");
         writeTextFile(prepared.stagingDirectory / L"partial" / L"DynDOLOD.esm", "partial");

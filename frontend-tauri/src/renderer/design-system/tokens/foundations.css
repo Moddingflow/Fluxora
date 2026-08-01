@@ -302,3 +302,10 @@
   --flx-skeleton-highlight: rgba(255, 255, 255, 0.68);
   --flx-skeleton-glow: rgba(25, 35, 25, 0.03);
 }
+@media (forced-colors: active) {
+  [data-icon] {
+    color: CanvasText !important;
+    background-color: CanvasText !important;
+    forced-color-adjust: none;
+  }
+}

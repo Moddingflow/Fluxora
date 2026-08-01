@@ -81,7 +81,7 @@ These rules are project-specific and apply to all Codex/agent work in this repos
 - When adding an important feature, check whether the bundled privacy policy and terms of use need updates. This especially applies to reports, telemetry, diagnostics, crash/support bundles, uploads, downloads, cloud or online services, account/auth flows, third-party APIs, external integrations, payments, subscriptions, analytics, notifications or any new collection, storage, processing, disclosure or transfer of user/device/project data.
 - Review the legal documents with German/EU expectations in mind, including GDPR/DSGVO transparency requirements. If a feature changes data processing, document the relevant data categories, purpose, legal basis or consent/opt-in flow when applicable, recipients or third-party services, transfer destination, retention or deletion behavior and user controls.
 - If a feature depends on a third-party service or terms, make sure the terms of use and privacy policy describe that dependency clearly enough for users before they enable or use it.
-- Update every bundled legal document/localization that ships in the installer when a legal/privacy change is needed. Current installer legal resources live under `installer/Fluxora.Installer/Resources/Legal/`.
+- Update every bundled legal document/localization that ships in Setup and the product when a legal/privacy change is needed. The single desktop source lives under `legal/desktop/{en,de,ru}/` and is bound by `legal/desktop/manifest.json`.
 - If the correct legal wording is uncertain, do not invent final legal advice. Add a clear implementation note/TODO for owner or legal review and explain the risk in the handoff.
 
 ## Backend Integration Test Areas

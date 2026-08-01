@@ -1,4 +1,7 @@
-import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2
+} from '../../design-system/icons/lucide-compat';
 import type { CSSProperties } from 'react';
 
 import { FacetSpinner, LoadingSplash, ProgressBar } from '../../design-system';

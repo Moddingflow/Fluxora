@@ -14,6 +14,13 @@
 #include <utility>
 #include <vector>
 
+#ifndef FLUXORA_PRODUCT_VERSION
+#define FLUXORA_PRODUCT_VERSION "0.0.0"
+#endif
+
+#define FLUXORA_WIDEN_LITERAL_INNER(value) L##value
+#define FLUXORA_WIDEN_LITERAL(value) FLUXORA_WIDEN_LITERAL_INNER(value)
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -24,7 +31,8 @@
 namespace
 {
     constexpr std::wstring_view protocolVersion = L"1.0";
-    constexpr std::wstring_view hostVersion = L"0.1.0-mvp";
+    constexpr std::wstring_view productVersion = FLUXORA_WIDEN_LITERAL(FLUXORA_PRODUCT_VERSION);
+    constexpr std::wstring_view hostVersion = productVersion;
     // Common catalog responses include path and health metadata; keep the first
     // C ABI buffer large enough for normal startup while preserving resize fallback.
     constexpr int initialBufferLength = 8192;
@@ -197,6 +205,32 @@ namespace
         }
 
         return field->asString();
+    }
+
+    void requireExactObjectFields(
+        const fluxora::JsonValue& value,
+        std::initializer_list<std::wstring_view> allowed)
+    {
+        if (!value.isObject() || value.asObject().size() != allowed.size())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Request params contain unsupported fields.",
+                ErrorCategory::Validation,
+                false};
+        }
+        for (const auto& [name, field] : value.asObject())
+        {
+            static_cast<void>(field);
+            if (std::find(allowed.begin(), allowed.end(), name) == allowed.end())
+            {
+                throw BridgeError{
+                    L"bridge.invalidRequest",
+                    L"Request params contain unsupported fields.",
+                    ErrorCategory::Validation,
+                    false};
+            }
+        }
     }
 
     const fluxora::JsonValue& requiredParamsObject(const BridgeRequest& request)
@@ -675,7 +709,72 @@ namespace
                     typedCode,
                     message.substr(codeEnd + 1),
                     ErrorCategory::Core,
-                    typedCode == L"LOD_GENERATOR_SESSION_ACTIVE"};
+                typedCode == L"LOD_GENERATOR_SESSION_ACTIVE"};
+            }
+        }
+        constexpr std::wstring_view moddingFlowManagedAiAuthPrefix = L"moddingflow-ai-auth:";
+        if (message.starts_with(moddingFlowManagedAiAuthPrefix))
+        {
+            const std::wstring nativeCode = message.substr(moddingFlowManagedAiAuthPrefix.size());
+            if (nativeCode == L"temporarily-unavailable")
+            {
+                return BridgeError{
+                    L"moddingflow.managedAiTemporarilyUnavailable",
+                    L"Managed AI authentication is temporarily unavailable.",
+                    ErrorCategory::Transport,
+                    true};
+            }
+            return BridgeError{
+                L"moddingflow.managedAiReconnectRequired",
+                L"Reconnect ModdingFlow to authorize managed AI.",
+                ErrorCategory::Capability,
+                false};
+        }
+        constexpr std::wstring_view moddingFlowArtifactPrefix = L"moddingflow-artifact:";
+        constexpr std::wstring_view moddingFlowPlanPrefix = L"moddingflow-plan:";
+        const std::wstring_view moddingFlowPrefix = message.starts_with(moddingFlowArtifactPrefix)
+            ? moddingFlowArtifactPrefix
+            : message.starts_with(moddingFlowPlanPrefix)
+                ? moddingFlowPlanPrefix
+                : std::wstring_view{};
+        if (!moddingFlowPrefix.empty())
+        {
+            const std::size_t codeEnd = message.find(
+                L':',
+                moddingFlowPrefix.size());
+            if (codeEnd != std::wstring::npos)
+            {
+                const std::wstring nativeCode = message.substr(
+                    moddingFlowPrefix.size(),
+                    codeEnd - moddingFlowPrefix.size());
+                std::wstring bridgeCode = L"moddingflow.invalidResponse";
+                ErrorCategory category = ErrorCategory::Core;
+                bool retryable = false;
+                if (nativeCode == L"not-found")
+                {
+                    bridgeCode = L"moddingflow.artifactNotFound";
+                }
+                else if (nativeCode == L"authentication-required")
+                {
+                    bridgeCode = L"moddingflow.authenticationRequired";
+                    category = ErrorCategory::Capability;
+                }
+                else if (nativeCode == L"temporarily-unavailable")
+                {
+                    bridgeCode = L"moddingflow.temporarilyUnavailable";
+                    category = ErrorCategory::Transport;
+                    retryable = true;
+                }
+                else if (nativeCode == L"invalid-request")
+                {
+                    bridgeCode = L"moddingflow.invalidRequest";
+                    category = ErrorCategory::Validation;
+                }
+                return BridgeError{
+                    std::move(bridgeCode),
+                    message.substr(codeEnd + 1),
+                    category,
+                    retryable};
             }
         }
         if (message == L"install.identityPlanStale")
@@ -928,6 +1027,14 @@ namespace
         writer.field(L"state", L"available");
         writer.stringArray(L"supports", std::vector<std::wstring>{L"status", L"connect", L"disconnect"});
         writer.endObject();
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+        writer.key(L"moddingFlowAuth").beginObject();
+        writer.field(L"state", L"available");
+        writer.stringArray(
+            L"supports",
+            std::vector<std::wstring>{L"beginConnect", L"completeConnect", L"cancelPendingConnect"});
+        writer.endObject();
+#endif
         writer.key(L"mo2Transfer").beginObject();
         writer.field(L"state", L"available");
         writer.stringArray(L"supports", std::vector<std::wstring>{L"analyze", L"import", L"cancel"});
@@ -1003,7 +1110,7 @@ namespace
         writer.beginObject();
         writer.field(L"protocolVersion", protocolVersion);
         writer.field(L"hostVersion", hostVersion);
-        writer.field(L"coreVersion", L"0.1.0");
+        writer.field(L"coreVersion", productVersion);
         writer.field(L"coreApiVersion", L"FluxoraCoreApi/legacy-cabi");
         writer.key(L"capabilities");
         writeCapabilities(writer);
@@ -1874,20 +1981,26 @@ namespace
         const std::wstring beforeOrderId = optionalStringField(&params, L"beforeOrderId");
         const std::wstring afterOrderId = optionalStringField(&params, L"afterOrderId");
         const int fallbackTargetIndex = optionalIntField(params, L"fallbackTargetIndex", -1);
+        const int expectedRevision = optionalIntField(params, L"expectedRevision", -1);
+        const bool applyIfCompleted = optionalBoolField(params, L"applyIfCompleted", false);
         return payloadFromCoreJson(
             L"core.pendingInstallRebaseFailed",
             [&projectDirectory,
              &operationId,
              &beforeOrderId,
              &afterOrderId,
-             fallbackTargetIndex](wchar_t* buffer, int length)
+             fallbackTargetIndex,
+             expectedRevision,
+             applyIfCompleted](wchar_t* buffer, int length)
             {
-                return fluxora_rebase_pending_install_with_anchors(
+                return fluxora_rebase_pending_install_with_anchors_and_revision(
                     projectDirectory.c_str(),
                     operationId.c_str(),
                     beforeOrderId.empty() ? nullptr : beforeOrderId.c_str(),
                     afterOrderId.empty() ? nullptr : afterOrderId.c_str(),
                     fallbackTargetIndex,
+                    expectedRevision,
+                    applyIfCompleted ? 1 : 0,
                     buffer,
                     length);
             });
@@ -2645,6 +2758,211 @@ namespace
             });
     }
 
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    std::wstring payloadBeginModdingFlowConnect(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring redirectUri = requiredStringField(params, L"redirectUri");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.moddingFlowBeginConnectFailed",
+            [&redirectUri, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_moddingflow_begin_connect(
+                    redirectUri.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadCompleteModdingFlowConnect(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring transactionId = requiredStringField(params, L"transactionId");
+        const fluxora::JsonValue* callback = findObjectField(params, L"callback");
+        if (callback == nullptr || !callback->isObject())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"callback is required.",
+                ErrorCategory::Validation,
+                false};
+        }
+        const std::wstring kind = requiredStringField(*callback, L"kind");
+        const std::wstring state = requiredStringField(*callback, L"state");
+        const std::wstring issuer = requiredStringField(*callback, L"issuer");
+        const std::wstring authorizationCode = optionalStringField(callback, L"authorizationCode");
+        const std::wstring oauthError = optionalStringField(callback, L"oauthError");
+        const std::wstring errorDescription = optionalStringField(callback, L"errorDescription");
+        const int callbackKind = kind == L"success"
+            ? FluxoraModdingFlowCallbackSuccess
+            : kind == L"error"
+                ? FluxoraModdingFlowCallbackError
+                : -1;
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.moddingFlowCompleteConnectFailed",
+            [&](wchar_t* buffer, int length)
+            {
+                return fluxora_moddingflow_complete_connect(
+                    transactionId.c_str(),
+                    callbackKind,
+                    authorizationCode.empty() ? nullptr : authorizationCode.c_str(),
+                    oauthError.empty() ? nullptr : oauthError.c_str(),
+                    errorDescription.empty() ? nullptr : errorDescription.c_str(),
+                    state.c_str(),
+                    issuer.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadCancelPendingModdingFlowConnect(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring transactionId = requiredStringField(params, L"transactionId");
+        const std::wstring operationId = currentOperationId(request);
+        const int result = fluxora_moddingflow_cancel_pending_connect(
+            transactionId.c_str(),
+            operationId.empty() ? nullptr : operationId.c_str());
+        if (result != FluxoraCoreResultOk)
+        {
+            throw coreError(L"core.moddingFlowCancelConnectFailed");
+        }
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"cancelled", true);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring payloadManagedAiAccessToken(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        if (params.asObject().size() != 1U ||
+            findObjectField(params, L"forceRefresh") == nullptr)
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Managed AI credential params must contain only forceRefresh.",
+                ErrorCategory::Validation,
+                false};
+        }
+        const bool forceRefresh = requiredBooleanField(params, L"forceRefresh");
+        const std::wstring operationId = currentOperationId(request);
+        if (operationId.empty())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"meta.operationId is required.",
+                ErrorCategory::Validation,
+                false};
+        }
+        return payloadFromCoreJson(
+            L"core.moddingFlowManagedAiAuthFailed",
+            [&](wchar_t* buffer, int length)
+            {
+                return fluxora_moddingflow_get_managed_ai_access_token(
+                    forceRefresh ? 1 : 0,
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadLookupModdingFlowArtifactPreview(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        if (params.asObject().size() != 2U ||
+            findObjectField(params, L"artifactId") == nullptr ||
+            findObjectField(params, L"authMode") == nullptr)
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Artifact preview params must contain only artifactId and authMode.",
+                ErrorCategory::Validation,
+                false};
+        }
+
+        const std::wstring artifactId = requiredStringField(params, L"artifactId");
+        const std::wstring authMode = requiredStringField(params, L"authMode");
+        const int nativeAuthMode = authMode == L"anonymous"
+            ? FluxoraModdingFlowArtifactLookupAnonymous
+            : authMode == L"bearerModsRead"
+                ? FluxoraModdingFlowArtifactLookupBearerModsRead
+                : -1;
+        if (nativeAuthMode < 0)
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"authMode must be anonymous or bearerModsRead.",
+                ErrorCategory::Validation,
+                false};
+        }
+        const std::wstring operationId = currentOperationId(request);
+        if (operationId.empty())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"meta.operationId is required.",
+                ErrorCategory::Validation,
+                false};
+        }
+        return payloadFromCoreJson(
+            L"core.moddingFlowArtifactLookupFailed",
+            [&](wchar_t* buffer, int length)
+            {
+                return fluxora_moddingflow_lookup_artifact_preview(
+                    artifactId.c_str(),
+                    nativeAuthMode,
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadPreviewModdingFlowActivationPlan(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        requireExactObjectFields(params, {
+            L"artifactId",
+            L"gameSlug",
+            L"gameVersion",
+            L"includeOptional",
+            L"idempotencyKey"});
+        const std::wstring artifactId = requiredStringField(params, L"artifactId");
+        const std::wstring gameSlug = requiredStringField(params, L"gameSlug");
+        const std::wstring gameVersion = requiredStringField(params, L"gameVersion");
+        const bool includeOptional = optionalBoolField(params, L"includeOptional", true);
+        const std::wstring idempotencyKey = requiredStringField(params, L"idempotencyKey");
+        const std::wstring operationId = requiredStringField(*request.meta, L"operationId");
+        if (includeOptional)
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Optional ModdingFlow activation dependencies must remain disabled.",
+                ErrorCategory::Validation,
+                false};
+        }
+        return payloadFromCoreJson(
+            L"core.moddingFlowActivationPlanFailed",
+            [&](wchar_t* buffer, int length)
+            {
+                return fluxora_moddingflow_preview_activation_plan(
+                    artifactId.c_str(),
+                    gameSlug.c_str(),
+                    gameVersion.c_str(),
+                    0,
+                    idempotencyKey.c_str(),
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+#endif
+
     void writeHostEvent(
         std::wstring_view method,
         const std::wstring& operationId,
@@ -2771,6 +3089,40 @@ namespace
                 return fluxora_get_downloads(projectDirectory.c_str(), buffer, length);
             });
     }
+
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+    std::wstring payloadQueueModdingFlowDownload(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        requireExactObjectFields(params, {
+            L"projectDirectory", L"artifactId", L"modId", L"versionId", L"jobId"});
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring artifactId = requiredStringField(params, L"artifactId");
+        const std::wstring modId = requiredStringField(params, L"modId");
+        const std::wstring versionId = requiredStringField(params, L"versionId");
+        const std::wstring jobId = requiredStringField(params, L"jobId");
+        const std::wstring operationId = requiredStringField(*request.meta, L"operationId");
+        return payloadFromCoreJson(
+            L"core.moddingFlowDownloadQueueFailed",
+            [&projectDirectory,
+             &artifactId,
+             &modId,
+             &versionId,
+             &jobId,
+             &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_queue_moddingflow_download(
+                    projectDirectory.c_str(),
+                    artifactId.c_str(),
+                    modId.c_str(),
+                    versionId.c_str(),
+                    jobId.c_str(),
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+#endif
 
     std::wstring payloadGetDownloadsDelta(const BridgeRequest& request)
     {
@@ -3976,6 +4328,32 @@ namespace
         {
             return payloadDisconnectConnection(request);
         }
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+        if (request.method == L"connections.beginConnect")
+        {
+            return payloadBeginModdingFlowConnect(request);
+        }
+        if (request.method == L"connections.completeConnect")
+        {
+            return payloadCompleteModdingFlowConnect(request);
+        }
+        if (request.method == L"connections.cancelPendingConnect")
+        {
+            return payloadCancelPendingModdingFlowConnect(request);
+        }
+        if (request.method == L"moddingflow.getManagedAiAccessToken")
+        {
+            return payloadManagedAiAccessToken(request);
+        }
+        if (request.method == L"moddingflow.lookupArtifactPreview")
+        {
+            return payloadLookupModdingFlowArtifactPreview(request);
+        }
+        if (request.method == L"moddingflow.previewActivationPlan")
+        {
+            return payloadPreviewModdingFlowActivationPlan(request);
+        }
+#endif
         if (request.method == L"nexus.getApiAuthHeader")
         {
             return payloadNexusApiAuthHeader();
@@ -4020,6 +4398,12 @@ namespace
         {
             return payloadListDownloads(request);
         }
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+        if (request.method == L"downloads.queueModdingFlowArtifact")
+        {
+            return payloadQueueModdingFlowDownload(request);
+        }
+#endif
         if (request.method == L"downloads.getDelta")
         {
             return payloadGetDownloadsDelta(request);

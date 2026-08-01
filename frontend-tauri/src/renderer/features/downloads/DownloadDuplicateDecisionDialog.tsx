@@ -1,4 +1,4 @@
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef } from 'react';
 
 import type {

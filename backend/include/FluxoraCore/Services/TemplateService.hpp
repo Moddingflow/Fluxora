@@ -33,7 +33,7 @@ namespace fluxora
 
     // Temporary compatibility projection serialized by the bridge for the
     // current frontend. New core code should prefer typed GameDefinition and
-    // GameSupport rules; these fields stay until the C# model migrates.
+    // GameSupport rules; these compatibility fields remain in the serialized bridge contract.
     struct BuildTemplate
     {
         std::wstring id;
@@ -47,6 +47,7 @@ namespace fluxora
         std::wstring defaultProfileName;
         std::wstring dataDirectory;
         std::wstring nexusDomain;
+        ExternalProviderGameSlugMap externalProviderGameSlugs;
         std::vector<std::wstring> folders;
         std::vector<std::wstring> profileFiles;
         std::vector<std::wstring> basePlugins;

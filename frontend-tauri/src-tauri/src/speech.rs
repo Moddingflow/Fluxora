@@ -37,6 +37,13 @@ pub(crate) struct SpeechHostState {
     active_process_id: AtomicU32,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SpeechHostRecoveryState {
+    vulkan_running: bool,
+    cpu_running: bool,
+    selected_backend: Option<VoiceBackend>,
+}
+
 struct SpeechHostProcesses {
     vulkan: SpeechHostProcess,
     cpu: SpeechHostProcess,
@@ -50,6 +57,63 @@ impl Default for SpeechHostProcesses {
             cpu: SpeechHostProcess::new(VoiceBackend::Cpu),
             selected_backend: None,
         }
+    }
+}
+
+impl SpeechHostState {
+    pub(crate) fn has_active_request(&self) -> bool {
+        self.processes.try_lock().is_err()
+    }
+
+    pub(crate) async fn shutdown_for_update(&self) -> SpeechHostRecoveryState {
+        let mut processes = self.processes.lock().await;
+        let recovery = SpeechHostRecoveryState {
+            vulkan_running: processes.vulkan.is_running(),
+            cpu_running: processes.cpu.is_running(),
+            selected_backend: processes.selected_backend,
+        };
+        processes.vulkan.reset(&self.active_process_id).await;
+        processes.cpu.reset(&self.active_process_id).await;
+        processes.selected_backend = None;
+        recovery
+    }
+
+    #[cfg(test)]
+    async fn restore_recovery_selection(&self, recovery: SpeechHostRecoveryState) {
+        self.processes.lock().await.selected_backend = recovery.selected_backend;
+    }
+
+    pub(crate) async fn recover_after_update_failure(
+        &self,
+        app: &AppHandle,
+        recovery: SpeechHostRecoveryState,
+    ) -> Result<(), &'static str> {
+        let mut processes = self.processes.lock().await;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        if recovery.vulkan_running {
+            if let Err(error) = processes
+                .vulkan
+                .ensure_started(app, &self.active_process_id, deadline)
+                .await
+            {
+                processes.vulkan.reset(&self.active_process_id).await;
+                processes.cpu.reset(&self.active_process_id).await;
+                return Err(error.code);
+            }
+        }
+        if recovery.cpu_running {
+            if let Err(error) = processes
+                .cpu
+                .ensure_started(app, &self.active_process_id, deadline)
+                .await
+            {
+                processes.vulkan.reset(&self.active_process_id).await;
+                processes.cpu.reset(&self.active_process_id).await;
+                return Err(error.code);
+            }
+        }
+        processes.selected_backend = recovery.selected_backend;
+        Ok(())
     }
 }
 
@@ -657,6 +721,10 @@ impl SpeechHostProcess {
         }
     }
 
+    fn is_running(&self) -> bool {
+        self.child.is_some() && self.stdin.is_some() && self.stdout.is_some()
+    }
+
     async fn reset(&mut self, active_process_id: &AtomicU32) {
         if let Some(mut child) = self.child.take() {
             let _ = child.start_kill();
@@ -882,6 +950,14 @@ async fn host_request(
     pcm: &[u8],
     deadline: Duration,
 ) -> Result<Value, VoiceError> {
+    let _update_drain_permit = super::update_service::enter_host_request(method).map_err(|_| {
+        operation_voice_error(
+            "speech.update-draining",
+            "Fluxora is waiting to install an application update.",
+            true,
+            operation_id,
+        )
+    })?;
     let state = app.state::<SpeechHostState>();
     state.cancelled_operations.lock().await.remove(operation_id);
     let absolute_deadline = Instant::now() + deadline;
@@ -1494,5 +1570,33 @@ mod tests {
         assert!(metrics.contains("adaptivePassUsed=true"));
         assert!(!metrics.contains("secret spoken content"));
         assert!(!metrics.contains("secret-language"));
+    }
+
+    #[test]
+    fn update_drain_can_observe_an_active_speech_request() {
+        tauri::async_runtime::block_on(async {
+            let state = SpeechHostState::default();
+            assert!(!state.has_active_request());
+            let _active_request = state.processes.lock().await;
+            assert!(state.has_active_request());
+        });
+    }
+
+    #[test]
+    fn update_shutdown_preserves_speech_backend_recovery_state() {
+        tauri::async_runtime::block_on(async {
+            let state = SpeechHostState::default();
+            state.processes.lock().await.selected_backend = Some(VoiceBackend::Cpu);
+
+            let recovery = state.shutdown_for_update().await;
+
+            assert_eq!(recovery.selected_backend, Some(VoiceBackend::Cpu));
+            assert_eq!(state.processes.lock().await.selected_backend, None);
+            state.restore_recovery_selection(recovery).await;
+            assert_eq!(
+                state.processes.lock().await.selected_backend,
+                Some(VoiceBackend::Cpu)
+            );
+        });
     }
 }

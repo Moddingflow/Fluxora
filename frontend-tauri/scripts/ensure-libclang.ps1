@@ -5,6 +5,9 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path -LiteralPath (Join-Path $scriptRoot '..')
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $projectRoot '..')
 $version = '21.1.8'
+$licenseExpression = 'Apache-2.0 WITH LLVM-exception'
+$sourceRepository = 'https://github.com/llvm/llvm-project'
+$sourceTag = 'llvmorg-21.1.8'
 $packageName = "libclang.runtime.win-x64.$version.nupkg"
 $expectedSha256 = '1296aa72d506a3511e3f509f4966365133af9c935d301a63ec2242bd8c3180ce'
 $cacheRoot = Join-Path $repoRoot 'build\tool-cache\libclang'
@@ -71,4 +74,5 @@ if (-not (Test-Path -LiteralPath $libraryPath -PathType Leaf)) {
     Move-Item -LiteralPath $temporaryExtract -Destination $extractRoot
 }
 
+$env:LIBCLANG_PATH = Split-Path -Parent $libraryPath
 Write-Host "Verified libclang $version at $libraryPath"

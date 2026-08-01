@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePenLine, FileText, FolderOpen, X } from 'lucide-react';
+import {
+  FilePenLine,
+  FileText,
+  FolderOpen,
+  X
+} from '../../design-system/icons/lucide-compat';
 
 import type { FluxoraAiFileChange } from '../../../shared/fluxora-api';
 

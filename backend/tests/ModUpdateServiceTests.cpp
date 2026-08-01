@@ -314,6 +314,70 @@ namespace fluxora::tests
 
     TEST_F(
         ModUpdateServiceFixture,
+        ConfirmedInstalledFileRepairsImportedModOrganizerCanonicalVersion)
+    {
+        registerNexusMod(L"Canonical Alpha Version", L"5.8.0.0a", L"12345", L"67890");
+        api_.filesResponse.files = {
+            NexusFileMetadata{
+                L"67890",
+                L"5.8a",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                100}
+        };
+
+        const ModUpdateCheckResult result = check();
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"5.8a");
+        EXPECT_EQ(installed.front().source.latestVersion, L"5.8a");
+        EXPECT_EQ(installed.front().source.latestFileId, L"67890");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        CanonicalVersionRepairPreservesRealUpdateDetection)
+    {
+        registerNexusMod(L"Canonical Alpha Update", L"5.8.0.0a", L"12345", L"67890");
+        api_.filesResponse.files = {
+            NexusFileMetadata{
+                L"67890",
+                L"5.8a",
+                L"1",
+                true,
+                NexusFileAvailability::Old,
+                100},
+            NexusFileMetadata{
+                L"67891",
+                L"5.9a",
+                L"1",
+                true,
+                NexusFileAvailability::Active,
+                200}
+        };
+        api_.filesResponse.fileUpdates = {
+            NexusFileUpdateLink{L"67890", L"67891", 200}
+        };
+
+        const ModUpdateCheckResult result = check();
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(result.mods.size(), 1U);
+        EXPECT_EQ(result.mods.front().latestVersion, L"5.9a");
+        EXPECT_EQ(result.mods.front().latestFileId, L"67891");
+        EXPECT_TRUE(result.mods.front().hasUpdate);
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"5.8a");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
         ImportedDecimalVersionRepairPreservesRealUpdateDetection)
     {
         registerNexusMod(L"Decimal Update", L"f1.01", L"71", L"710");
@@ -741,6 +805,54 @@ namespace fluxora::tests
         EXPECT_TRUE(api_.fileRequests.empty());
         ASSERT_NE(repaired, installed.end());
         EXPECT_EQ(repaired->version, L"1.01");
+    }
+
+    TEST_F(
+        ModUpdateServiceFixture,
+        DailyTtlStillRepairsAStoredCanonicalVersionConfirmedByTheSameNexusFile)
+    {
+        nowUtc_ = L"2026-07-16T10:00:00Z";
+        registerNexusMod(L"Daily Anchor", L"1.0", L"50", L"100");
+        api_.filesResponse.files = {
+            NexusFileMetadata{L"100", L"1.0", L"1", true, NexusFileAvailability::Active, 100}
+        };
+        ASSERT_EQ(check(ModUpdateCheckMode::Automatic).state, ModUpdateCheckState::Completed);
+
+        registerNexusMod(
+            L"Canonical Alpha Version",
+            L"5.8.0.0a",
+            L"12345",
+            L"67890",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"12345",
+                L"67890",
+                L"nxm://skyrimspecialedition/mods/12345/files/67890",
+                L"2026-07-16T10:00:00Z",
+                L"5.8a",
+                L"67890",
+                L"completed",
+                L"2026-07-16T10:00:00Z"});
+
+        api_.fileRequests.clear();
+        nowUtc_ = L"2026-07-17T09:59:59Z";
+        const ModUpdateCheckResult result = check(ModUpdateCheckMode::Automatic);
+        const std::vector<InstalledModRecord> installed =
+            InstanceMetadataStore::listInstalledMods(project_);
+        const auto repaired = std::find_if(
+            installed.begin(),
+            installed.end(),
+            [](const InstalledModRecord& mod)
+            {
+                return mod.folderName == L"Canonical Alpha Version";
+            });
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Skipped);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::DailyTtl);
+        EXPECT_TRUE(api_.fileRequests.empty());
+        ASSERT_NE(repaired, installed.end());
+        EXPECT_EQ(repaired->version, L"5.8a");
     }
 
     TEST_F(ModUpdateServiceFixture, TheSharedFileCacheIsReusedAcrossProjects)

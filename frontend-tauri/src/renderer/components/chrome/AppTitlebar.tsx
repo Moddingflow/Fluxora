@@ -1,5 +1,6 @@
-import { fluxoraLogo } from '../../design-system/assets';
 import { Icon } from '../../design-system/icons';
+import { AppUpdateToolbarButton } from '../../features/update/AppUpdateToolbarButton';
+import type { AppUpdateToolbarViewState } from '../../features/update/app-update-state';
 import geminiIcon from '../../../../../Icons/gemini.svg';
 
 export type AppTitlebarMode = 'main' | 'settings';
@@ -12,6 +13,7 @@ export interface AppTitlebarProps {
   aiActive?: boolean;
   settingsActive?: boolean;
   showAi?: boolean;
+  update?: AppUpdateToolbarViewState;
   onHome?: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
   onToggleAi?: () => void | Promise<void>;
@@ -39,6 +41,7 @@ export function AppTitlebar({
   aiActive = false,
   settingsActive = false,
   showAi = false,
+  update = { state: 'hidden' },
   onHome,
   onRefresh,
   onToggleAi,
@@ -60,7 +63,12 @@ export function AppTitlebar({
         {isSettingsWindow ? (
           <Icon className="titlebar__mark titlebar__mark--settings" name="settings" size={16} />
         ) : (
-          <img className="titlebar__mark" src={fluxoraLogo} alt="" />
+          <Icon
+            aria-hidden="true"
+            className="titlebar__mark titlebar__mark--fluxora"
+            name="fluxora-mark"
+            size={16}
+          />
         )}
         <span className="titlebar__brand-name" title={titleText}>
           {titleText}
@@ -104,6 +112,7 @@ export function AppTitlebar({
               <img className="titlebar__ai-icon" src={geminiIcon} alt="" />
             </button>
           ) : null}
+          <AppUpdateToolbarButton update={update} />
           <button
             aria-label="Open settings"
             className="titlebar__shortcut"

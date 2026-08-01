@@ -48,6 +48,16 @@ function Resolve-NativeArtifact {
 }
 
 New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
+foreach ($removedLegacyResource in @(
+    'FluxoraInstallerCore.dll',
+    'FluxoraUpdater.deps.json',
+    'FluxoraUpdater.runtimeconfig.json'
+)) {
+    $removedLegacyPath = Join-Path $resourcesDir $removedLegacyResource
+    if (Test-Path -LiteralPath $removedLegacyPath -PathType Leaf) {
+        Remove-Item -LiteralPath $removedLegacyPath -Force
+    }
+}
 & (Join-Path $scriptRoot 'ensure-libclang.ps1')
 & (Join-Path $scriptRoot 'stage-speech-resources.ps1')
 

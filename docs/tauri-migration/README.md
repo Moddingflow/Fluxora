@@ -57,7 +57,7 @@ Current Tauri state:
 - Redesign Phase 12 renderer cleanup: `features/install/InstallDialog.tsx`, `features/settings/SettingsWorkspace.tsx`, `features/build/BuildPathsInspector.tsx` and `features/library/projectLibraryStats.ts` now own their UI/helper surfaces while `App.tsx` keeps selected project state, facade calls and route orchestration.
 - Phase 14 platform hardening: `NativeBridgeStatus.capabilities.supportMatrix` exposes Windows/Linux/macOS readiness; Settings shows platform capability rows; Tauri declares `nxm` protocol metadata and can copy native payloads from `src-tauri/resources/native` into `resources/native`; backend path-safety tests cover Unicode, Cyrillic/German characters, spaces, long-path and platform case rules.
 - Phase 15 release hardening: `docs/tauri-migration/release-pipeline.md` defines approved artifacts; the default root release build packages Tauri + `resources/native` into `output-installer/FluxoraSetup.exe`; installer core accepts the Tauri `Fluxora.exe` entrypoint.
-- Phase 17 removal: root `Build.ps1` is Tauri-only, `frontend/` and `frontend.Tests/` are removed, installer-local WPF helper assets live under `installer/Fluxora.Installer/`, and agent docs no longer permit new C# WPF product UI work.
+- Phase 17 removal: root `Build.ps1` is C++/Tauri-only; `frontend/`, `frontend.Tests/`, the C# Setup/Updater projects and their ProcessProbe are removed. Native Setup and Updater are isolated Tauri targets backed by the static C++ installer core, and agent docs no longer permit new C# WPF product UI work.
 
 Not public-release accepted yet:
 
@@ -193,7 +193,7 @@ The current Windows public release artifact remains `output-installer/FluxoraSet
 .\Build.ps1 -Configuration Release -Runtime win-x64
 ```
 
-Tauri bundler output is a smoke artifact. The Windows Tauri NSIS smoke setup is named by Tauri under `frontend-tauri/src-tauri/target/release/bundle/nsis/` and must not be confused with the approved installer. See `docs/tauri-migration/release-pipeline.md` for the full Phase 15 release checklist.
+Normal Tauri builds use `--no-bundle` with `bundle.active=false`, so they produce the executable payload but no secondary Windows installer. `output-installer/FluxoraSetup.exe` is the only approved installer and the only build artifact allowed to register manager protocols. See `docs/tauri-migration/release-pipeline.md` for the full Phase 15 release checklist.
 
 Optional native-payload smoke packaging:
 

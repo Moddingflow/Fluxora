@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ModdingFlow mark for dark theme">
+  <defs>
+    <linearGradient id="flow" x1="50" y1="36" x2="80" y2="94" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7fb0fa"/>
+      <stop offset="0.52" stop-color="#4d8df7"/>
+      <stop offset="1" stop-color="#2e68c8"/>
+    </linearGradient>
+  </defs>
+  <path d="M18 102 36 26h19l9 24 9-24h19l18 76H88l-7-42-17 39-17-39-7 42H18Z" fill="#f2f2f4"/>
+  <path d="m64 34 15 30-15 31-15-31 15-30Z" fill="url(#flow)"/>
+</svg>

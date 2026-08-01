@@ -1,0 +1,20 @@
+Twemoji graphics attribution and licence
+
+The flag SVGs identified in Icons/README.md are unmodified graphics from:
+
+  jdecked/twemoji, tag v16.0.1
+  https://github.com/jdecked/twemoji
+
+Copyright (c) 2022-present Jason Sofonia and Justine De Caires.
+Copyright (c) 2014-2021 Twitter.
+
+The graphics are licensed under the Creative Commons Attribution 4.0
+International Public License (CC-BY-4.0):
+
+  https://creativecommons.org/licenses/by/4.0/legalcode
+
+The upstream licence text is maintained at:
+
+  https://github.com/jdecked/twemoji/blob/v16.0.1/LICENSE-GRAPHICS
+
+No endorsement by the Twemoji contributors is implied.

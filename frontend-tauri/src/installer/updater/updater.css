@@ -1,0 +1,123 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--installer-surface);
+  color: var(--installer-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--installer-focus);
+  outline-offset: 2px;
+}
+
+.updater-shell {
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+}
+
+.updater-content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+}
+
+.updater-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.updater-heading h1 {
+  margin: 0 0 var(--space-1);
+  color: var(--installer-text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.updater-heading span {
+  color: var(--installer-muted);
+  font-size: var(--fs-ui);
+}
+
+.updater-state-icon {
+  width: 23px;
+  height: 23px;
+}
+
+.updater-state-icon--success {
+  color: var(--installer-success);
+}
+
+.updater-state-icon--error {
+  color: var(--installer-error);
+}
+
+.updater-result {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.updater-current-item {
+  overflow: hidden;
+  margin: var(--space-2) 0 0;
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.updater-result strong {
+  color: var(--installer-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.updater-result code {
+  color: var(--installer-error);
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+}
+
+.updater-notice {
+  margin: 0;
+  color: var(--installer-muted);
+  font-size: var(--fs-ui);
+}
+
+.updater-actions {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--installer-border);
+  background: var(--installer-surface-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

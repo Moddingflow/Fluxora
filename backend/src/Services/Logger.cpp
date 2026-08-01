@@ -1,4 +1,5 @@
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/LogRedaction.hpp"
 
 #include <spdlog/common.h>
 #include <spdlog/logger.h>
@@ -8,6 +9,7 @@
 #endif
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -407,7 +409,8 @@ namespace fluxora
         {
             const std::string safeCategory = category.empty()
                 ? std::string(toChannelLabel(channel))
-                : std::string(category);
+                : redactSensitiveLogText(category);
+            const std::string safeMessage = redactSensitiveLogText(message);
 
             std::ostringstream stream;
             stream << "[" << timestamp() << "] "
@@ -422,7 +425,7 @@ namespace fluxora
                        << " [operationId=" << currentOperationId << "]";
             }
 
-            stream << " " << message;
+            stream << " " << safeMessage;
             return stream.str();
         }
 
@@ -449,7 +452,7 @@ namespace fluxora
                     line << " [op=" << currentOperationId << "]"
                          << " [operationId=" << currentOperationId << "]";
                 }
-                line << " " << message;
+                line << " " << redactSensitiveLogText(message);
 
                 std::lock_guard lock(processCrashLogMutex);
                 if (!processCrashLogPath.empty())
@@ -705,7 +708,17 @@ namespace fluxora
 
     void Logger::setOperationId(std::wstring_view operationId)
     {
-        currentOperationId = toUtf8(operationId);
+        std::string value = toUtf8(operationId);
+        const bool safe = !value.empty() && value.size() <= 256U &&
+            std::all_of(value.begin(), value.end(), [](const unsigned char character)
+            {
+                return (character >= 'a' && character <= 'z') ||
+                    (character >= 'A' && character <= 'Z') ||
+                    (character >= '0' && character <= '9') ||
+                    character == '-' || character == '_' || character == '.' ||
+                    character == ':';
+            });
+        currentOperationId = safe ? std::move(value) : "[invalid-operation-id]";
     }
 
     void Logger::clearOperationId()

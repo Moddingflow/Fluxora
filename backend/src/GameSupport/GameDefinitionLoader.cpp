@@ -253,6 +253,54 @@ namespace fluxora
             return result;
         }
 
+        [[nodiscard]] ExternalProviderGameSlugMap readExternalProviderGameSlugs(
+            const JsonValue& object)
+        {
+            const JsonValue* value = object.find(L"externalProviderGameSlugs");
+            if (value == nullptr)
+            {
+                return {};
+            }
+            if (!value->isObject() || value->asObject().empty())
+            {
+                throw std::runtime_error(
+                    "definition.externalProviderGameSlugs must be a non-empty object.");
+            }
+
+            ExternalProviderGameSlugMap result;
+            for (const auto& [providerId, slugsValue] : value->asObject())
+            {
+                if (!slugsValue.isArray() || slugsValue.asArray().empty())
+                {
+                    throw std::runtime_error(
+                        "definition.externalProviderGameSlugs values must be non-empty arrays.");
+                }
+
+                std::vector<std::wstring> slugs;
+                slugs.reserve(slugsValue.asArray().size());
+                for (const JsonValue& slugValue : slugsValue.asArray())
+                {
+                    if (!slugValue.isString())
+                    {
+                        throw std::runtime_error(
+                            "definition.externalProviderGameSlugs items must be strings.");
+                    }
+                    slugs.push_back(slugValue.asString());
+                }
+                result.emplace(providerId, std::move(slugs));
+            }
+
+            try
+            {
+                validateExternalProviderGameSlugs(result);
+            }
+            catch (const std::invalid_argument& error)
+            {
+                throw std::runtime_error(error.what());
+            }
+            return result;
+        }
+
         [[nodiscard]] std::vector<NormalizedExtension> readExtensionArray(
             const JsonValue& object,
             std::wstring_view field)
@@ -1202,6 +1250,7 @@ namespace fluxora
                 L"summary",
                 L"aliases",
                 L"domains",
+                L"externalProviderGameSlugs",
                 L"installFolderAliases",
                 L"defaultProfileName",
                 L"dataFolder",
@@ -1241,6 +1290,7 @@ namespace fluxora
         {
             domain = toAsciiLower(trimAscii(domain));
         }
+        definition.externalProviderGameSlugs = readExternalProviderGameSlugs(root);
         definition.installFolderAliases = readStringArray(root, L"installFolderAliases", false, L"definition");
         definition.defaultProfileName = readOptionalString(root, L"defaultProfileName", L"definition");
         definition.dataFolder = readOptionalString(root, L"dataFolder", L"definition");

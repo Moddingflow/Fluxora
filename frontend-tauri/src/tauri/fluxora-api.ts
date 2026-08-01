@@ -18,6 +18,7 @@ import type {
   FluxoraExecutableIconResult,
   FluxoraExecutableLaunchResult,
   FluxoraExternalConnectionSnapshot,
+  FluxoraExternalConnectionState,
   FluxoraExternalConnectionStatus,
   FluxoraFileDropEvent,
   FluxoraLaunchProcessWatchRequest,
@@ -97,6 +98,16 @@ import type {
   FluxoraNifPreviewAssetHandle,
   FluxoraNifPreviewStartResult,
   FluxoraNifPreviewTextureBatchResult,
+  FluxoraModdingFlowActivation,
+  FluxoraModdingFlowActivationAcceptRequest,
+  FluxoraModdingFlowActivationDecisionResult,
+  FluxoraModdingFlowActivationDismissRequest,
+  FluxoraModdingFlowActivationPlanPreview,
+  FluxoraModdingFlowActivationPlanPreviewRequest,
+  FluxoraModdingFlowActivationPreview,
+  FluxoraModdingFlowActivationPreviewMetadata,
+  FluxoraModdingFlowActivationPreviewRequest,
+  FluxoraModdingFlowActivationPreviewState,
   FluxoraNxmInboundLinksCaptured,
   FluxoraNxmProtocolResult,
   FluxoraNexusModsAuthStatus,
@@ -128,9 +139,10 @@ import type {
   FluxoraTextFilePreview,
   FluxoraTextFileSaveResult,
   FluxoraTaskbarProgressState,
+  FluxoraUpdateStatus,
+  FluxoraUpdateCancelResult,
   UiLogEntry
 } from '../shared/fluxora-api';
-import { createModdingflowPublicApiDogfoodClient } from '../shared/moddingflow-public-api-dogfood';
 import { FluxoraIpcChannels } from '../shared/fluxora-api';
 
 export interface IpcInvoker {
@@ -145,6 +157,260 @@ const invokeTyped = async <T>(
   ...args: unknown[]
 ): Promise<T> => {
   return (await ipc.invoke(channel, ...args)) as T;
+};
+
+const safeExternalConnectionStates = new Set<FluxoraExternalConnectionState>([
+  'notConfigured',
+  'notLinked',
+  'connecting',
+  'restoring',
+  'ready',
+  'temporarilyUnavailable',
+  'reauthRequired'
+]);
+
+const sanitizeExternalConnectionStatus = (value: unknown): FluxoraExternalConnectionStatus => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Connection status response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.providerId !== 'string'
+    || typeof record.label !== 'string'
+    || typeof record.state !== 'string'
+    || !safeExternalConnectionStates.has(record.state as FluxoraExternalConnectionState)
+  ) {
+    throw new Error('Connection status response is invalid.');
+  }
+  return {
+    providerId: record.providerId,
+    label: record.label,
+    state: record.state as FluxoraExternalConnectionState,
+    accountName: typeof record.accountName === 'string' ? record.accountName : '',
+    hasStoredSession: record.hasStoredSession === true,
+    retryable: record.retryable === true,
+    requiresUserAction: record.requiresUserAction === true,
+    message: typeof record.message === 'string' ? record.message : '',
+    checkedAtUtc: typeof record.checkedAtUtc === 'string' ? record.checkedAtUtc : '',
+    operationId: typeof record.operationId === 'string' ? record.operationId : ''
+  };
+};
+
+const sanitizeExternalConnectionSnapshot = (
+  value: unknown
+): FluxoraExternalConnectionSnapshot => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Connection snapshot response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.providers)) {
+    throw new Error('Connection snapshot response is invalid.');
+  }
+  return {
+    providers: record.providers.map(sanitizeExternalConnectionStatus),
+    requestedAtUtc: typeof record.requestedAtUtc === 'string' ? record.requestedAtUtc : '',
+    completedAtUtc: typeof record.completedAtUtc === 'string' ? record.completedAtUtc : '',
+    durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
+      ? record.durationMs
+      : 0,
+    timedOut: record.timedOut === true,
+    operationId: typeof record.operationId === 'string' ? record.operationId : ''
+  };
+};
+
+const canonicalLowercaseUuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+const sanitizeModdingFlowActivation = (value: unknown): FluxoraModdingFlowActivation => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ModdingFlow activation response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.v !== 1
+    || typeof record.artifactId !== 'string'
+    || !canonicalLowercaseUuidPattern.test(record.artifactId)
+  ) {
+    throw new Error('ModdingFlow activation response is invalid.');
+  }
+  return {
+    v: 1,
+    artifactId: record.artifactId
+  };
+};
+
+const moddingFlowActivationPreviewStates = new Set<FluxoraModdingFlowActivationPreviewState>([
+  'available',
+  'unknown',
+  'deleted',
+  'ineligible',
+  'disconnected',
+  'unsupportedGame',
+  'unavailable'
+]);
+
+const safeBoundedString = (
+  value: unknown,
+  field: string,
+  maxLength: number
+): string => {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > maxLength
+    || value.trim() !== value
+    || [...value].some((character) => character.charCodeAt(0) < 0x20)
+  ) {
+    throw new Error(`ModdingFlow ${field} is invalid.`);
+  }
+  return value;
+};
+
+const safeCanonicalUuid = (value: unknown, field: string): string => {
+  const result = safeBoundedString(value, field, 36);
+  if (!canonicalLowercaseUuidPattern.test(result)) {
+    throw new Error(`ModdingFlow ${field} is invalid.`);
+  }
+  return result;
+};
+
+const sanitizeModdingFlowActivationPreviewMetadata = (
+  value: unknown
+): FluxoraModdingFlowActivationPreviewMetadata => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ModdingFlow activation preview metadata is invalid.');
+  }
+  const metadata = value as Record<string, unknown>;
+  const mod = metadata.mod as Record<string, unknown> | null;
+  const version = metadata.version as Record<string, unknown> | null;
+  const game = metadata.game as Record<string, unknown> | null;
+  const file = metadata.file as Record<string, unknown> | null;
+  if (!mod || !version || !game || !file) {
+    throw new Error('ModdingFlow activation preview metadata is invalid.');
+  }
+  const gameId = safeBoundedString(game.id, 'game id', 128);
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(gameId)) {
+    throw new Error('ModdingFlow game id is invalid.');
+  }
+  const sizeBytes = file.sizeBytes;
+  if (
+    sizeBytes !== null
+    && (typeof sizeBytes !== 'number'
+      || !Number.isSafeInteger(sizeBytes)
+      || sizeBytes < 0)
+  ) {
+    throw new Error('ModdingFlow file size is invalid.');
+  }
+  return {
+    mod: {
+      id: safeCanonicalUuid(mod.id, 'mod id'),
+      name: safeBoundedString(mod.name, 'mod name', 256)
+    },
+    version: {
+      id: safeCanonicalUuid(version.id, 'version id'),
+      label: safeBoundedString(version.label, 'version label', 128)
+    },
+    game: {
+      id: gameId,
+      name: safeBoundedString(game.name, 'game name', 128)
+    },
+    file: {
+      name: safeBoundedString(file.name, 'file name', 512),
+      sizeBytes
+    }
+  };
+};
+
+const sanitizeModdingFlowActivationPreview = (
+  value: unknown
+): FluxoraModdingFlowActivationPreview => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ModdingFlow activation preview response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.state !== 'string'
+    || !moddingFlowActivationPreviewStates.has(
+      record.state as FluxoraModdingFlowActivationPreviewState
+    )
+    || (record.eligible !== null && typeof record.eligible !== 'boolean')
+    || typeof record.requiresAccount !== 'boolean'
+  ) {
+    throw new Error('ModdingFlow activation preview response is invalid.');
+  }
+  const state = record.state as FluxoraModdingFlowActivationPreviewState;
+  if ((state === 'available') !== (record.metadata !== null)) {
+    throw new Error('ModdingFlow activation preview response is invalid.');
+  }
+  return {
+    artifactId: safeCanonicalUuid(record.artifactId, 'artifact id'),
+    state,
+    eligible: record.eligible as boolean | null,
+    requiresAccount: record.requiresAccount,
+    metadata: state === 'available'
+      ? sanitizeModdingFlowActivationPreviewMetadata(record.metadata)
+      : null,
+    operationId: safeBoundedString(record.operationId, 'operation id', 256)
+  };
+};
+
+const safeBoundedCount = (value: unknown, field: string): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 256) {
+    throw new Error(`ModdingFlow ${field} is invalid.`);
+  }
+  return value as number;
+};
+
+const sanitizeModdingFlowActivationPlanPreview = (
+  value: unknown
+): FluxoraModdingFlowActivationPlanPreview => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ModdingFlow activation plan preview response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  const requiredDownloadCount = safeBoundedCount(
+    record.requiredDownloadCount,
+    'required download count'
+  );
+  const optionalDownloadCount = safeBoundedCount(
+    record.optionalDownloadCount,
+    'optional download count'
+  );
+  const conflictCount = safeBoundedCount(record.conflictCount, 'conflict count');
+  if (
+    requiredDownloadCount === 0
+    || requiredDownloadCount + optionalDownloadCount > 256
+    || !Number.isSafeInteger(record.requiredDiskSizeBytes)
+    || (record.requiredDiskSizeBytes as number) <= 0
+  ) {
+    throw new Error('ModdingFlow activation plan preview response is invalid.');
+  }
+  return {
+    artifactId: safeCanonicalUuid(record.artifactId, 'artifact id'),
+    planId: safeCanonicalUuid(record.planId, 'plan id'),
+    requiredDownloadCount,
+    optionalDownloadCount,
+    requiredDiskSizeBytes: record.requiredDiskSizeBytes as number,
+    conflictCount,
+    operationId: safeBoundedString(record.operationId, 'operation id', 256)
+  };
+};
+
+const sanitizeModdingFlowActivationDecision = (
+  value: unknown
+): FluxoraModdingFlowActivationDecisionResult => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('ModdingFlow activation decision response is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.state !== 'accepted' && record.state !== 'dismissed') {
+    throw new Error('ModdingFlow activation decision response is invalid.');
+  }
+  return {
+    artifactId: safeCanonicalUuid(record.artifactId, 'artifact id'),
+    state: record.state,
+    operationId: safeBoundedString(record.operationId, 'operation id', 256)
+  };
 };
 
 const toArrayBuffer = (value: unknown): ArrayBuffer => {
@@ -209,6 +475,72 @@ const listenTyped = <T>(
   return () => {
     ipc.removeListener?.(channel, listener);
   };
+};
+
+const safeUpdateStates = new Set<FluxoraUpdateStatus['state']>([
+  'idle',
+  'checking',
+  'upToDate',
+  'available',
+  'downloading',
+  'waitingForOperations',
+  'readyToInstall',
+  'launchingUpdater',
+  'error'
+]);
+
+const sanitizeUpdateStatus = (value: unknown): FluxoraUpdateStatus => {
+  const record = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : {};
+  const state = safeUpdateStates.has(record.state as FluxoraUpdateStatus['state'])
+    ? record.state as FluxoraUpdateStatus['state']
+    : 'error';
+  const currentVersion = typeof record.currentVersion === 'string'
+    ? record.currentVersion.slice(0, 64)
+    : '0.0.0';
+  const result: FluxoraUpdateStatus = { state, currentVersion };
+  if (typeof record.availableVersion === 'string') {
+    result.availableVersion = record.availableVersion.slice(0, 64);
+  }
+  if (record.assetKind === 'delta' || record.assetKind === 'full') {
+    result.assetKind = record.assetKind;
+  }
+  for (const key of ['downloadedBytes', 'totalBytes'] as const) {
+    const numeric = record[key];
+    if (typeof numeric === 'number' && Number.isSafeInteger(numeric) && numeric >= 0) {
+      result[key] = numeric;
+    }
+  }
+  if (typeof record.progressPercent === 'number' && Number.isFinite(record.progressPercent)) {
+    result.progressPercent = Math.min(100, Math.max(0, record.progressPercent));
+  }
+  if (typeof record.checkedAtUtc === 'string') {
+    result.checkedAtUtc = record.checkedAtUtc.slice(0, 64);
+  }
+  if (typeof record.operationId === 'string') {
+    result.operationId = record.operationId.slice(0, 256);
+  }
+  const error = record.error && typeof record.error === 'object'
+    ? record.error as Record<string, unknown>
+    : null;
+  if (error) {
+    result.error = {
+      code: typeof error.code === 'string' ? error.code.slice(0, 128) : 'updates.unknown',
+      message: typeof error.message === 'string'
+        ? error.message.slice(0, 512)
+        : 'Update operation failed.',
+      retryable: error.retryable === true
+    };
+  }
+  if (state === 'error' && !result.error) {
+    result.error = {
+      code: 'updates.invalidStatus',
+      message: 'Update status payload is invalid.',
+      retryable: true
+    };
+  }
+  return result;
 };
 
 const normalizeDownloadEntry = (entry: FluxoraDownloadEntry): FluxoraDownloadEntry => ({
@@ -327,40 +659,74 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
     getInfo: () => invokeTyped<FluxoraAppInfo>(ipc, FluxoraIpcChannels.appGetInfo)
   },
+  updates: {
+    getStatus: async () => sanitizeUpdateStatus(await invokeTyped<unknown>(
+      ipc,
+      FluxoraIpcChannels.updatesGetStatus
+    )),
+    rendererReady: () => invokeTyped<void>(ipc, FluxoraIpcChannels.updatesRendererReady),
+    check: async (request?: OperationRequest) =>
+      sanitizeUpdateStatus(await invokeTyped<unknown>(ipc, FluxoraIpcChannels.updatesCheck, request)),
+    downloadAndInstall: async (request?: OperationRequest) =>
+      sanitizeUpdateStatus(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.updatesDownloadAndInstall,
+        request
+      )),
+    cancel: (request?: OperationRequest) =>
+      invokeTyped<FluxoraUpdateCancelResult>(ipc, FluxoraIpcChannels.updatesCancel, request),
+    onStatus: (callback: (status: FluxoraUpdateStatus) => void) =>
+      listenTyped<unknown>(ipc, FluxoraIpcChannels.updatesStatus, (value) => {
+        callback(sanitizeUpdateStatus(value));
+      })
+  },
   apiLimits: {
     list: (request?: OperationRequest) =>
       invokeTyped<FluxoraApiLimitStatus>(ipc, FluxoraIpcChannels.apiLimitsList, request)
   },
   connections: {
-    listStatus: (request?: OperationRequest) =>
-      invokeTyped<FluxoraExternalConnectionSnapshot>(
+    listStatus: async (request?: OperationRequest) =>
+      sanitizeExternalConnectionSnapshot(await invokeTyped<unknown>(
         ipc,
         FluxoraIpcChannels.connectionsListStatus,
         request
-      ),
-    restoreAll: (attempt = 1, request?: OperationRequest) =>
-      invokeTyped<FluxoraExternalConnectionSnapshot>(
+      )),
+    restoreAll: async (attempt = 1, request?: OperationRequest) =>
+      sanitizeExternalConnectionSnapshot(await invokeTyped<unknown>(
         ipc,
         FluxoraIpcChannels.connectionsRestoreAll,
         attempt,
         request
-      ),
-    connect: (providerId: string, request?: OperationRequest) =>
-      invokeTyped<FluxoraExternalConnectionStatus>(
+      )),
+    connect: async (providerId: string, request?: OperationRequest) =>
+      sanitizeExternalConnectionStatus(await invokeTyped<unknown>(
         ipc,
         FluxoraIpcChannels.connectionsConnect,
         providerId,
         request
-      ),
-    disconnect: (providerId: string, request?: OperationRequest) =>
-      invokeTyped<FluxoraExternalConnectionStatus>(
+      )),
+    cancelConnect: async (providerId: string, request?: OperationRequest) =>
+      sanitizeExternalConnectionStatus(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.connectionsCancelConnect,
+        providerId,
+        request
+      )),
+    disconnect: async (providerId: string, request?: OperationRequest) =>
+      sanitizeExternalConnectionStatus(await invokeTyped<unknown>(
         ipc,
         FluxoraIpcChannels.connectionsDisconnect,
         providerId,
         request
+      ))
+  },
+  managerHandoff: {
+    openDefaultAppSettings: () =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.managerHandoffOpenDefaultAppSettings
       )
   },
-  publicApi: createModdingflowPublicApiDogfoodClient(),
   ai: {
     armMicrophoneCapture: (request: OperationRequest) =>
       invokeTyped<void>(ipc, FluxoraIpcChannels.aiArmMicrophoneCapture, request),
@@ -1571,6 +1937,88 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         callback
       )
   },
+  moddingFlowActivations: {
+    consumePending: async () => {
+      const value = await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationConsumePending
+      );
+      if (!Array.isArray(value)) {
+        throw new Error('ModdingFlow activation response is invalid.');
+      }
+      return value.map(sanitizeModdingFlowActivation);
+    },
+    preview: async (request) => {
+      const preview = sanitizeModdingFlowActivationPreview(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationPreview,
+        request
+      ));
+      if (
+        preview.artifactId !== request.artifactId
+        || preview.operationId !== request.operationId
+      ) {
+        throw new Error('ModdingFlow activation preview correlation is invalid.');
+      }
+      return preview;
+    },
+    previewPlan: async (request) => {
+      const preview = sanitizeModdingFlowActivationPlanPreview(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationPlanPreview,
+        request
+      ));
+      if (
+        preview.artifactId !== request.artifactId
+        || preview.operationId !== request.operationId
+      ) {
+        throw new Error('ModdingFlow activation plan preview correlation is invalid.');
+      }
+      return preview;
+    },
+    accept: async (request) => {
+      const result = sanitizeModdingFlowActivationDecision(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationAccept,
+        request
+      ));
+      if (
+        result.artifactId !== request.artifactId
+        || result.operationId !== request.operationId
+        || result.state !== 'accepted'
+      ) {
+        throw new Error('ModdingFlow activation accept correlation is invalid.');
+      }
+      return result;
+    },
+    dismiss: async (request) => {
+      const result = sanitizeModdingFlowActivationDecision(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationDismiss,
+        request
+      ));
+      if (
+        result.artifactId !== request.artifactId
+        || result.operationId !== request.operationId
+        || result.state !== 'dismissed'
+      ) {
+        throw new Error('ModdingFlow activation dismiss correlation is invalid.');
+      }
+      return result;
+    },
+    onCaptured: (callback: (activation: FluxoraModdingFlowActivation) => void) =>
+      listenTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.moddingFlowActivationCaptured,
+        (value) => {
+          try {
+            callback(sanitizeModdingFlowActivation(value));
+          } catch {
+            // Ignore malformed native event payloads at the renderer boundary.
+          }
+        }
+      )
+  },
   nexus: {
     getAuthStatus: (request?: OperationRequest) =>
       invokeTyped<FluxoraNexusModsAuthStatus>(
@@ -1944,9 +2392,28 @@ const fileMutationTimeoutMs = 2 * 60 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
-const nexusOAuthTimeoutMs = 180_000;
+const interactiveConnectionTimeoutMs = 180_000;
 const connectionRestoreTimeoutMs = 3_000;
 const modUpdateTimeoutMs = 70_000;
+const moddingFlowProviderId = 'moddingflow';
+
+const withModdingFlowConnectionStatus = (
+  snapshot: unknown,
+  moddingFlowStatus: unknown
+): unknown => {
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.providers)) {
+    return snapshot;
+  }
+  const genericProviders = snapshot.providers.filter(
+    (provider) => !isRecord(provider) || provider.providerId !== moddingFlowProviderId
+  );
+  return {
+    ...snapshot,
+    providers: moddingFlowStatus === null
+      ? genericProviders
+      : [...genericProviders, moddingFlowStatus]
+  };
+};
 
 const createOperationId = (scope: string): string =>
   `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1998,6 +2465,46 @@ const nativeBridgeErrorCategories = new Set<NativeBridgeError['category']>([
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const moddingFlowActivationPreviewRequest = (
+  value: unknown
+): FluxoraModdingFlowActivationPreviewRequest => {
+  if (!isRecord(value)) {
+    throw new Error('ModdingFlow activation preview request is invalid.');
+  }
+  return {
+    artifactId: safeCanonicalUuid(value.artifactId, 'artifact id'),
+    operationId: safeBoundedString(value.operationId, 'operation id', 256)
+  };
+};
+
+const moddingFlowActivationPlanPreviewRequest = (
+  value: unknown
+): FluxoraModdingFlowActivationPlanPreviewRequest => {
+  const request = moddingFlowActivationPreviewRequest(value);
+  const record = value as Record<string, unknown>;
+  return {
+    ...request,
+    instanceId: safeBoundedString(record.instanceId, 'instance id', 32 * 1024),
+    profileName: safeBoundedString(record.profileName, 'profile name', 256)
+  };
+};
+
+const moddingFlowActivationAcceptRequest = (
+  value: unknown
+): FluxoraModdingFlowActivationAcceptRequest => {
+  const request = moddingFlowActivationPlanPreviewRequest(value);
+  const record = value as Record<string, unknown>;
+  return {
+    ...request,
+    confirmedPlanId: safeCanonicalUuid(record.confirmedPlanId, 'confirmed plan id')
+  };
+};
+
+const moddingFlowActivationDismissRequest = (
+  value: unknown
+): FluxoraModdingFlowActivationDismissRequest =>
+  moddingFlowActivationPreviewRequest(value);
 
 const taskbarProgressState = (value: unknown): FluxoraTaskbarProgressState => {
   if (!isRecord(value)) {
@@ -2254,6 +2761,24 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
     providers: browserPreviewAiProviders(),
     models: browserPreviewAiModels(),
     capabilities: { singleAgent: { state: 'unavailable', reason: 'browser-preview' } },
+    quota: {
+      schema: 'fluxora.ai.quota.v1',
+      availability: 'disabled',
+      available: false,
+      eligibility: false,
+      reason: 'browser-preview',
+      periodStart: null,
+      resetAt: null,
+      rollover: false,
+      limit: 0,
+      used: 0,
+      reserved: 0,
+      remaining: 0,
+      remainingInputTokenEquivalent: 0,
+      search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+      model: 'gemini-3.1-flash-lite',
+      priceVersion: null
+    },
     error: {
       code: 'ai.host.browser-preview',
       category: 'transport',
@@ -2379,6 +2904,24 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           arch: 'x64',
           isPackaged: false
         } satisfies FluxoraAppInfo;
+
+      case FluxoraIpcChannels.updatesGetStatus:
+      case FluxoraIpcChannels.updatesCheck:
+      case FluxoraIpcChannels.updatesDownloadAndInstall:
+        return {
+          state: 'idle',
+          currentVersion: '0.0.0-dev'
+        } satisfies FluxoraUpdateStatus;
+
+      case FluxoraIpcChannels.updatesCancel:
+        return {
+          accepted: false,
+          state: 'idle',
+          operationId: requestWithOperationId(args[0], 'updates_cancel').operationId ?? ''
+        } satisfies FluxoraUpdateCancelResult;
+
+      case FluxoraIpcChannels.updatesRendererReady:
+        return undefined;
 
       case FluxoraIpcChannels.securityGetState:
         return {
@@ -2515,6 +3058,30 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           }
         } satisfies NativeBridgeStatus;
       }
+
+      case FluxoraIpcChannels.moddingFlowActivationPreview: {
+        const request = moddingFlowActivationPreviewRequest(args[0]);
+        return {
+          artifactId: request.artifactId,
+          state: 'unavailable',
+          eligible: null,
+          requiresAccount: false,
+          metadata: null,
+          operationId: request.operationId
+        } satisfies FluxoraModdingFlowActivationPreview;
+      }
+
+      case FluxoraIpcChannels.moddingFlowActivationPlanPreview:
+        moddingFlowActivationPlanPreviewRequest(args[0]);
+        throw new Error('ModdingFlow activation plan preview is unavailable in browser preview.');
+
+      case FluxoraIpcChannels.moddingFlowActivationAccept:
+        moddingFlowActivationAcceptRequest(args[0]);
+        throw new Error('ModdingFlow activation confirmation is unavailable in browser preview.');
+
+      case FluxoraIpcChannels.moddingFlowActivationDismiss:
+        moddingFlowActivationDismissRequest(args[0]);
+        throw new Error('ModdingFlow activation confirmation is unavailable in browser preview.');
 
       case FluxoraIpcChannels.projectsList: {
         const request = requestWithOperationId(args[0], 'projects_list');
@@ -2726,6 +3293,27 @@ const createTauriInvoker = (): IpcInvoker => ({
     switch (channel) {
       case FluxoraIpcChannels.appGetInfo:
         return invoke<FluxoraAppInfo>('fluxora_app_info');
+
+      case FluxoraIpcChannels.updatesGetStatus:
+        return invoke<FluxoraUpdateStatus>('fluxora_updates_get_status');
+
+      case FluxoraIpcChannels.updatesRendererReady:
+        return invoke<void>('fluxora_updates_renderer_ready');
+
+      case FluxoraIpcChannels.updatesCheck:
+        return invoke<FluxoraUpdateStatus>('fluxora_updates_check', {
+          request: requestWithOperationId(args[0], 'updates_check')
+        });
+
+      case FluxoraIpcChannels.updatesDownloadAndInstall:
+        return invoke<FluxoraUpdateStatus>('fluxora_updates_download_and_install', {
+          request: requestWithOperationId(args[0], 'updates_install')
+        });
+
+      case FluxoraIpcChannels.updatesCancel:
+        return invoke<FluxoraUpdateCancelResult>('fluxora_updates_cancel', {
+          request: requestWithOperationId(args[0], 'updates_cancel')
+        });
 
       case FluxoraIpcChannels.securityGetState:
         return invoke<FluxoraSecurityState>('fluxora_security_state', {
@@ -3225,37 +3813,99 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.connectionsListStatus: {
         const request = requestWithOperationId(args[0], 'connections_list_status');
-        return bridgeRequest('connections.listStatus', {}, request);
+        const snapshot = await bridgeRequest('connections.listStatus', {}, request);
+        const moddingFlowStatus = await invoke(
+          'fluxora_moddingflow_connection_status',
+          { request }
+        ).catch(() => null);
+        return withModdingFlowConnectionStatus(snapshot, moddingFlowStatus);
       }
 
       case FluxoraIpcChannels.connectionsRestoreAll: {
         const request = requestWithOperationId(args[1], 'connections_restore_all');
-        return bridgeRequest(
+        const snapshot = await bridgeRequest(
           'connections.restoreAll',
           { attempt: typeof args[0] === 'number' ? args[0] : 1 },
           request,
           connectionRestoreTimeoutMs
         );
+        const moddingFlowStatus = await invoke(
+          'fluxora_moddingflow_restore_connection',
+          {
+            attempt: typeof args[0] === 'number' ? args[0] : 1,
+            request
+          }
+        ).catch(() => null);
+        return withModdingFlowConnectionStatus(snapshot, moddingFlowStatus);
       }
 
       case FluxoraIpcChannels.connectionsConnect: {
         const request = requestWithOperationId(args[1], 'connections_connect');
+        const providerId = optionalString(args[0]);
+        if (providerId === moddingFlowProviderId) {
+          return invoke('fluxora_moddingflow_connect', { request });
+        }
         return bridgeRequest(
           'connections.connect',
-          { providerId: optionalString(args[0]) },
+          { providerId },
           request,
-          nexusOAuthTimeoutMs
+          interactiveConnectionTimeoutMs
         );
+      }
+
+      case FluxoraIpcChannels.connectionsCancelConnect: {
+        const request = requestWithOperationId(args[1], 'connections_cancel_connect');
+        const providerId = optionalString(args[0]);
+        if (providerId !== moddingFlowProviderId) {
+          throw new Error('Connection cancellation is not available for this provider.');
+        }
+        return invoke('fluxora_moddingflow_cancel_connect', { request });
       }
 
       case FluxoraIpcChannels.connectionsDisconnect: {
         const request = requestWithOperationId(args[1], 'connections_disconnect');
+        const providerId = optionalString(args[0]);
+        if (providerId === moddingFlowProviderId) {
+          return invoke('fluxora_moddingflow_disconnect', { request });
+        }
         return bridgeRequest(
           'connections.disconnect',
-          { providerId: optionalString(args[0]) },
+          { providerId },
           request
         );
       }
+
+      case FluxoraIpcChannels.managerHandoffOpenDefaultAppSettings:
+        return invoke('fluxora_open_manager_default_app_settings');
+
+      case FluxoraIpcChannels.moddingFlowActivationConsumePending:
+        return invoke<FluxoraModdingFlowActivation[]>(
+          'fluxora_moddingflow_consume_activations'
+        );
+
+      case FluxoraIpcChannels.moddingFlowActivationPreview:
+        return invoke<FluxoraModdingFlowActivationPreview>(
+          'fluxora_moddingflow_preview_activation',
+          { request: moddingFlowActivationPreviewRequest(args[0]) }
+        );
+
+      case FluxoraIpcChannels.moddingFlowActivationPlanPreview:
+        return invoke<FluxoraModdingFlowActivationPlanPreview>(
+          'fluxora_moddingflow_preview_activation_plan',
+          { request: moddingFlowActivationPlanPreviewRequest(args[0]) }
+        );
+
+      case FluxoraIpcChannels.moddingFlowActivationAccept:
+        return invoke<FluxoraModdingFlowActivationDecisionResult>(
+          'fluxora_moddingflow_accept_activation',
+          { request: moddingFlowActivationAcceptRequest(args[0]) }
+        );
+
+      case FluxoraIpcChannels.moddingFlowActivationDismiss:
+        return invoke<FluxoraModdingFlowActivationDecisionResult>(
+          'fluxora_moddingflow_dismiss_activation',
+          { request: moddingFlowActivationDismissRequest(args[0]) }
+        );
 
       case FluxoraIpcChannels.bridgeShutdown: {
         const request = requestWithOperationId(args[0], 'bridge_shutdown');
@@ -3281,7 +3931,9 @@ const createTauriInvoker = (): IpcInvoker => ({
         };
         const [method, scope] = simpleMap[channel]!;
         const request = requestWithOperationId(args[0], scope);
-        const timeoutMs = channel === FluxoraIpcChannels.nexusConnect ? nexusOAuthTimeoutMs : undefined;
+        const timeoutMs = channel === FluxoraIpcChannels.nexusConnect
+          ? interactiveConnectionTimeoutMs
+          : undefined;
         const data = await bridgeRequest<Record<string, unknown>>(method, {}, request, timeoutMs);
         return channel === FluxoraIpcChannels.templatesList ? data : withOperationId(data, request, scope);
       }
@@ -3524,7 +4176,9 @@ const createTauriInvoker = (): IpcInvoker => ({
             operationId: args[1],
             beforeOrderId: (args[2] as FluxoraPendingInstallOrderAnchors).beforeOrderId ?? '',
             afterOrderId: (args[2] as FluxoraPendingInstallOrderAnchors).afterOrderId ?? '',
-            fallbackTargetIndex: (args[2] as FluxoraPendingInstallOrderAnchors).fallbackTargetIndex
+            fallbackTargetIndex: (args[2] as FluxoraPendingInstallOrderAnchors).fallbackTargetIndex,
+            expectedRevision: (args[2] as FluxoraPendingInstallOrderAnchors).expectedRevision,
+            applyIfCompleted: (args[2] as FluxoraPendingInstallOrderAnchors).applyIfCompleted
           },
           requestWithOperationId(args[3], 'mods_rebase_pending_install')
         );

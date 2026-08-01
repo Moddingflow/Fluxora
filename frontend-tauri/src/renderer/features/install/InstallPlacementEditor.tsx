@@ -10,7 +10,7 @@ import {
   Redo2,
   RotateCcw,
   Undo2
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 import {
   useEffect,
   useMemo,

@@ -1,4 +1,4 @@
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from '../icons/lucide-compat';
 import {
   useCallback,
   useEffect,

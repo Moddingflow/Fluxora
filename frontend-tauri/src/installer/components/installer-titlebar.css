@@ -1,0 +1,62 @@
+.installer-titlebar {
+  display: grid;
+  grid-template-columns: auto minmax(16px, 1fr) auto;
+  align-items: center;
+  min-height: 38px;
+  border-bottom: 1px solid var(--installer-border);
+  background: var(--installer-background);
+  user-select: none;
+}
+
+.installer-titlebar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-left: var(--space-4);
+  color: var(--installer-text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.installer-titlebar__logo {
+  width: 17px;
+  height: 17px;
+  color: var(--installer-accent);
+}
+
+.installer-titlebar__drag {
+  align-self: stretch;
+}
+
+.installer-titlebar__controls {
+  display: flex;
+  align-self: stretch;
+}
+
+.installer-titlebar__controls .flx-icon-button {
+  width: 40px;
+  height: 100%;
+  border-radius: 0;
+}
+
+.installer-titlebar__controls [data-icon] {
+  width: 14px;
+  height: 14px;
+}
+
+.installer-titlebar__controls .flx-icon-button:last-child:hover {
+  background: var(--installer-critical-hover);
+  color: var(--installer-on-critical);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,4 +1,4 @@
-import { PackageOpen, X } from 'lucide-react';
+import { PackageOpen, X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useState } from 'react';
 
 import type { FluxoraFluxPackPackageType } from '../../../shared/fluxora-api';

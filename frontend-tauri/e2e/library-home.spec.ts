@@ -101,7 +101,11 @@ test.beforeEach(async ({ page }) => {
         modCount: 248,
         pluginCount: 92,
         sizeBytes: 34789235097,
+        gameVersion: '1.6.1170',
         lastLaunchedAt: '2026-06-24T18:00:00Z'
+      },
+      externalProviderGameSlugs: {
+        moddingflow: ['skyrim-se']
       },
       gameCapabilities: {
         supportsLoadOrder: true,
@@ -130,7 +134,11 @@ test.beforeEach(async ({ page }) => {
       projectFingerprint: {
         modCount: 64,
         pluginCount: 38,
-        sizeBytes: 7283923509
+        sizeBytes: 7283923509,
+        gameVersion: '1.10.163'
+      },
+      externalProviderGameSlugs: {
+        moddingflow: ['fallout-4']
       }
     };
     const skyrimSecondaryProject = {
@@ -293,6 +301,8 @@ test.beforeEach(async ({ page }) => {
       revision: number;
       targetIndex: number;
       ready: boolean;
+      completed: boolean;
+      finalOrderId: string;
     }
     const pendingInstallSessions = new Map<string, MockPendingInstallSession>();
     const installOperations = new Map<string, any>();
@@ -317,16 +327,19 @@ test.beforeEach(async ({ page }) => {
     const mockInstallConflictSnapshot = (session: MockPendingInstallSession) => {
       const skyuiIndex = modRows.findIndex((item) => item.orderId === 'mod_skyui');
       const pendingWins = session.targetIndex > skyuiIndex;
+      const activeOrderId = session.completed && session.finalOrderId
+        ? session.finalOrderId
+        : session.pendingOrderId;
       return {
         operationId: session.operationId,
         revision: session.revision,
-        state: 'ready',
+        state: session.completed ? 'completed' : 'ready',
         pendingOrderId: session.pendingOrderId,
-        orderId: '',
+        orderId: session.completed ? session.finalOrderId : '',
         targetIndex: session.targetIndex,
         rows: [
           {
-            orderId: session.pendingOrderId,
+            orderId: activeOrderId,
             modUuid: '',
             fileCount: 2,
             conflictingFileCount: 1,
@@ -342,8 +355,8 @@ test.beforeEach(async ({ page }) => {
             conflictingFileCount: 1,
             overwrittenFileCount: pendingWins ? 1 : 0,
             overwritingFileCount: pendingWins ? 0 : 1,
-            overwritesModIds: pendingWins ? [] : [session.pendingOrderId],
-            overwrittenByModIds: pendingWins ? [session.pendingOrderId] : []
+            overwritesModIds: pendingWins ? [] : [activeOrderId],
+            overwrittenByModIds: pendingWins ? [activeOrderId] : []
           }
         ]
       };
@@ -361,7 +374,9 @@ test.beforeEach(async ({ page }) => {
         pendingOrderId: `pending-install:${operationId}`,
         revision: 0,
         targetIndex: Number.isFinite(requestedTarget) ? requestedTarget : modRows.length,
-        ready: false
+        ready: false,
+        completed: false,
+        finalOrderId: ''
       };
       pendingInstallSessions.set(operationId, session);
       window.setTimeout(() => {
@@ -487,6 +502,11 @@ test.beforeEach(async ({ page }) => {
 
       calls.push({ method: 'test.recordInstalledMod', payload: { name, request } });
       const pendingSession = pendingInstallSessions.get(String(operationId));
+      if (pendingSession) {
+        pendingSession.completed = true;
+        pendingSession.finalOrderId = orderId;
+        pendingSession.revision += 1;
+      }
       const pendingPatch = pendingSession?.ready
         ? mockInstallConflictSnapshot(pendingSession).rows[0]
         : null;
@@ -1354,6 +1374,8 @@ test.beforeEach(async ({ page }) => {
     let language = 'en-us';
     let nexusLinked = false;
     let nexusInitialStateApplied = false;
+    let moddingFlowLinked = false;
+    let moddingFlowInitialStateApplied = false;
     const nexusStatus = () => {
       const initialState = (window as any).__fluxoraNexusInitiallyLinked;
       if (!nexusInitialStateApplied && typeof initialState === 'boolean') {
@@ -1387,8 +1409,35 @@ test.beforeEach(async ({ page }) => {
         operationId
       };
     };
+    const moddingFlowConnectionStatus = (operationId = 'op_moddingflow_connections') => {
+      if (!moddingFlowInitialStateApplied) {
+        moddingFlowLinked = window.localStorage.getItem(
+          'fluxora.test.moddingFlowConnection'
+        ) === 'ready';
+        moddingFlowInitialStateApplied = true;
+      }
+      return {
+        providerId: 'moddingflow',
+        label: 'ModdingFlow',
+        state: moddingFlowLinked ? 'ready' : 'notLinked',
+        accountName: moddingFlowLinked ? 'Playwright ModdingFlow' : '',
+        hasStoredSession: moddingFlowLinked,
+        retryable: false,
+        requiresUserAction: false,
+        message: moddingFlowLinked
+          ? 'ModdingFlow connection is ready.'
+          : 'ModdingFlow is not linked.',
+        checkedAtUtc: '2026-07-30T07:00:00Z',
+        operationId
+      };
+    };
     const externalConnectionSnapshot = (operationId = 'op_connections') => ({
-      providers: [externalConnectionStatus(operationId)],
+      providers: [
+        externalConnectionStatus(operationId),
+        ...(window.localStorage.getItem('fluxora.test.moddingFlowConnection')
+          ? [moddingFlowConnectionStatus(operationId)]
+          : [])
+      ],
       requestedAtUtc: '2026-07-19T07:00:00Z',
       completedAtUtc: '2026-07-19T07:00:00Z',
       durationMs: 1,
@@ -1438,6 +1487,32 @@ test.beforeEach(async ({ page }) => {
     const inboundNxmCallbacks = new Set<(event: any) => void>();
     const operationProgressCallbacks = new Set<(event: any) => void>();
     const installProgressCallbacks = new Set<(event: any) => void>();
+    const updateStatusCallbacks = new Set<(event: any) => void>();
+    const updateTestMode = new URLSearchParams(window.location.search).get('testUpdate');
+    let updateStatus: any = {
+      state: 'upToDate',
+      currentVersion: '2.3.0'
+    };
+    if (updateTestMode === 'available') {
+      updateStatus = {
+        state: 'available',
+        currentVersion: '2.3.0',
+        availableVersion: '2.4.0',
+        assetKind: 'delta'
+      };
+    } else if (updateTestMode === 'automaticError') {
+      updateStatus = {
+        state: 'error',
+        currentVersion: '2.3.0',
+        error: {
+          code: 'githubUnavailable',
+          message: 'GitHub is unavailable',
+          retryable: true
+        }
+      };
+    }
+    let settleUpdateDownload: ((result: any) => void) | null = null;
+    let failUpdateDownload: ((error: Error) => void) | null = null;
     const workspaceDeltaScopes = new Map<string, { revision: string; sequence: number }>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
@@ -1491,6 +1566,23 @@ test.beforeEach(async ({ page }) => {
         callback(event);
       }
     };
+    (window as any).__emitFluxoraUpdateStatus = (event: any) => {
+      updateStatus = { ...updateStatus, ...event };
+      for (const callback of updateStatusCallbacks) {
+        callback(updateStatus);
+      }
+    };
+    (window as any).__finishFluxoraUpdateDownload = (event: any = {}) => {
+      (window as any).__emitFluxoraUpdateStatus(event);
+      settleUpdateDownload?.(updateStatus);
+      settleUpdateDownload = null;
+      failUpdateDownload = null;
+    };
+    (window as any).__failFluxoraUpdateDownload = (message: string) => {
+      failUpdateDownload?.(new Error(message));
+      settleUpdateDownload = null;
+      failUpdateDownload = null;
+    };
     (window as any).__fluxoraInboundNxmSubscriberCount = () => inboundNxmCallbacks.size;
     (window as any).__emitFluxoraInstallConflictSnapshot = (
       operationId: string,
@@ -1521,6 +1613,46 @@ test.beforeEach(async ({ page }) => {
           platform: 'win32',
           version: '0.0.0-test'
         })
+      },
+      updates: {
+        getStatus: async () => {
+          calls.push({ method: 'updates.getStatus' });
+          return updateStatus;
+        },
+        rendererReady: async () => {
+          calls.push({ method: 'updates.rendererReady' });
+        },
+        check: async (operation: any) => {
+          calls.push({ method: 'updates.check', payload: operation });
+          return updateStatus;
+        },
+        downloadAndInstall: async (operation: any) => {
+          calls.push({ method: 'updates.downloadAndInstall', payload: operation });
+          return new Promise((resolve, reject) => {
+            settleUpdateDownload = resolve;
+            failUpdateDownload = reject;
+          });
+        },
+        cancel: async (operation: any) => {
+          const state = updateStatus.state;
+          calls.push({ method: 'updates.cancel', payload: operation });
+          updateStatus = {
+            ...updateStatus,
+            state: 'available',
+            downloadedBytes: undefined,
+            totalBytes: undefined,
+            progressPercent: undefined
+          };
+          for (const callback of updateStatusCallbacks) callback(updateStatus);
+          settleUpdateDownload?.(updateStatus);
+          settleUpdateDownload = null;
+          failUpdateDownload = null;
+          return { accepted: true, state, operationId: operation?.operationId ?? '' };
+        },
+        onStatus: (callback: (event: any) => void) => {
+          updateStatusCallbacks.add(callback);
+          return () => updateStatusCallbacks.delete(callback);
+        }
       },
       ai: {
         getFileRollbackStates: async () => [],
@@ -1685,7 +1817,12 @@ test.beforeEach(async ({ page }) => {
               plugins: { state: 'available' },
               profiles: { state: 'available' },
               projects: { state: 'available' },
-              settings: { state: 'available' }
+              settings: { state: 'available' },
+              moddingFlowActivation: {
+                state: window.localStorage.getItem(
+                  'fluxora.test.moddingFlowActivationConfirmation'
+                ) === 'true' ? 'available' : 'disabled'
+              }
             },
             platform: 'win32',
             supportMatrix: []
@@ -2381,17 +2518,17 @@ test.beforeEach(async ({ page }) => {
             normalizedSessionId.includes('texgen')
               ? {
                   id: 'texgen-output-id',
-                  displayName: 'TexGen Output',
-                  folderName: 'TexGen Output',
-                  path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\TexGen Output',
+                  displayName: 'Skyrim graphics overhaul - TexGen Output',
+                  folderName: 'Skyrim graphics overhaul - TexGen Output',
+                  path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\Skyrim graphics overhaul - TexGen Output',
                   provider: 'generated-texgen'
                 }
               : normalizedSessionId.includes('dyndolod')
                 ? {
                     id: 'dyndolod-output-id',
-                    displayName: 'DynDOLOD Output',
-                    folderName: 'DynDOLOD Output',
-                    path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\DynDOLOD Output',
+                    displayName: 'Skyrim graphics overhaul - DynDOLOD Output',
+                    folderName: 'Skyrim graphics overhaul - DynDOLOD Output',
+                    path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\Skyrim graphics overhaul - DynDOLOD Output',
                     provider: 'generated-dyndolod'
                   }
                 : {
@@ -2452,7 +2589,9 @@ test.beforeEach(async ({ page }) => {
             const isTexGen = executableId === 'texgen';
             const toolName = isTexGen ? 'TexGen' : 'DynDOLOD';
             const managedToolKind = isTexGen ? 'texGen' : 'dynDoLod';
-            const outputName = isTexGen ? 'TexGen Output' : 'DynDOLOD Output';
+            const outputName = isTexGen
+              ? 'Skyrim graphics overhaul - TexGen Output'
+              : 'Skyrim graphics overhaul - DynDOLOD Output';
             const outputId = isTexGen ? 'texgen-output-id' : 'dyndolod-output-id';
             const provider = isTexGen ? 'generated-texgen' : 'generated-dyndolod';
             return {
@@ -3305,6 +3444,35 @@ test.beforeEach(async ({ page }) => {
           if (!session || !session.ready) {
             throw new Error('The mock pending install inventory is not ready.');
           }
+          const delayMs = Number(
+            window.localStorage.getItem('fluxora.test.pendingInstallRebaseDelayMs') ?? '0'
+          );
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
+          if (session.completed) {
+            const expectedRevision = Number(anchors?.expectedRevision ?? -1);
+            if (
+              anchors?.applyIfCompleted !== true ||
+              expectedRevision !== session.revision
+            ) {
+              return mockInstallConflictSnapshot(session);
+            }
+            const sourceIndex = modRows.findIndex(
+              (item) => item.orderId === session.finalOrderId
+            );
+            if (sourceIndex >= 0) {
+              const [moved] = modRows.splice(sourceIndex, 1);
+              modRows.splice(
+                Math.max(0, Math.min(targetIndex, modRows.length)),
+                0,
+                moved
+              );
+              modRows.forEach((item, index) => {
+                item.order = index;
+              });
+            }
+          }
           session.targetIndex = targetIndex;
           session.revision += 1;
           return mockInstallConflictSnapshot(session);
@@ -3333,11 +3501,27 @@ test.beforeEach(async ({ page }) => {
         },
         connect: async (providerId: any, operation: any) => {
           calls.push({ method: 'connections.connect', payload: { operation, providerId } });
+          if (providerId === 'moddingflow') {
+            moddingFlowLinked = true;
+            moddingFlowInitialStateApplied = true;
+            return moddingFlowConnectionStatus(operation?.operationId);
+          }
           nexusLinked = true;
           return externalConnectionStatus(operation?.operationId);
         },
+        cancelConnect: async (providerId: any, operation: any) => {
+          calls.push({ method: 'connections.cancelConnect', payload: { operation, providerId } });
+          return providerId === 'moddingflow'
+            ? moddingFlowConnectionStatus(operation?.operationId)
+            : externalConnectionStatus(operation?.operationId);
+        },
         disconnect: async (providerId: any, operation: any) => {
           calls.push({ method: 'connections.disconnect', payload: { operation, providerId } });
+          if (providerId === 'moddingflow') {
+            moddingFlowLinked = false;
+            moddingFlowInitialStateApplied = true;
+            return moddingFlowConnectionStatus(operation?.operationId);
+          }
           nexusLinked = false;
           return externalConnectionStatus(operation?.operationId);
         }
@@ -3427,6 +3611,61 @@ test.beforeEach(async ({ page }) => {
           };
         },
         registerProtocol: async () => ({ operationId: 'op_nxm', registered: true })
+      },
+      moddingFlowActivations: {
+        consumePending: async () => {
+          calls.push({ method: 'moddingFlowActivations.consumePending' });
+          return window.localStorage.getItem(
+            'fluxora.test.moddingFlowActivationConfirmation'
+          ) === 'true'
+            ? [{ v: 1, artifactId: '01234567-89ab-4cde-8fab-0123456789ab' }]
+            : [];
+        },
+        preview: async (request: any) => {
+          calls.push({ method: 'moddingFlowActivations.preview', payload: request });
+          return {
+            artifactId: request.artifactId,
+            state: 'available',
+            eligible: true,
+            requiresAccount: false,
+            metadata: {
+              mod: { id: '11111111-2222-4333-8444-555555555555', name: 'SkyUI' },
+              version: { id: '22222222-3333-4444-8555-666666666666', label: '5.2 SE' },
+              game: { id: 'skyrim-se', name: 'Skyrim Special Edition' },
+              file: { name: 'SkyUI_5_2_SE.7z', sizeBytes: 2_734_080 }
+            },
+            operationId: request.operationId
+          };
+        },
+        previewPlan: async (request: any) => {
+          calls.push({ method: 'moddingFlowActivations.previewPlan', payload: request });
+          return {
+            artifactId: request.artifactId,
+            planId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            requiredDownloadCount: 2,
+            optionalDownloadCount: 1,
+            requiredDiskSizeBytes: 2_735_104,
+            conflictCount: 0,
+            operationId: request.operationId
+          };
+        },
+        accept: async (request: any) => {
+          calls.push({ method: 'moddingFlowActivations.accept', payload: request });
+          return {
+            artifactId: request.artifactId,
+            state: 'accepted',
+            operationId: request.operationId
+          };
+        },
+        dismiss: async (request: any) => {
+          calls.push({ method: 'moddingFlowActivations.dismiss', payload: request });
+          return {
+            artifactId: request.artifactId,
+            state: 'dismissed',
+            operationId: request.operationId
+          };
+        },
+        onCaptured: () => () => undefined
       },
       operations: {
         cancel: async () => ({ accepted: false, operationId: 'op_cancel', status: 'unsupported' }),
@@ -8189,6 +8428,34 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     });
 });
 
+test('treats a Mod Organizer canonical alpha version as the same Nexus version', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & { fluxora: any };
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      const workspace = await getWorkspace(...args);
+      const withCanonicalVersion = (item: any) => item.name === 'Unofficial Patch'
+        ? { ...item, version: '5.8.0.0a', latestVersion: '5.8a' }
+        : item;
+      return {
+        ...workspace,
+        installedMods: workspace.installedMods.map(withCanonicalVersion),
+        modOrder: workspace.modOrder.map(withCanonicalVersion)
+      };
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const versionRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await expect(versionRow.locator('.mod-list-row__version')).toHaveText('5.8a');
+  await expect(versionRow.locator('.mod-list-row__latest-value')).toHaveText('5.8a');
+  await expect(versionRow.locator('.mod-list-row__latest'))
+    .toHaveAttribute('data-version-mismatch', 'false');
+});
+
 test('hides collapse controls for empty mod and plugin separators', async ({ page }) => {
   await page.goto(baseUrl);
   await page.evaluate(() => {
@@ -8913,6 +9180,56 @@ test('shows exact pending conflicts and rebases an install dragged before the sn
       })
     )
     .toEqual({ installedIndex: 1, targetIndex: 2 });
+});
+
+test('keeps a replacement at the user drop when pending rebase races install completion', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.installDelayMs', '2500');
+    window.localStorage.setItem('fluxora.test.installConflictSnapshotDelayMs', '20');
+    window.localStorage.setItem('fluxora.test.pendingInstallRebaseDelayMs', '3200');
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
+  const installDialog = page.getByRole('dialog', { name: /SkyUI/ });
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: /Заменить/ }).click();
+
+  const skyUiRow = page.locator('.mod-list-row[data-order-id="mod_skyui"]');
+  const unofficialPatchRow = page.locator('.mod-list-row[data-order-id="mod_ussep"]');
+  await expect(skyUiRow.locator('.mod-install-pending-label')).toBeVisible();
+  await dragRowToSlot(page, skyUiRow, unofficialPatchRow, 'before');
+
+  await expect
+    .poll(() =>
+      page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) => {
+        const orderIds = rows.map((row) => row.getAttribute('data-order-id'));
+        return {
+          skyUiIndex: orderIds.indexOf('mod_skyui'),
+          unofficialPatchIndex: orderIds.indexOf('mod_ussep')
+        };
+      })
+    )
+    .toEqual({ skyUiIndex: 1, unofficialPatchIndex: 2 });
+  await expect(skyUiRow.locator('.mod-install-pending-label')).toHaveCount(0, {
+    timeout: 12_000
+  });
+
+  const rebasePayloads = await page.evaluate(() =>
+    (window as any).__fluxoraCalls
+      .filter((call: { method: string }) => call.method === 'mods.rebasePendingInstall')
+      .map((call: { payload: unknown }) => call.payload)
+  ) as Array<{ anchors: { applyIfCompleted?: boolean; expectedRevision?: number } }>;
+  expect(rebasePayloads.length).toBeGreaterThanOrEqual(2);
+  expect(rebasePayloads.at(-1)?.anchors).toMatchObject({
+    applyIfCompleted: true,
+    expectedRevision: 2
+  });
 });
 
 test('rolls back the pending row and both conflict projections when install fails', async ({ page }) => {
@@ -11800,6 +12117,39 @@ test('keeps secondary Settings connection recovery passive without starting OAut
   expect(callsBeforeRetry).not.toContain('connections.disconnect');
 });
 
+test('shows the branded ModdingFlow account and disconnects it through the Settings toggle', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.moddingFlowConnection', 'ready');
+  });
+
+  await page.goto(`${baseUrl}/?window=settings`);
+  await page.getByRole('button', { name: /Connections/ }).click();
+
+  const moddingFlowRow = page.locator('.settings-service-row--connection').filter({
+    hasText: 'ModdingFlow'
+  });
+  await expect(moddingFlowRow).toBeVisible();
+  await expect(moddingFlowRow.locator('.settings-service-icon--moddingflow img')).toBeVisible();
+  await expect(moddingFlowRow.getByText('Connected - Playwright ModdingFlow')).toBeVisible();
+
+  const accountSwitch = moddingFlowRow.getByRole('switch', { name: 'ModdingFlow account' });
+  await expect(accountSwitch).toHaveAttribute('aria-checked', 'true');
+  await accountSwitch.click();
+  await expect(accountSwitch).toHaveAttribute('aria-checked', 'false');
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & {
+          __fluxoraCalls?: Array<{ method: string; payload?: { providerId?: string } }>;
+        }).__fluxoraCalls?.some(
+          (call) => call.method === 'connections.disconnect'
+            && call.payload?.providerId === 'moddingflow'
+        ) ?? false
+      )
+    )
+    .toBe(true);
+});
+
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {
   await page.goto(`${baseUrl}/?window=settings`);
 
@@ -11818,7 +12168,10 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.getByText('Account bridge')).toHaveCount(0);
   await expect(page.getByText('Nexus Mods', { exact: true })).toBeVisible();
   const connectionsPanelBox = await page.locator('.settings-panel--connections').boundingBox();
-  const connectionRowBox = await page.locator('.settings-service-row--connection').boundingBox();
+  const connectionRowBox = await page
+    .locator('.settings-service-row--connection')
+    .filter({ hasText: 'Nexus Mods' })
+    .boundingBox();
   expect(connectionsPanelBox).not.toBeNull();
   expect(connectionRowBox).not.toBeNull();
   if (connectionsPanelBox && connectionRowBox) {
@@ -11920,6 +12273,8 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
 
   await page.getByRole('button', { name: /Для разработчиков/ }).click();
   await expect(page.locator('.settings-panel--developer')).toBeVisible();
+  await expect(page.getByText('Версия Fluxora', { exact: true })).toBeVisible();
+  await expect(page.getByText('0.0.0-test', { exact: true })).toBeVisible();
   const developerSwitch = page.getByRole('switch', { name: 'Режим разработчика' });
   await expect(developerSwitch).toHaveAttribute('aria-checked', 'false');
   await developerSwitch.click();
@@ -12538,4 +12893,226 @@ test('file preview performance probe records bounded raw cold and warm runs', as
     expect(run.operationIds).toHaveLength(1);
     expect(run.serializedCalls).not.toContain('contentBase64');
   }
+});
+
+test('ModdingFlow activation confirmation remains inert while its capability is disabled', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  await expect(page.getByRole('dialog', { name: 'Загрузка из ModdingFlow' })).toHaveCount(0);
+  const activationCalls = await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+      (call) => call.method.startsWith('moddingFlowActivations.')
+    )
+  ));
+  expect(activationCalls).toEqual([]);
+});
+
+test('ModdingFlow activation confirmation requires a compatible target and exact plan preview', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.moddingFlowActivationConfirmation', 'true');
+  });
+  await page.goto(baseUrl);
+
+  const dialog = page.getByRole('dialog', { name: 'Загрузка из ModdingFlow' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
+  const previewPlan = dialog.getByRole('button', { name: 'Проверить план' });
+  await expect(previewPlan).toBeDisabled();
+
+  await dialog.getByLabel('Сборка').selectOption('skyrim-main');
+  await expect(previewPlan).toBeDisabled();
+  await dialog.getByLabel('Профиль').selectOption('Default');
+  await expect(previewPlan).toBeEnabled();
+  await previewPlan.click();
+  await expect(dialog.getByText('Обязательные файлы', { exact: true })).toBeVisible();
+  await expect(
+    dialog.getByText('Исключённые необязательные файлы', { exact: true })
+  ).toBeVisible();
+  const confirm = dialog.getByRole('button', { name: 'Подтвердить загрузку' });
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(dialog).toHaveCount(0);
+
+  const activationCalls = await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>).filter(
+      (call) => call.method.startsWith('moddingFlowActivations.')
+    )
+  ));
+  expect(activationCalls.map((call) => call.method)).toEqual([
+    'moddingFlowActivations.consumePending',
+    'moddingFlowActivations.preview',
+    'moddingFlowActivations.previewPlan',
+    'moddingFlowActivations.accept'
+  ]);
+  expect(activationCalls[2].payload).toMatchObject({
+    artifactId: '01234567-89ab-4cde-8fab-0123456789ab',
+    instanceId: 'skyrim-main',
+    profileName: 'Default'
+  });
+  expect(activationCalls[2].payload.operationId).toMatch(
+    /^op_.*_moddingflow_activation_plan_preview_/
+  );
+  expect(activationCalls[3].payload).toMatchObject({
+    artifactId: '01234567-89ab-4cde-8fab-0123456789ab',
+    instanceId: 'skyrim-main',
+    profileName: 'Default',
+    confirmedPlanId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+  });
+  expect(activationCalls[3].payload.operationId).toMatch(/^op_.*_moddingflow_activation_accept_/);
+});
+
+test('downloads an available app update from the stable green titlebar control', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`${baseUrl}/?testUpdate=available`);
+
+  const availableUpdateButton = page.getByRole('button', {
+    name: 'Скачать и установить обновление Fluxora 2.4.0'
+  });
+  await expect(availableUpdateButton).toBeVisible();
+  const updateButton = page.locator('[data-update-control]');
+  await expect(updateButton).toHaveCSS('color', 'rgb(74, 222, 128)');
+  await expect
+    .poll(() => updateButton.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    }))
+    .toEqual({ width: 30, height: 30 });
+
+  const settingsButton = page.getByRole('button', { name: 'Open settings' });
+  expect(await updateButton.evaluate((element) => element.getBoundingClientRect().right))
+    .toBeLessThanOrEqual(await settingsButton.evaluate((element) => element.getBoundingClientRect().left));
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.getStatus'
+      ).length
+    )))
+    .toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.rendererReady'
+      ).length
+    )))
+    .toBe(1);
+  expect(await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+      (call) => call.method === 'updates.check'
+    ).length
+  ))).toBe(0);
+
+  await updateButton.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+    (element as HTMLButtonElement).click();
+  });
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.downloadAndInstall'
+      ).length
+    )))
+    .toBe(1);
+
+  await page.evaluate(() => (window as any).__emitFluxoraUpdateStatus({
+    state: 'downloading',
+    downloadedBytes: 37,
+    totalBytes: 100,
+    progressPercent: 37
+  }));
+  await expect(updateButton).toHaveAttribute(
+    'aria-label',
+    'Загрузка обновления Fluxora 2.4.0: 37%. Отменить'
+  );
+  await expect(updateButton).toHaveAttribute('aria-busy', 'true');
+  await expect(updateButton).toHaveAttribute('data-update-progress', '37');
+  await expect(updateButton).toBeEnabled();
+
+  await page.evaluate(() => (window as any).__emitFluxoraUpdateStatus({
+    state: 'waitingForOperations',
+    progressPercent: 100
+  }));
+  await expect(updateButton).toHaveAttribute(
+    'title',
+    'Обновление Fluxora 2.4.0 ожидает завершения операций. Отменить'
+  );
+
+  await page.evaluate(() => (window as any).__failFluxoraUpdateDownload('Соединение прервано'));
+  await expect(updateButton).toHaveAttribute('data-update-state', 'error');
+  await expect(updateButton).toBeEnabled();
+  await expect(updateButton).toHaveAttribute(
+    'title',
+    'Не удалось установить обновление Fluxora 2.4.0. Соединение прервано. Повторить'
+  );
+
+  await updateButton.click();
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.downloadAndInstall'
+      ).length
+    )))
+    .toBe(2);
+  await page.evaluate(() => (window as any).__finishFluxoraUpdateDownload({
+    state: 'launchingUpdater',
+    progressPercent: 100
+  }));
+  await expect(updateButton).toHaveAttribute('data-update-state', 'launchingUpdater');
+  await expect(updateButton).toBeDisabled();
+});
+
+test('cancels an in-progress app update from the keyboard before updater commit', async ({ page }) => {
+  await page.goto(`${baseUrl}/?testUpdate=available`);
+  const updateButton = page.locator('[data-update-control]');
+  await updateButton.click();
+  await page.evaluate(() => (window as any).__emitFluxoraUpdateStatus({
+    state: 'downloading',
+    downloadedBytes: 10,
+    totalBytes: 100,
+    progressPercent: 10
+  }));
+
+  await updateButton.focus();
+  await page.keyboard.press('Enter');
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.cancel'
+      ).length
+    )))
+    .toBe(1);
+  const cancelCall = await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>).find(
+      (call) => call.method === 'updates.cancel'
+    )
+  ));
+  expect(cancelCall).toBeDefined();
+  expect(cancelCall!.payload.operationId).toMatch(/^op_.*_app_update_cancel_/);
+  await expect(updateButton).toHaveAttribute('data-update-state', 'available');
+});
+
+test('keeps an automatic app-update check failure silent', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`${baseUrl}/?testUpdate=automaticError`);
+
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.getStatus'
+      ).length
+    )))
+    .toBe(1);
+  await expect(page.locator('[data-update-control]')).toHaveCount(0);
+  await expect(page.locator('.transient-notice')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('does not acknowledge updater health from a secondary window', async ({ page }) => {
+  await page.goto(`${baseUrl}/?window=settings`);
+
+  await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
+  expect(await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+      (call) => call.method === 'updates.rendererReady'
+    ).length
+  ))).toBe(0);
 });

@@ -21,7 +21,7 @@ Output/
 output/
 output-symbols/
 output-installer/
-installer/Fluxora.Installer/Resources/Payload/
+output-update/
 CMakeUserPresets.json
 *.obj
 *.pdb
@@ -29,6 +29,7 @@ CMakeUserPresets.json
 *.lib
 *.dll
 *.exe
+!third_party/webview2/MicrosoftEdgeWebview2Setup.exe
 
 # Logs
 *.log
@@ -37,6 +38,11 @@ logs/
 # Temporary local workspaces
 tmp/
 benchmarks/work/
+
+# Release signing secrets and encrypted recovery copies
+*.encrypted.pk8
+update-manifest-p256-private.dpapi
+update-manifest-p256-private.pem
 
 # OS
 Thumbs.db

@@ -4,12 +4,24 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fluxora
 {
+    using ExternalProviderGameSlugMap =
+        std::map<std::wstring, std::vector<std::wstring>>;
+
+    [[nodiscard]] bool isCanonicalExternalProviderId(
+        std::wstring_view value) noexcept;
+    [[nodiscard]] bool isCanonicalExternalGameSlug(
+        std::wstring_view value) noexcept;
+    void validateExternalProviderGameSlugs(
+        const ExternalProviderGameSlugMap& mappings);
+
     enum class GameExecutableRole
     {
         Primary,
@@ -123,6 +135,7 @@ namespace fluxora
         std::wstring summary;
         std::vector<std::wstring> aliases;
         std::vector<std::wstring> domains;
+        ExternalProviderGameSlugMap externalProviderGameSlugs;
         std::vector<std::wstring> installFolderAliases;
         std::wstring defaultProfileName;
         std::wstring dataFolder;

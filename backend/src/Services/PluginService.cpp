@@ -2305,6 +2305,8 @@ namespace fluxora
             throw std::invalid_argument("This plugin is locked at the top of the load order.");
         }
 
+        const int sourceVisibleIndex = movingEntry->order;
+        const std::wstring movingOrderItemId = movingEntry->orderId;
         const int clampedTarget = clampExistingPluginOrderTarget(entries, *movingEntry, targetIndex);
         if (movingEntry->order == clampedTarget)
         {
@@ -2328,9 +2330,18 @@ namespace fluxora
             projectDirectory,
             profileName,
             storedPluginNames(stored),
-            movingEntry->orderId,
+            movingOrderItemId,
             clampedTarget);
         entries = buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+        const PluginEntry* movedEntry = findPluginOrderEntry(entries, movingOrderItemId);
+        logger_.writeOperation(
+            LogLevel::Info,
+            "PluginOrder",
+            "movePlugin sourceVisibleIndex=" + std::to_string(sourceVisibleIndex) +
+                ", requestedVisibleIndex=" + std::to_string(targetIndex) +
+                ", resolvedVisibleIndex=" +
+                std::to_string(movedEntry == nullptr ? -1 : movedEntry->order) +
+                ", visibleCount=" + std::to_string(entries.size()) + ".");
         writeStoredPluginsIfChanged(
             pathSettings_,
             projectDirectory,

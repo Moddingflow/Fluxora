@@ -80,7 +80,10 @@ describe('mod details window', () => {
     expect(styles).toContain('mask: var(--asset-icon) center / contain no-repeat;');
     expect(iconsReadme).toContain('folder-tree.svg');
     expect(iconsReadme).toContain('git-compare-arrows.svg');
-    expect(iconsReadme).toContain('Lucide is distributed under the ISC license');
+    expect(iconsReadme).toContain('lucide-icons/lucide');
+    expect(iconsReadme).toContain('tag `1.21.0`');
+    expect(iconsReadme).toContain('Licence: ISC');
+    expect(iconsReadme).toContain('LUCIDE-LICENSE.txt');
     expect(folderTree).toContain('<svg');
     expect(compare).toContain('<svg');
   });

@@ -17,7 +17,7 @@ describe('managed executable display', () => {
       'texGen',
       {
         badgeLabel: 'TexGen · VFS',
-        outputModName: 'TexGen Output',
+        outputModName: 'Foundation - TexGen Output',
         preparationLabel: 'Подготовка TexGen',
         toolName: 'TexGen'
       }
@@ -26,7 +26,7 @@ describe('managed executable display', () => {
       'dynDoLod',
       {
         badgeLabel: 'DynDOLOD · VFS',
-        outputModName: 'DynDOLOD Output',
+        outputModName: 'Foundation - DynDOLOD Output',
         preparationLabel: 'Подготовка DynDOLOD',
         toolName: 'DynDOLOD'
       }

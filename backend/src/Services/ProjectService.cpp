@@ -564,6 +564,47 @@ namespace fluxora
             return strings;
         }
 
+        std::optional<ExternalProviderGameSlugMap> readExternalProviderGameSlugsField(
+            const JsonValue& object)
+        {
+            const JsonValue* value = object.find(L"externalProviderGameSlugs");
+            if (value == nullptr)
+            {
+                return std::nullopt;
+            }
+            if (!value->isObject() || value->asObject().empty())
+            {
+                throw std::invalid_argument(
+                    "Build config externalProviderGameSlugs must be a non-empty object.");
+            }
+
+            ExternalProviderGameSlugMap mappings;
+            for (const auto& [providerId, slugsValue] : value->asObject())
+            {
+                if (!slugsValue.isArray() || slugsValue.asArray().empty())
+                {
+                    throw std::invalid_argument(
+                        "Build config provider game slugs must be a non-empty array.");
+                }
+
+                std::vector<std::wstring> slugs;
+                slugs.reserve(slugsValue.asArray().size());
+                for (const JsonValue& slugValue : slugsValue.asArray())
+                {
+                    if (!slugValue.isString())
+                    {
+                        throw std::invalid_argument(
+                            "Build config provider game slugs must contain strings.");
+                    }
+                    slugs.push_back(slugValue.asString());
+                }
+                mappings.emplace(providerId, std::move(slugs));
+            }
+
+            validateExternalProviderGameSlugs(mappings);
+            return mappings;
+        }
+
         std::optional<std::vector<TemplateCapability>> readCapabilitiesField(const JsonValue& object)
         {
             const JsonValue* value = object.find(L"capabilities");
@@ -1537,6 +1578,17 @@ namespace fluxora
             }
         }
 
+        void applyExternalProviderGameSlugsField(
+            const JsonValue& object,
+            ExternalProviderGameSlugMap& target)
+        {
+            if (std::optional<ExternalProviderGameSlugMap> value =
+                    readExternalProviderGameSlugsField(object))
+            {
+                target = std::move(value.value());
+            }
+        }
+
         BuildTemplate buildTemplateFromManifest(
             const JsonValue& manifest,
             const TemplateService& templates,
@@ -1564,6 +1616,8 @@ namespace fluxora
             applyStringField(manifest, L"gameName", resolved.gameName);
             applyStringField(manifest, L"dataDirectory", resolved.dataDirectory);
             applyStringField(manifest, L"nexusDomain", resolved.nexusDomain);
+            applyExternalProviderGameSlugsField(
+                manifest, resolved.externalProviderGameSlugs);
             applyStringField(manifest, L"defaultProfile", resolved.defaultProfileName);
             applyStringArrayField(manifest, L"folders", resolved.folders);
             applyStringArrayField(manifest, L"profileFiles", resolved.profileFiles);
@@ -1619,6 +1673,8 @@ namespace fluxora
             applyStringField(manifest, L"gameName", resolved.gameName);
             applyStringField(manifest, L"dataDirectory", resolved.dataDirectory);
             applyStringField(manifest, L"nexusDomain", resolved.nexusDomain);
+            applyExternalProviderGameSlugsField(
+                manifest, resolved.externalProviderGameSlugs);
             applyStringField(manifest, L"defaultProfile", resolved.defaultProfileName);
             applyStringArrayField(manifest, L"folders", resolved.folders);
             applyStringArrayField(manifest, L"profileFiles", resolved.profileFiles);
@@ -1834,6 +1890,22 @@ namespace fluxora
             writer.field(L"workingDirectory", L"");
             writer.endObject();
             writer.endArray();
+        }
+
+        void writeExternalProviderGameSlugs(
+            JsonWriter& writer,
+            const ExternalProviderGameSlugMap& mappings)
+        {
+            if (mappings.empty())
+            {
+                return;
+            }
+            writer.key(L"externalProviderGameSlugs").beginObject();
+            for (const auto& [providerId, gameSlugs] : mappings)
+            {
+                writer.stringArray(providerId, gameSlugs);
+            }
+            writer.endObject();
         }
 
         std::string healthFailureMessage(const GameHealthCheckResult& health)
@@ -3792,6 +3864,7 @@ namespace fluxora
         writer.field(L"configPath", project.configPath.wstring());
         writer.field(L"dataDirectory", resolved.dataDirectory);
         writer.field(L"nexusDomain", resolved.nexusDomain);
+        writeExternalProviderGameSlugs(writer, resolved.externalProviderGameSlugs);
         writer.field(L"defaultProfile", resolved.defaultProfileName);
         writer.stringArray(L"folders", resolved.folders);
         writer.stringArray(L"profileFiles", resolved.profileFiles);

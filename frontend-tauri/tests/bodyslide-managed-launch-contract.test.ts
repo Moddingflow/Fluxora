@@ -11,7 +11,7 @@ const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
 describe('managed executable launch contract', () => {
-  it('keeps optional DTO fields backward compatible and routes finalization to background', () => {
+  it('keeps optional DTO fields backward compatible and finalizes on the launch host', () => {
     const shared = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
     const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
@@ -25,7 +25,7 @@ describe('managed executable launch contract', () => {
     expect(facade).toContain("'executables.completeManagedLaunch'");
     expect(facade).toContain("requestWithOperationId(args[2], 'executables_complete_managed_launch')");
     expect(rustShell).toContain(
-      '("executables.completeManagedLaunch", BridgeLane::Background)'
+      '("executables.completeManagedLaunch", BridgeLane::Main)'
     );
     expect(bridge).toContain('BODYSLIDE_SESSION_ACTIVE');
     expect(bridge).toContain('LOD_GENERATOR_SESSION_ACTIVE');

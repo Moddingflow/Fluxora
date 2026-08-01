@@ -2,7 +2,6 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
-#include "FluxoraCore/Services/ModOrganizerVersionCodec.hpp"
 #include "FluxoraCore/Services/NexusFileLineageResolver.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
@@ -42,17 +41,10 @@ namespace fluxora
             return value;
         }
 
-        std::optional<std::wstring> confirmedImportedVersionRepair(
+        std::optional<std::wstring> confirmedInstalledVersionRepair(
             const InstalledModRecord& mod,
             const NexusModFilesResponse& response)
         {
-            const std::optional<std::wstring> decoded =
-                ModOrganizerVersionCodec::decodeDecimalCanonicalVersion(mod.version);
-            if (!decoded.has_value() || *decoded == mod.version)
-            {
-                return std::nullopt;
-            }
-
             const auto installedFile = std::find_if(
                 response.files.begin(),
                 response.files.end(),
@@ -60,31 +52,31 @@ namespace fluxora
                 {
                     return file.fileId == mod.source.remoteFileId;
                 });
-            if (installedFile == response.files.end() || installedFile->version != *decoded)
+            if (installedFile == response.files.end() ||
+                installedFile->version.empty() ||
+                installedFile->version == mod.version)
             {
                 return std::nullopt;
             }
 
-            return decoded;
+            return installedFile->version;
         }
 
-        std::optional<std::wstring> storedImportedVersionRepair(
+        std::optional<std::wstring> storedInstalledVersionRepair(
             const InstalledModRecord& mod)
         {
-            const std::optional<std::wstring> decoded =
-                ModOrganizerVersionCodec::decodeDecimalCanonicalVersion(mod.version);
-            if (!decoded.has_value() ||
-                lower(mod.source.provider) != L"nexus" ||
+            if (lower(mod.source.provider) != L"nexus" ||
                 mod.source.remoteFileId.empty() ||
                 mod.source.latestFileId != mod.source.remoteFileId ||
-                mod.source.latestVersion != *decoded ||
+                mod.source.latestVersion.empty() ||
+                mod.source.latestVersion == mod.version ||
                 lower(mod.source.updateCheckState) != L"completed" ||
                 mod.source.lastCheckedAt.empty())
             {
                 return std::nullopt;
             }
 
-            return decoded;
+            return mod.source.latestVersion;
         }
 
         std::wstring nowUtcText()
@@ -559,7 +551,7 @@ namespace fluxora
             InstanceMetadataStore::listInstalledMods(request.projectDirectory, modsDirectory);
         for (InstalledModRecord& mod : installed)
         {
-            const std::optional<std::wstring> repair = storedImportedVersionRepair(mod);
+            const std::optional<std::wstring> repair = storedInstalledVersionRepair(mod);
             if (!repair.has_value() ||
                 !InstanceMetadataStore::repairInstalledModVersion(
                     request.projectDirectory,
@@ -575,7 +567,7 @@ namespace fluxora
             logger_.writeOperation(
                 LogLevel::Info,
                 "ModUpdates",
-                "Repaired stored Mod Organizer version encoding folderName=" +
+                "Repaired installed version from stored exact Nexus file metadata folderName=" +
                     asciiText(mod.folderName) +
                     " fileId=" + asciiText(mod.source.remoteFileId) + ".");
         }
@@ -1047,7 +1039,7 @@ namespace fluxora
                     persisted.lastCheckState = L"completed";
                     persisted.lastAttemptedAt = checkedAt;
                     if (const std::optional<std::wstring> repair =
-                            confirmedImportedVersionRepair(*mod, response);
+                            confirmedInstalledVersionRepair(*mod, response);
                         repair.has_value())
                     {
                         persisted.expectedInstalledVersion = mod->version;
@@ -1062,7 +1054,7 @@ namespace fluxora
                         logger_.writeOperation(
                             LogLevel::Info,
                             "ModUpdates",
-                            "Repaired imported Mod Organizer version encoding folderName=" +
+                            "Repaired installed version from exact Nexus file metadata folderName=" +
                                 asciiText(mod->folderName) +
                                 " fileId=" + asciiText(mod->source.remoteFileId) + ".");
                     }

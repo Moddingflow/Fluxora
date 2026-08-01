@@ -157,6 +157,7 @@ namespace fluxora
         {
         case ExternalConnectionState::NotConfigured: return L"notConfigured";
         case ExternalConnectionState::NotLinked: return L"notLinked";
+        case ExternalConnectionState::Connecting: return L"connecting";
         case ExternalConnectionState::Restoring: return L"restoring";
         case ExternalConnectionState::Ready: return L"ready";
         case ExternalConnectionState::TemporarilyUnavailable: return L"temporarilyUnavailable";
@@ -365,6 +366,80 @@ namespace fluxora
         snapshot.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - started).count();
         return snapshot;
+    }
+
+    ExternalConnectionStatus ExternalConnectionService::restoreProvider(
+        std::wstring_view providerId,
+        std::wstring_view operationId,
+        std::chrono::milliseconds deadline,
+        std::size_t attempt)
+    {
+        const auto provider = findProvider(providerId);
+        if (!provider)
+        {
+            throw std::invalid_argument("External connection provider is not registered.");
+        }
+
+        const auto started = std::chrono::steady_clock::now();
+        const auto restoreDeadline = started + std::max(deadline, std::chrono::milliseconds(1));
+        ExternalConnectionStatus local = provider->localStatus(operationId);
+        if (!local.hasStoredSession ||
+            local.state == ExternalConnectionState::NotConfigured ||
+            local.state == ExternalConnectionState::NotLinked ||
+            local.state == ExternalConnectionState::ReauthRequired)
+        {
+            logTransition(local, attempt, 0);
+            return local;
+        }
+
+        std::promise<ExternalConnectionStatus> promise;
+        std::future<ExternalConnectionStatus> future = promise.get_future();
+        const ExternalConnectionRestoreContext context{
+            restoreDeadline,
+            std::wstring(operationId),
+            attempt
+        };
+        std::thread worker(
+            [provider, context, promise = std::move(promise)]() mutable
+            {
+                try
+                {
+                    promise.set_value(provider->restore(context));
+                }
+                catch (...)
+                {
+                    promise.set_exception(std::current_exception());
+                }
+            });
+
+        ExternalConnectionStatus status;
+        const bool workerCompleted =
+            future.wait_until(restoreDeadline) == std::future_status::ready;
+        if (workerCompleted)
+        {
+            try
+            {
+                status = future.get();
+            }
+            catch (...)
+            {
+                status = failedStatus(std::move(local), operationId);
+            }
+            worker.join();
+        }
+        else
+        {
+            status = timedOutStatus(std::move(local), operationId);
+            std::lock_guard lock(mutex_);
+            restoreWorkers_.push_back(std::move(worker));
+        }
+
+        logTransition(
+            status,
+            attempt,
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count());
+        return status;
     }
 
     ExternalConnectionStatus ExternalConnectionService::connect(

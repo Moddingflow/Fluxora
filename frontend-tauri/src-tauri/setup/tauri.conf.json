@@ -1,0 +1,39 @@
+{
+  "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Fluxora",
+  "version": "../../package.json",
+  "identifier": "app.fluxora.setup",
+  "mainBinaryName": "FluxoraSetup",
+  "build": {
+    "beforeBuildCommand": "npm run build:setup:frontend",
+    "frontendDist": "../../dist/setup",
+    "removeUnusedCommands": true
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "setup",
+        "title": "Fluxora Setup",
+        "url": "setup.html",
+        "width": 900,
+        "height": 640,
+        "minWidth": 760,
+        "minHeight": 560,
+        "decorations": false,
+        "resizable": true,
+        "maximizable": false,
+        "backgroundColor": "#090c11"
+      }
+    ],
+    "security": {
+      "capabilities": ["setup"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "publisher": "Fluxora",
+    "icon": ["../icons/Fluxora.ico", "../icons/Fluxora.png"]
+  }
+}

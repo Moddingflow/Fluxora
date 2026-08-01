@@ -130,6 +130,11 @@ namespace fluxora::tests
         EXPECT_EQ(skyrim.schemaVersion, L"2");
         EXPECT_EQ(skyrim.id.value(), L"skyrimse");
         EXPECT_EQ(skyrim.displayName, L"Skyrim Special Edition");
+        ASSERT_EQ(skyrim.externalProviderGameSlugs.size(), 1U);
+        ASSERT_TRUE(skyrim.externalProviderGameSlugs.contains(L"moddingflow"));
+        EXPECT_EQ(
+            skyrim.externalProviderGameSlugs.at(L"moddingflow"),
+            (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
         EXPECT_EQ(skyrim.dataFolder, L"Data");
         EXPECT_TRUE(skyrim.capabilities.has(GameCapability::Plugins));
         EXPECT_TRUE(skyrim.capabilities.has(GameCapability::LoadOrder));
@@ -251,6 +256,7 @@ namespace fluxora::tests
         EXPECT_TRUE(containsExtension(definition.archiveExtensions, L".7z"));
         EXPECT_TRUE(containsExtension(definition.pluginExtensions, L".esp"));
         EXPECT_EQ(definition.capabilities.bits(), 0U);
+        EXPECT_TRUE(definition.externalProviderGameSlugs.empty());
         ASSERT_EQ(definition.executables.size(), 1U);
         EXPECT_EQ(definition.executables.front().name.displayName(), L"Example.exe");
         EXPECT_EQ(definition.executables.front().name.normalizedName(), L"example.exe");
@@ -297,6 +303,55 @@ namespace fluxora::tests
         ASSERT_EQ(definition.contentLayoutRules.mountRules.size(), 1U);
         EXPECT_EQ(definition.contentLayoutRules.dataFolder, L"Content");
         EXPECT_EQ(definition.dataFolder, L"Content");
+    }
+
+    TEST(GameDefinitionLoaderTests, LoadsStrictExternalProviderGameSlugAllowlist)
+    {
+        const std::wstring json = replaceFirst(
+            std::wstring(minimalDefinition),
+            L"\"domains\": [\"ExampleDomain\"],",
+            LR"json("domains": ["ExampleDomain"],
+            "externalProviderGameSlugs": {
+                "moddingflow": ["skyrim-se-ae", "skyrim-se"],
+                "provider-2": ["game-2"]
+            },)json");
+
+        const GameDefinition definition = GameDefinitionLoader::loadDefinition(json);
+
+        ASSERT_EQ(definition.externalProviderGameSlugs.size(), 2U);
+        EXPECT_EQ(
+            definition.externalProviderGameSlugs.at(L"moddingflow"),
+            (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
+        EXPECT_EQ(
+            definition.externalProviderGameSlugs.at(L"provider-2"),
+            (std::vector<std::wstring>{L"game-2"}));
+    }
+
+    TEST(GameDefinitionLoaderTests, RejectsInvalidExternalProviderGameSlugAllowlist)
+    {
+        const std::vector<std::wstring> invalidMappings{
+            LR"json([])json",
+            LR"json({})json",
+            LR"json({"ModdingFlow":["skyrim-se"]})json",
+            LR"json({"moddingflow":[]})json",
+            LR"json({"moddingflow":[1]})json",
+            LR"json({"moddingflow":["Skyrim-SE"]})json",
+            LR"json({"moddingflow":["../skyrim-se"]})json",
+            LR"json({"moddingflow":["skyrim_se"]})json",
+            LR"json({"moddingflow":["skyrim-se","skyrim-se"]})json"};
+
+        for (const std::wstring& mapping : invalidMappings)
+        {
+            const std::wstring json = replaceFirst(
+                std::wstring(minimalDefinition),
+                L"\"domains\": [\"ExampleDomain\"],",
+                L"\"domains\": [\"ExampleDomain\"],"
+                    L"\"externalProviderGameSlugs\":" + mapping + L",");
+
+            EXPECT_THROW(
+                static_cast<void>(GameDefinitionLoader::loadDefinition(json)),
+                std::runtime_error);
+        }
     }
 
     TEST(GameDefinitionLoaderTests, RejectsUnknownFields)

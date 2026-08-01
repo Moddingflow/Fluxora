@@ -322,7 +322,8 @@ namespace fluxora::tests
                 "\"installRoot\":\"" + toUtf8(installRoot.generic_wstring()) + "\","
                 "\"projectDirectory\":\"" + toUtf8(projectDirectory.generic_wstring()) + "\","
                 "\"dataDirectory\":\"Data\","
-                "\"defaultProfile\":\"Default\","
+                "\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]},"
+                "\"defaultProfile\":\"Catalog Profile\","
                 "\"launchExecutables\":[" + launchExecutables + "]"
                 "}";
         }
@@ -389,6 +390,35 @@ namespace fluxora::tests
                 static_cast<int>(output.size())),
             FluxoraCoreResultInvalidArgument);
         EXPECT_NE(lastCoreError().find(L"package type"), std::wstring::npos);
+    }
+
+    TEST(FluxoraCoreApiTests, TemplateSerializationCarriesExternalProviderGameSlugAllowlist)
+    {
+        fluxora_core_shutdown();
+        std::array<wchar_t, 2> buffer{};
+
+        ASSERT_EQ(
+            fluxora_get_game_templates(buffer.data(), static_cast<int>(buffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring listed = copyBufferedApiOutput();
+        EXPECT_NE(
+            listed.find(
+                L"\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]}"),
+            std::wstring::npos);
+
+        ASSERT_EQ(
+            fluxora_resolve_template(
+                L"skyrimse",
+                buffer.data(),
+                static_cast<int>(buffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring resolved = copyBufferedApiOutput();
+        EXPECT_NE(
+            resolved.find(
+                L"\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]}"),
+            std::wstring::npos);
+
+        fluxora_core_shutdown();
     }
 
     TEST(FluxoraCoreApiTests, BuildFilesAdapterKeepsOpaqueRefsAndTypedErrors)
@@ -528,6 +558,13 @@ namespace fluxora::tests
         const std::wstring json(jsonBuffer.data());
         EXPECT_NE(json.find(L"Large Launcher Build"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"gameCapabilities\""), std::wstring::npos);
+        EXPECT_NE(
+            json.find(
+                L"\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]}"),
+            std::wstring::npos);
+        EXPECT_NE(
+            json.find(L"\"defaultProfile\":\"Catalog Profile\""),
+            std::wstring::npos);
         EXPECT_NE(json.find(L"\"paths\""), std::wstring::npos);
         EXPECT_EQ(json.find(L"\"executables\""), std::wstring::npos);
         EXPECT_EQ(json.find(L"\"template\""), std::wstring::npos);
@@ -821,8 +858,6 @@ namespace fluxora::tests
             std::filesystem::copy_options::overwrite_existing);
         ASSERT_EQ(fluxora_set_all_installed_mods_enabled(project.c_str(), 1), FluxoraCoreResultOk);
 
-        const std::filesystem::path priorOutput = project / L"mods" / L"TexGen Output";
-        writeTextFile(priorOutput / L"prior-output.marker", "preserve-until-success");
         const std::filesystem::path probeStatus = temp.path() / L"texgen-vfs-probe-status.txt";
         JsonWriter executables;
         executables.beginArray()
@@ -832,8 +867,9 @@ namespace fluxora::tests
                 .field(L"executablePath", texGenExecutable.wstring())
                 .field(
                     L"arguments",
-                    L"-tes5 -o:\"C:\\old-output\" --fluxora-probe-status \"" +
-                        probeStatus.wstring() + L"\" --fluxora-game-data \"" +
+                    LR"(-D:\"E:\\\\Foundation Edition\\\\Stock Game\\\\Data\\\" -tes5\n -o:\"C:\\old-output\\\")" +
+                        std::wstring(L" --fluxora-probe-status \"") +
+                        probeStatus.wstring() + L"\" --fluxora-expected-game-data \"" +
                         gameData.wstring() + L"\"")
                 .field(L"workingDirectory", toolDirectory.wstring())
                 .field(L"iconPath", L"")
@@ -862,8 +898,10 @@ namespace fluxora::tests
         ASSERT_NE(launch.find(L"outputMod"), nullptr);
         const std::filesystem::path output(
             launch.find(L"outputMod")->find(L"path")->asString());
-        EXPECT_EQ(output.filename(), L"TexGen Output");
-        EXPECT_TRUE(std::filesystem::is_directory(project / L"mods" / L"DynDOLOD Output"));
+        EXPECT_EQ(output.filename(), L"TexGen VFS Build - TexGen Output");
+        EXPECT_FALSE(std::filesystem::exists(
+            project / L"mods" / L"TexGen VFS Build - DynDOLOD Output"));
+        writeTextFile(output / L"prior-output.marker", "preserve-until-success");
 
         const std::uint32_t processId = static_cast<std::uint32_t>(
             std::stoul(launch.find(L"processId")->asNumber()));
@@ -876,11 +914,15 @@ namespace fluxora::tests
         DWORD exitCode = 0;
         ASSERT_TRUE(GetExitCodeProcess(process, &exitCode));
         CloseHandle(process);
-        ASSERT_EQ(exitCode, 0U);
+        ASSERT_EQ(exitCode, 0U)
+            << (std::filesystem::is_regular_file(probeStatus)
+                    ? readTextFile(probeStatus)
+                    : "probe status missing");
 
         ASSERT_TRUE(std::filesystem::is_regular_file(probeStatus));
         const std::string status = readTextFile(probeStatus);
         EXPECT_TRUE(status.starts_with("ok|C:\\Fluxora Tool Output\\")) << status;
+        EXPECT_NE(status.find("TexGen VFS Build - TexGen Output"), std::string::npos) << status;
         EXPECT_EQ(status.find(project.string()), std::string::npos);
         EXPECT_EQ(readTextFile(output / L"prior-output.marker"), "preserve-until-success");
         EXPECT_FALSE(std::filesystem::exists(output / L"meshes" / L"texgen-output.nif"));
@@ -2457,4 +2499,177 @@ namespace fluxora::tests
         fluxora_core_shutdown();
 #endif
     }
+
+#if defined(_WIN32) && defined(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    TEST(FluxoraCoreApiTests, PrivateModdingFlowBoundaryUsesTypedCallbacksAndSafeOutputs)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable localAppData(
+            L"LOCALAPPDATA",
+            (temp.path() / L"LocalAppData").wstring());
+        ScopedEnvironmentVariable appRoot(
+            L"FLUXORA_APP_ROOT",
+            (temp.path() / L"AppRoot").wstring());
+        ScopedEnvironmentVariable logRoot(
+            L"FLUXORA_LOG_DIR",
+            (temp.path() / L"Logs").wstring());
+
+        std::array<wchar_t, 8192> beginBuffer{};
+        ASSERT_EQ(
+            fluxora_moddingflow_begin_connect(
+                L"http://127.0.0.1:49172/oauth/fluxora/callback",
+                L"operation-native-begin",
+                beginBuffer.data(),
+                static_cast<int>(beginBuffer.size())),
+            FluxoraCoreResultOk) << toUtf8(lastCoreError());
+        const std::wstring beginJson(beginBuffer.data());
+        EXPECT_EQ(beginJson.find(L"access_token"), std::wstring::npos);
+        EXPECT_EQ(beginJson.find(L"refresh_token"), std::wstring::npos);
+        EXPECT_EQ(beginJson.find(L"jwks"), std::wstring::npos);
+        EXPECT_EQ(beginJson.find(L"problem"), std::wstring::npos);
+        const JsonValue begin = JsonReader::parse(beginJson);
+        const JsonValue* transaction = begin.find(L"transactionId");
+        ASSERT_NE(transaction, nullptr);
+        ASSERT_TRUE(transaction->isString());
+        ASSERT_FALSE(transaction->asString().empty());
+
+        std::array<wchar_t, 1024> completionBuffer{};
+        EXPECT_EQ(
+            fluxora_moddingflow_complete_connect(
+                transaction->asString().c_str(),
+                FluxoraModdingFlowCallbackSuccess,
+                L"authorization-code-must-not-leak",
+                L"unexpected-error-shape",
+                nullptr,
+                L"state",
+                L"https://moddingflow.com",
+                L"operation-native-complete",
+                completionBuffer.data(),
+                static_cast<int>(completionBuffer.size())),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_EQ(lastCoreError().find(L"authorization-code-must-not-leak"), std::wstring::npos);
+        EXPECT_EQ(lastCoreError().find(L"unexpected-error-shape"), std::wstring::npos);
+        EXPECT_EQ(fluxora_get_last_required_buffer_length(), 0);
+
+        EXPECT_EQ(
+            fluxora_moddingflow_cancel_pending_connect(
+                transaction->asString().c_str(),
+                L"operation-native-cancel"),
+            FluxoraCoreResultOk) << toUtf8(lastCoreError());
+
+        std::array<wchar_t, 8192> listBuffer{};
+        ASSERT_EQ(
+            fluxora_list_external_connections(
+                L"operation-native-list",
+                listBuffer.data(),
+                static_cast<int>(listBuffer.size())),
+            FluxoraCoreResultOk) << toUtf8(lastCoreError());
+        const std::wstring listJson(listBuffer.data());
+        EXPECT_NE(listJson.find(L"\"providerId\":\"nexus\""), std::wstring::npos);
+        EXPECT_NE(listJson.find(L"\"providerId\":\"moddingflow\""), std::wstring::npos);
+        EXPECT_NE(listJson.find(L"\"operationId\":\"operation-native-list\""), std::wstring::npos);
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, PrivateModdingFlowArtifactLookupRejectsInvalidInputsWithoutReflection)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable localAppData(
+            L"LOCALAPPDATA",
+            (temp.path() / L"LocalAppData").wstring());
+        ScopedEnvironmentVariable appRoot(
+            L"FLUXORA_APP_ROOT",
+            (temp.path() / L"AppRoot").wstring());
+        ScopedEnvironmentVariable logRoot(
+            L"FLUXORA_LOG_DIR",
+            (temp.path() / L"Logs").wstring());
+
+        std::array<wchar_t, 1024> output{};
+        EXPECT_EQ(
+            fluxora_moddingflow_lookup_artifact_preview(
+                nullptr,
+                FluxoraModdingFlowArtifactLookupAnonymous,
+                L"operation-artifact-null",
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_EQ(fluxora_get_last_required_buffer_length(), 0);
+
+        EXPECT_EQ(
+            fluxora_moddingflow_lookup_artifact_preview(
+                L"44444444-4444-4444-8444-444444444444",
+                99,
+                L"operation-artifact-invalid-auth-secret",
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_EQ(lastCoreError().find(L"secret"), std::wstring::npos);
+
+        EXPECT_EQ(
+            fluxora_moddingflow_lookup_artifact_preview(
+                L"44444444-4444-4444-8444-44444444444A",
+                FluxoraModdingFlowArtifactLookupBearerModsRead,
+                L"operation-artifact-invalid-uuid",
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        const std::wstring invalidUuidError = lastCoreError();
+        EXPECT_TRUE(invalidUuidError.starts_with(L"moddingflow-artifact:invalid-request:"));
+        EXPECT_EQ(invalidUuidError.find(L"44444444"), std::wstring::npos);
+        EXPECT_EQ(fluxora_get_last_required_buffer_length(), 0);
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, PrivateModdingFlowActivationPlanIsStrictAndOptionalDependenciesStayOff)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable localAppData(
+            L"LOCALAPPDATA",
+            (temp.path() / L"LocalAppData").wstring());
+        ScopedEnvironmentVariable appRoot(
+            L"FLUXORA_APP_ROOT",
+            (temp.path() / L"AppRoot").wstring());
+        ScopedEnvironmentVariable logRoot(
+            L"FLUXORA_LOG_DIR",
+            (temp.path() / L"Logs").wstring());
+
+        std::array<wchar_t, 1024> output{};
+        EXPECT_EQ(
+            fluxora_moddingflow_preview_activation_plan(
+                L"44444444-4444-4444-8444-444444444444",
+                L"skyrim-se",
+                L"1.6.1170",
+                1,
+                L"activation-plan-secret-must-not-leak",
+                L"operation-plan-optional",
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_EQ(lastCoreError().find(L"secret-must-not-leak"), std::wstring::npos);
+        EXPECT_EQ(fluxora_get_last_required_buffer_length(), 0);
+
+        EXPECT_EQ(
+            fluxora_moddingflow_preview_activation_plan(
+                L"44444444-4444-4444-8444-44444444444A",
+                L"skyrim-se",
+                L"1.6.1170",
+                0,
+                L"activation-plan-invalid-artifact",
+                L"operation-plan-invalid-artifact",
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        const std::wstring invalidArtifactError = lastCoreError();
+        EXPECT_TRUE(invalidArtifactError.starts_with(L"moddingflow-plan:invalid-request:"));
+        EXPECT_EQ(invalidArtifactError.find(L"44444444"), std::wstring::npos);
+        EXPECT_EQ(fluxora_get_last_required_buffer_length(), 0);
+        fluxora_core_shutdown();
+    }
+#endif
 }

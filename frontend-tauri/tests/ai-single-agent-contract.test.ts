@@ -75,7 +75,7 @@ describe('single-agent product contract', () => {
     expect(host).toContain('stagnantResultCount');
     expect(host).toContain('phaseTransitions');
     const shell = read('src-tauri/src/lib.rs');
-    expect(shell.indexOf('"buildFiles.beginChat"')).toBeLessThan(shell.indexOf('"chat.beginToolRun"'));
+    expect(shell.lastIndexOf('"buildFiles.beginChat"')).toBeLessThan(shell.lastIndexOf('"chat.beginToolRun"'));
     expect(shell).toContain('nativeSessionPreopened');
     expect(host).not.toMatch(/orchestrat|subagent|local-dry-run/i);
   });
@@ -196,10 +196,12 @@ describe('single-agent product contract', () => {
     expect(shell).toContain('buildFiles.resetRollbackCheckpoints');
   });
 
-  it('uses the current publishable-key contract with a legacy environment alias only', () => {
+  it('uses the private managed OAuth contract without renderer or publishable credentials', () => {
     const host = read('src-tauri/src/bin/fluxora_ai_host.rs');
-    expect(host).toContain('DEFAULT_SUPABASE_PUBLISHABLE_KEY');
-    expect(host).toContain('FLUXORA_AI_SUPABASE_PUBLISHABLE_KEY');
-    expect(host).toContain('FLUXORA_AI_SUPABASE_ANON_KEY');
+    const shell = read('src-tauri/src/lib.rs');
+    expect(host).toContain('PRIVATE_MANAGED_ACCESS_TOKEN_FIELD');
+    expect(host).toContain('MANAGED_AI_GATEWAY_PROTOCOL: &str = "3"');
+    expect(shell).toContain('moddingflow.getManagedAiAccessToken');
+    expect(host).not.toMatch(/SUPABASE_(?:PUBLISHABLE|ANON)_KEY/);
   });
 });

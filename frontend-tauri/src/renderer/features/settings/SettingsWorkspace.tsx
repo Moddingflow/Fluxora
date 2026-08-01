@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Code2,
   ExternalLink,
@@ -5,10 +6,11 @@ import {
   Languages,
   Link2,
   Mic,
+  MonitorCog,
   Plug,
   RefreshCw,
   UploadCloud
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 
 import {
   apiLimitProviderSummary,
@@ -27,8 +29,15 @@ import {
   connectionSummary
 } from '../../connection-workspace-state';
 import { TransferSettingsPanel } from '../../TransferSettingsPanel';
-import { nexusModsIcon } from '../../design-system/assets';
+import { moddingFlowIcon, nexusModsIcon } from '../../design-system/assets';
+import { Icon as DesignIcon } from '../../design-system/icons';
 import { LanguageSelect } from './LanguageSelect';
+import { managerHandoffSettingsCopy } from './manager-handoff-settings-copy';
+import { LegalDocumentsPanel } from '../legal/LegalDocumentsPanel';
+import { AppUpdateSettingsControl } from '../update/AppUpdateSettingsControl';
+import type { AppUpdateSettingsViewState } from '../update/app-update-state';
+import { legalLanguageFromAppLanguage } from '../legal/legal-documents';
+import type { LegalDocumentKind } from '../../../installer/setup/setup-flow';
 import type {
   FluxoraApiLimitProvider,
   FluxoraAppInfo,
@@ -42,6 +51,7 @@ interface SettingsWorkspaceProps {
   apiLimitProviders: FluxoraApiLimitProvider[];
   apiLimitsBusy: boolean;
   appInfo: FluxoraAppInfo | null;
+  appUpdate: AppUpdateSettingsViewState;
   bridgeStatus: NativeBridgeStatus | null;
   developerModeEnabled: boolean;
   isTransferRunning: boolean;
@@ -49,11 +59,13 @@ interface SettingsWorkspaceProps {
   microphoneAllowed: boolean;
   microphonePermissionBusy: boolean;
   lastBuildDate: string;
+  connectionBusyAction: 'connect' | 'cancel' | 'disconnect' | null;
   connectionBusyProviderId: string | null;
   connectionProviders: FluxoraExternalConnectionStatus[];
   onDeveloperModeChange: (enabled: boolean) => void;
   onOpenTransfer: () => void;
   onOpenRepository: () => void;
+  onOpenManagerDefaultApps: () => Promise<void>;
   onResetMicrophonePermission: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
@@ -67,6 +79,7 @@ export function SettingsWorkspace({
   apiLimitProviders,
   apiLimitsBusy,
   appInfo,
+  appUpdate,
   bridgeStatus,
   developerModeEnabled,
   isTransferRunning,
@@ -74,11 +87,13 @@ export function SettingsWorkspace({
   microphoneAllowed,
   microphonePermissionBusy,
   lastBuildDate,
+  connectionBusyAction,
   connectionBusyProviderId,
   connectionProviders,
   onDeveloperModeChange,
   onOpenTransfer,
   onOpenRepository,
+  onOpenManagerDefaultApps,
   onResetMicrophonePermission,
   onSectionChange,
   onSetLanguage,
@@ -87,6 +102,25 @@ export function SettingsWorkspace({
   settingsBusyLabel,
   settingsCapabilities
 }: SettingsWorkspaceProps) {
+  const [managerHandoffSettingsBusy, setManagerHandoffSettingsBusy] = useState(false);
+  const [managerHandoffSettingsError, setManagerHandoffSettingsError] = useState(false);
+  const [legalDocument, setLegalDocument] = useState<LegalDocumentKind>('privacy');
+  const managerHandoffCopy = managerHandoffSettingsCopy(bridgeStatus?.language);
+  const openManagerDefaultApps = async (): Promise<void> => {
+    if (managerHandoffSettingsBusy) {
+      return;
+    }
+    setManagerHandoffSettingsBusy(true);
+    setManagerHandoffSettingsError(false);
+    try {
+      await onOpenManagerDefaultApps();
+    } catch {
+      setManagerHandoffSettingsError(true);
+    } finally {
+      setManagerHandoffSettingsBusy(false);
+    }
+  };
+
   const renderSettingsNav = () => (
     <aside className="settings-nav" aria-label="Settings sections">
       <div className="settings-nav__items">
@@ -100,6 +134,8 @@ export function SettingsWorkspace({
                 return Languages;
               case 'privacy':
                 return Mic;
+              case 'legal':
+                return null;
               case 'developers':
                 return Code2;
               case 'transfer':
@@ -116,7 +152,11 @@ export function SettingsWorkspace({
               disabled={isTransferRunning && item.id !== 'transfer'}
               onClick={() => onSectionChange(item.id)}
             >
-              <Icon size={17} aria-hidden="true" />
+              {Icon ? (
+                <Icon size={17} aria-hidden="true" />
+              ) : (
+                <DesignIcon className="settings-nav__asset-icon" name="file-text" size={17} />
+              )}
               <span>
                 <strong>{item.label}</strong>
                 {item.hint ? <small>{item.hint}</small> : null}
@@ -133,15 +173,24 @@ export function SettingsWorkspace({
       <div className="settings-panel settings-panel--connections" aria-label="Connections settings">
         <div className="settings-connections-list">
           {connectionProviders.map((provider) => {
+            const isBusyProvider = connectionBusyProviderId === provider.providerId;
+            const presentedProvider = isBusyProvider && (
+              connectionBusyAction === 'connect' || connectionBusyAction === 'cancel'
+            )
+              ? { ...provider, state: 'connecting' as const }
+              : provider;
             const providerAvailable = provider.providerId === 'nexus'
               ? settingsCapabilities.nexusAvailable
               : settingsCapabilities.settingsAvailable;
-            const actionText = connectionActionLabel(provider);
-            const connectionStatus = provider.state === 'reauthRequired'
+            const actionText = connectionActionLabel(presentedProvider);
+            const connectionStatus = presentedProvider.state === 'reauthRequired'
               ? 'error'
-              : provider.state === 'ready'
+              : presentedProvider.state === 'ready'
                 ? 'ready'
                 : 'checking';
+            const canCancelPendingModdingFlow = isBusyProvider
+              && connectionBusyAction === 'connect'
+              && provider.providerId === 'moddingflow';
             return (
               <div
                 className="settings-service-row settings-service-row--connection"
@@ -152,35 +201,73 @@ export function SettingsWorkspace({
                   <span
                     className={`settings-service-icon${
                       provider.providerId === 'nexus' ? ' settings-service-icon--nexus' : ''
+                    }${
+                      provider.providerId === 'moddingflow'
+                        ? ' settings-service-icon--moddingflow'
+                        : ''
                     }`}
                   >
                     {provider.providerId === 'nexus'
                       ? <img src={nexusModsIcon} alt="" />
-                      : <Plug size={20} aria-hidden="true" />}
+                      : provider.providerId === 'moddingflow'
+                        ? <img src={moddingFlowIcon} alt="" />
+                        : <Plug size={20} aria-hidden="true" />}
                   </span>
                   <span className="settings-service-copy">
                     <strong>{provider.label}</strong>
-                    <span>{connectionSummary(provider)}</span>
+                    <span aria-live="polite">{connectionSummary(presentedProvider)}</span>
                   </span>
                 </div>
-                <button
-                  className="settings-switch"
-                  type="button"
-                  role="switch"
-                  aria-checked={connectionIsReady(provider)}
-                  aria-label={`${provider.label} account`}
-                  title={provider.message || actionText}
-                  disabled={
-                    connectionBusyProviderId === provider.providerId ||
-                    !connectionCanToggle(provider, providerAvailable)
-                  }
-                  onClick={() => onToggleConnection(provider.providerId)}
-                >
-                  <span aria-hidden="true" />
-                </button>
+                <div className="settings-connection-action">
+                  <span>{actionText}</span>
+                  <button
+                    className="settings-switch"
+                    type="button"
+                    role="switch"
+                    aria-checked={connectionIsReady(presentedProvider)}
+                    aria-label={`${provider.label} account`}
+                    title={provider.message || `${actionText} ${provider.label}`}
+                    disabled={
+                      (isBusyProvider && !canCancelPendingModdingFlow)
+                      || !connectionCanToggle(presentedProvider, providerAvailable)
+                    }
+                    onClick={() => onToggleConnection(provider.providerId)}
+                  >
+                    <span aria-hidden="true" />
+                  </button>
+                </div>
               </div>
             );
           })}
+          <div
+            className="settings-service-row settings-service-row--connection"
+            data-status={managerHandoffSettingsError ? 'error' : 'checking'}
+          >
+            <div className="settings-service-main">
+              <span className="settings-service-icon" aria-hidden="true">
+                <MonitorCog size={20} />
+              </span>
+              <span className="settings-service-copy">
+                <strong>{managerHandoffCopy.title}</strong>
+                <span role={managerHandoffSettingsError ? 'alert' : undefined}>
+                  {managerHandoffSettingsError
+                    ? managerHandoffCopy.error
+                    : managerHandoffCopy.detail}
+                </span>
+              </span>
+            </div>
+            <button
+              className="primary-button"
+              type="button"
+              aria-label={managerHandoffCopy.ariaLabel}
+              disabled={managerHandoffSettingsBusy}
+              onClick={() => void openManagerDefaultApps()}
+            >
+              {managerHandoffSettingsBusy
+                ? managerHandoffCopy.opening
+                : managerHandoffCopy.action}
+            </button>
+          </div>
           {apiLimitsBusy && apiLimitProviders.length === 0 ? (
             <div className="settings-service-row settings-service-row--api-limit" data-status="checking">
               <div className="settings-service-main">
@@ -284,9 +371,20 @@ export function SettingsWorkspace({
     </div>
   );
 
+  const renderLegalSettings = () => (
+    <div className="settings-panel settings-panel--legal" aria-label="Legal documents">
+      <LegalDocumentsPanel
+        language={legalLanguageFromAppLanguage(bridgeStatus?.language)}
+        onSelect={setLegalDocument}
+        selected={legalDocument}
+      />
+    </div>
+  );
+
   const renderDeveloperSettings = () => (
     <div className="settings-panel settings-panel--developer" aria-label="Developer settings">
       <div className="settings-connections-list">
+        <AppUpdateSettingsControl update={appUpdate} />
         <div
           className="settings-service-row settings-service-row--connection settings-service-row--developer"
           data-status={developerModeEnabled ? 'ready' : 'checking'}
@@ -328,7 +426,7 @@ export function SettingsWorkspace({
           <dd>Rust shell / C++ core</dd>
         </div>
         <div>
-          <dt>Версия</dt>
+          <dt>Версия Fluxora</dt>
           <dd>{appInfo?.version ?? 'pending'}</dd>
         </div>
         <div>
@@ -361,6 +459,8 @@ export function SettingsWorkspace({
         return renderLanguageSettings();
       case 'privacy':
         return renderPrivacySettings();
+      case 'legal':
+        return renderLegalSettings();
       case 'developers':
         return renderDeveloperSettings();
       case 'transfer':

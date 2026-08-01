@@ -125,7 +125,9 @@ namespace fluxora
         std::wstring_view,
         std::wstring_view,
         std::wstring_view,
-        int)
+        int,
+        std::int64_t,
+        bool)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
@@ -1265,6 +1267,10 @@ namespace fluxora
         bool sourceLooksNexus(const ModSourceRecord& source)
         {
             const std::wstring provider = toLower(normalizeProvider(source));
+            if (!trim(source.provider).empty())
+            {
+                return provider == L"nexus";
+            }
             return provider == L"nexus" ||
                 containsToken(source.url, L"nexusmods.com") ||
                 toLower(source.url).starts_with(L"nxm://") ||
@@ -1276,6 +1282,10 @@ namespace fluxora
         bool sourceLooksModdingFlow(const ModSourceRecord& source)
         {
             const std::wstring provider = normalizeProvider(source);
+            if (!trim(source.provider).empty())
+            {
+                return providerIsModdingFlow(provider);
+            }
             return providerIsModdingFlow(provider) ||
                 containsToken(source.url, L"moddingflow") ||
                 containsToken(source.url, L"modernflow");
@@ -3569,6 +3579,53 @@ namespace fluxora
             }
         }
 
+        void moveProfileOrderStorageItemsInVisibleOrder(
+            Database& database,
+            std::wstring_view profileName,
+            const char* tableName,
+            std::wstring_view orderItemId,
+            int targetIndex,
+            std::wstring_view separatorKind,
+            ProfileOrderSeparatorMoveMode separatorMoveMode,
+            const std::vector<std::wstring>& visibleOrderItemIds)
+        {
+            const std::set<std::wstring> visibleIds(
+                visibleOrderItemIds.begin(),
+                visibleOrderItemIds.end());
+            std::vector<ProfileOrderStorageItem> storedItems =
+                readProfileOrderStorageItems(database, profileName, tableName);
+            std::vector<ProfileOrderStorageItem> visibleItems;
+            visibleItems.reserve(visibleIds.size());
+            for (const ProfileOrderStorageItem& item : storedItems)
+            {
+                if (visibleIds.contains(item.id))
+                {
+                    visibleItems.push_back(item);
+                }
+            }
+
+            if (!reorderProfileOrderStorageItems(
+                    visibleItems,
+                    orderItemId,
+                    targetIndex,
+                    separatorKind,
+                    separatorMoveMode))
+            {
+                return;
+            }
+
+            std::size_t visibleIndex = 0;
+            for (ProfileOrderStorageItem& item : storedItems)
+            {
+                if (visibleIds.contains(item.id))
+                {
+                    item = std::move(visibleItems[visibleIndex]);
+                    ++visibleIndex;
+                }
+            }
+            writeProfileOrderStorageItemPositions(database, profileName, tableName, storedItems);
+        }
+
         void syncInstalledModsFromDisk(
             Database& database,
             const std::filesystem::path& projectDirectory,
@@ -4942,6 +4999,28 @@ namespace fluxora
                 database,
                 {},
                 session.profileName);
+            std::wstring movingOrderId = session.finalOrderId;
+            if (movingOrderId.empty() &&
+                session.mode != InstallConflictPreviewMode::Install &&
+                !session.targetModUuid.empty())
+            {
+                Statement movingOrder = database.prepare(
+                    "SELECT oi.id FROM profile_order_items oi "
+                    "JOIN mods m ON m.id = oi.mod_id "
+                    "WHERE oi.profile_name = ? AND oi.kind = 'mod' AND m.uuid = ? LIMIT 1;");
+                movingOrder.bindText(1, session.profileName);
+                movingOrder.bindText(2, session.targetModUuid);
+                if (movingOrder.stepRow())
+                {
+                    movingOrderId = movingOrder.columnText(0);
+                }
+            }
+            const auto moving = movingOrderId.empty()
+                ? rows.end()
+                : std::find_if(rows.begin(), rows.end(), [&](const auto& row)
+                {
+                    return row.id == movingOrderId;
+                });
             if (!session.afterOrderId.empty())
             {
                 const auto after = std::find_if(rows.begin(), rows.end(), [&](const auto& row)
@@ -4950,7 +5029,16 @@ namespace fluxora
                 });
                 if (after != rows.end())
                 {
-                    return static_cast<int>(std::distance(rows.begin(), after));
+                    const int afterIndex = static_cast<int>(std::distance(rows.begin(), after));
+                    if (moving == after)
+                    {
+                        return afterIndex;
+                    }
+                    if (moving != rows.end() && moving < after)
+                    {
+                        return afterIndex - 1;
+                    }
+                    return afterIndex;
                 }
             }
             if (!session.beforeOrderId.empty())
@@ -4961,7 +5049,16 @@ namespace fluxora
                 });
                 if (before != rows.end())
                 {
-                    return static_cast<int>(std::distance(rows.begin(), before) + 1);
+                    const int beforeIndex = static_cast<int>(std::distance(rows.begin(), before));
+                    if (moving == before)
+                    {
+                        return beforeIndex;
+                    }
+                    if (moving != rows.end() && moving < before)
+                    {
+                        return beforeIndex;
+                    }
+                    return beforeIndex + 1;
                 }
             }
             return session.targetPosition;
@@ -4985,14 +5082,25 @@ namespace fluxora
             {
                 return;
             }
-            moveProfileOrderStorageItems(
+            const std::vector<ProfileOrderItemRecord> visibleItems = readProfileOrderItems(
+                database,
+                {},
+                session.profileName);
+            std::vector<std::wstring> visibleOrderItemIds;
+            visibleOrderItemIds.reserve(visibleItems.size());
+            for (const ProfileOrderItemRecord& item : visibleItems)
+            {
+                visibleOrderItemIds.push_back(item.id);
+            }
+            moveProfileOrderStorageItemsInVisibleOrder(
                 database,
                 session.profileName,
                 "profile_order_items",
                 session.finalOrderId,
                 resolvedTarget,
                 profileOrderSeparatorKind,
-                ProfileOrderSeparatorMoveMode::Single);
+                ProfileOrderSeparatorMoveMode::Single,
+                visibleOrderItemIds);
         }
 
         struct ProfileFileOwner
@@ -5960,7 +6068,9 @@ namespace fluxora
         std::wstring_view operationId,
         std::wstring_view beforeOrderId,
         std::wstring_view afterOrderId,
-        int fallbackTargetPosition)
+        int fallbackTargetPosition,
+        std::int64_t expectedRevision,
+        bool applyIfCompleted)
     {
         const std::wstring operation = trim(std::wstring(operationId));
         if (projectDirectory.empty() || operation.empty())
@@ -5980,15 +6090,40 @@ namespace fluxora
         {
             throw std::runtime_error("The pending install session has failed.");
         }
-        if (current.state == L"completed")
+        if (current.state == L"completed" &&
+            (!applyIfCompleted || expectedRevision < 0 ||
+             current.revision != static_cast<std::uint64_t>(expectedRevision)))
         {
             return readPendingInstallSession(database, projectDirectory, operation, true);
         }
-
         current.beforeOrderId = trim(std::wstring(beforeOrderId));
         current.afterOrderId = trim(std::wstring(afterOrderId));
         current.targetPosition = fallbackTargetPosition;
         const int targetPosition = resolvedInstallTargetPosition(database, current);
+
+        if (current.state == L"completed" && targetPosition >= 0)
+        {
+            syncProfileOrderItems(database, current.profileName);
+            const std::vector<ProfileOrderItemRecord> visibleItems = readProfileOrderItems(
+                database,
+                projectDirectory,
+                current.profileName);
+            std::vector<std::wstring> visibleOrderItemIds;
+            visibleOrderItemIds.reserve(visibleItems.size());
+            for (const ProfileOrderItemRecord& item : visibleItems)
+            {
+                visibleOrderItemIds.push_back(item.id);
+            }
+            moveProfileOrderStorageItemsInVisibleOrder(
+                database,
+                current.profileName,
+                "profile_order_items",
+                current.finalOrderId,
+                targetPosition,
+                profileOrderSeparatorKind,
+                ProfileOrderSeparatorMoveMode::Single,
+                visibleOrderItemIds);
+        }
 
         Statement update = database.prepare(
             "UPDATE pending_install_sessions SET target_position = ?, before_order_id = ?, "
@@ -6222,17 +6357,30 @@ namespace fluxora
             throw std::runtime_error(
                 "Replace or merge changed the stable mod or order identity; commit was rolled back.");
         }
+        session.finalOrderId = orderId;
         const int resolvedTargetPosition = resolvedInstallTargetPosition(database, session);
         if (resolvedTargetPosition >= 0)
         {
-            moveProfileOrderStorageItems(
+            const std::vector<ProfileOrderItemRecord> visibleItems = readProfileOrderItems(
+                database,
+                projectDirectory,
+                session.profileName,
+                modDirectory.parent_path());
+            std::vector<std::wstring> visibleOrderItemIds;
+            visibleOrderItemIds.reserve(visibleItems.size());
+            for (const ProfileOrderItemRecord& item : visibleItems)
+            {
+                visibleOrderItemIds.push_back(item.id);
+            }
+            moveProfileOrderStorageItemsInVisibleOrder(
                 database,
                 session.profileName,
                 "profile_order_items",
                 orderId,
                 resolvedTargetPosition,
                 profileOrderSeparatorKind,
-                ProfileOrderSeparatorMoveMode::Single);
+                ProfileOrderSeparatorMoveMode::Single,
+                visibleOrderItemIds);
         }
 
         refreshDetectedConflicts(database);
@@ -7398,14 +7546,24 @@ namespace fluxora
         Transaction transaction(database);
         syncProfileOrderItems(database, normalizedProfileName);
 
-        moveProfileOrderStorageItems(
+        const std::vector<ProfileOrderItemRecord> visibleItems =
+            readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
+        std::vector<std::wstring> visibleOrderItemIds;
+        visibleOrderItemIds.reserve(visibleItems.size());
+        for (const ProfileOrderItemRecord& item : visibleItems)
+        {
+            visibleOrderItemIds.push_back(item.id);
+        }
+
+        moveProfileOrderStorageItemsInVisibleOrder(
             database,
             normalizedProfileName,
             "profile_order_items",
             id,
             targetIndex,
             profileOrderSeparatorKind,
-            ProfileOrderSeparatorMoveMode::Single);
+            ProfileOrderSeparatorMoveMode::Single,
+            visibleOrderItemIds);
 
         transaction.commit();
         return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
@@ -7798,14 +7956,29 @@ namespace fluxora
         Transaction transaction(database);
         syncProfilePluginOrderItems(database, normalizedProfileName, pluginNames);
 
-        moveProfileOrderStorageItems(
+        const std::set<std::wstring> visiblePluginKeys = pluginNameKeys(pluginNames);
+        const std::vector<ProfilePluginOrderItemRecord> storedItems =
+            readProfilePluginOrderItems(database, normalizedProfileName);
+        std::vector<std::wstring> visibleOrderItemIds;
+        visibleOrderItemIds.reserve(storedItems.size());
+        for (const ProfilePluginOrderItemRecord& item : storedItems)
+        {
+            if (item.kind == profilePluginOrderSeparatorKind ||
+                visiblePluginKeys.contains(toLower(item.pluginName)))
+            {
+                visibleOrderItemIds.push_back(item.id);
+            }
+        }
+
+        moveProfileOrderStorageItemsInVisibleOrder(
             database,
             normalizedProfileName,
             "profile_plugin_order_items",
             id,
             targetIndex,
             profilePluginOrderSeparatorKind,
-            ProfileOrderSeparatorMoveMode::Block);
+            ProfileOrderSeparatorMoveMode::Single,
+            visibleOrderItemIds);
 
         transaction.commit();
         return readProfilePluginOrderItems(database, normalizedProfileName);

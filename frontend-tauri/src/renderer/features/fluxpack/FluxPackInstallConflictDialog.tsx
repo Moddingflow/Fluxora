@@ -1,4 +1,4 @@
-import { PackageCheck, X } from 'lucide-react';
+import { PackageCheck, X } from '../../design-system/icons/lucide-compat';
 import { useEffect } from 'react';
 
 export interface FluxPackInstallConflictDialogProps {

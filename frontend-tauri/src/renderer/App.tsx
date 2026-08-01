@@ -25,7 +25,7 @@ import {
   Trash2,
   UploadCloud,
   XCircle
-} from 'lucide-react';
+} from './design-system/icons/lucide-compat';
 import {
   lazy,
   startTransition,
@@ -66,6 +66,7 @@ import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
 import { AppTitlebar } from './components/chrome/AppTitlebar';
+import { useAppUpdate } from './features/update/use-app-update';
 import {
   AdaptiveVirtualList,
   type AdaptiveVirtualListHandle
@@ -93,6 +94,7 @@ import {
 } from './features/mods/ModUpdateCheckSplash';
 import { ModConflictScrollbar } from './features/mods/ModConflictScrollbar';
 import { AiChatPanel } from './features/ai/AiChatPanel';
+import { openModdingFlowRegistration } from './features/ai/ai-account-access';
 import { resolveAiManagedFileLocation } from './features/ai/ai-managed-file-location';
 import {
   aiMicrophonePermissionChangedEvent,
@@ -164,6 +166,7 @@ import {
   type PluginRowViewIndex
 } from './features/lists/order-row-view-index';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
+import { ModdingFlowActivationConfirmationHost } from './features/moddingflow/ModdingFlowActivationConfirmationHost';
 import { PluginRow, PluginsListSurface } from './features/plugins/PluginsListSurface';
 import {
   PluginSeparatorDialog,
@@ -1335,6 +1338,12 @@ export const App = () => {
     isBuildSettingsWindow ||
     isModDetailsWindow ||
     isFilePreviewWindow;
+  const appUpdate = useAppUpdate({
+    api: window.fluxora.updates,
+    enabled: !isBuildSettingsWindow && !isModDetailsWindow && !isFilePreviewWindow,
+    automaticChecks: !isSecondaryWindow,
+    acknowledgeRendererHealth: !isSecondaryWindow
+  });
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
   const initialBuildSettingsBootstrap = useMemo(
@@ -1467,7 +1476,11 @@ export const App = () => {
   const [connectionSnapshot, setConnectionSnapshot] = useState<FluxoraExternalConnectionSnapshot>(() =>
     loadCachedConnectionSnapshot(window.localStorage)
   );
+  const [connectionBusyAction, setConnectionBusyAction] = useState<
+    'connect' | 'cancel' | 'disconnect' | null
+  >(null);
   const [connectionBusyProviderId, setConnectionBusyProviderId] = useState<string | null>(null);
+  const connectionActionGenerationRef = useRef(0);
   const [apiLimitProviders, setApiLimitProviders] = useState<FluxoraApiLimitProvider[]>([]);
   const [apiLimitsBusy, setApiLimitsBusy] = useState(false);
   const connectionCoordinatorRef = useRef<ExternalConnectionCoordinator | null>(null);
@@ -9139,6 +9152,24 @@ export const App = () => {
           providers: [],
           models: [],
           capabilities: {},
+          quota: {
+            schema: 'fluxora.ai.quota.v1',
+            availability: 'temporaryServerError',
+            available: false,
+            eligibility: false,
+            reason: 'ai.host.unavailable',
+            periodStart: null,
+            resetAt: null,
+            rollover: false,
+            limit: 0,
+            used: 0,
+            reserved: 0,
+            remaining: 0,
+            remainingInputTokenEquivalent: 0,
+            search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+            model: 'gemini-3.1-flash-lite',
+            priceVersion: null
+          },
           error: {
             code: 'ai.host.unavailable',
             message: errorMessage(error),
@@ -11865,8 +11896,15 @@ export const App = () => {
     const providerAvailable = providerId === 'nexus'
       ? settingsCapabilities.nexusAvailable
       : settingsCapabilities.settingsAvailable;
+    const shouldCancelConnect = providerId === 'moddingflow' && (
+      provider?.state === 'connecting'
+      || (
+        connectionBusyProviderId === providerId
+        && connectionBusyAction === 'connect'
+      )
+    );
     if (
-      connectionBusyProviderId ||
+      (connectionBusyProviderId && !shouldCancelConnect) ||
       !connectionCanToggle(provider, providerAvailable) ||
       !provider
     ) {
@@ -11874,28 +11912,47 @@ export const App = () => {
     }
 
     const shouldDisconnect = connectionIsReady(provider);
+    const action = shouldCancelConnect
+      ? 'cancel'
+      : shouldDisconnect
+        ? 'disconnect'
+        : 'connect';
     const operationId = createRendererOperationId(
-      shouldDisconnect ? 'connection_disconnect' : 'connection_connect'
+      action === 'cancel' ? 'connection_cancel_connect' : `connection_${action}`
     );
+    const actionGeneration = ++connectionActionGenerationRef.current;
     setConnectionBusyProviderId(providerId);
+    setConnectionBusyAction(action);
     setMessage(null);
 
     try {
-      const status = shouldDisconnect
-        ? await window.fluxora.connections.disconnect(providerId, { operationId })
-        : await window.fluxora.connections.connect(providerId, { operationId });
+      const status = action === 'cancel'
+        ? await window.fluxora.connections.cancelConnect(providerId, { operationId })
+        : action === 'disconnect'
+          ? await window.fluxora.connections.disconnect(providerId, { operationId })
+          : await window.fluxora.connections.connect(providerId, { operationId });
+      if (actionGeneration !== connectionActionGenerationRef.current) {
+        return;
+      }
       connectionCoordinator.acceptSnapshot(mergeConnectionStatus(connectionSnapshot, status));
       setMessage(status.message || (
         status.state === 'ready' ? `${status.label} connected.` : `${status.label} disconnected.`
       ));
-      setApiLimitsBusy(true);
-      void window.fluxora.apiLimits.list({ operationId }).then((nextApiLimits) => {
-        rememberApiLimitProviders(nextApiLimits.providers);
-      }).catch(() => undefined).finally(() => setApiLimitsBusy(false));
+      if (action !== 'cancel') {
+        setApiLimitsBusy(true);
+        void window.fluxora.apiLimits.list({ operationId }).then((nextApiLimits) => {
+          rememberApiLimitProviders(nextApiLimits.providers);
+        }).catch(() => undefined).finally(() => setApiLimitsBusy(false));
+      }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (actionGeneration === connectionActionGenerationRef.current) {
+        setMessage(errorMessage(error));
+      }
     } finally {
-      setConnectionBusyProviderId(null);
+      if (actionGeneration === connectionActionGenerationRef.current) {
+        setConnectionBusyProviderId(null);
+        setConnectionBusyAction(null);
+      }
     }
   };
 
@@ -16457,6 +16514,7 @@ export const App = () => {
       apiLimitProviders={apiLimitProviders}
       apiLimitsBusy={apiLimitsBusy}
       appInfo={appInfo}
+      appUpdate={appUpdate.settings}
       bridgeStatus={bridgeStatus}
       developerModeEnabled={developerModeEnabled}
       isTransferRunning={isTransferRunning}
@@ -16464,9 +16522,12 @@ export const App = () => {
       microphoneAllowed={microphoneAllowed}
       microphonePermissionBusy={microphonePermissionBusy}
       lastBuildDate={rendererBuildDate}
+      connectionBusyAction={connectionBusyAction}
       connectionBusyProviderId={connectionBusyProviderId}
       connectionProviders={connectionSnapshot.providers}
       onDeveloperModeChange={setDeveloperMode}
+      onOpenManagerDefaultApps={() =>
+        window.fluxora.managerHandoff.openDefaultAppSettings()}
       onOpenRepository={openOriginalRepository}
       onResetMicrophonePermission={() => void resetMicrophonePermission()}
       section={settingsSection}
@@ -16644,6 +16705,11 @@ export const App = () => {
 
   const aiChatProviderDiagnostic = aiProviderDiagnostic(aiHostStatus);
 
+  const refreshAiQuotaStatus = () => {
+    const operationId = createRendererOperationId('ai_quota_refresh');
+    void window.fluxora.ai.getStatus({ operationId }).then(setAiHostStatus, () => undefined);
+  };
+
   const finishAiRunAsStopped = (run: Pick<AiRun, 'id' | 'operationId'>) => {
     const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
     dispatchAiChat({
@@ -16796,6 +16862,7 @@ export const App = () => {
           onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
           onRunEvent: (event) => dispatchAiChat({ type: 'apply-run-event', event }),
           onFinish: (message, event, status) => {
+            refreshAiQuotaStatus();
             if (activeAiRunsRef.current.get(run.sessionId) === runControl) {
               activeAiRunsRef.current.delete(run.sessionId);
             }
@@ -17028,6 +17095,7 @@ export const App = () => {
       showShortcuts={showSettingsButton}
       showAi={showSettingsButton && titlebarAiVisible}
       title={windowTitle}
+      update={appUpdate.toolbar}
       onClose={() => void closeWindow()}
       onHome={() => changeRoute('home')}
       onMinimize={() => void minimizeWindow()}
@@ -17109,6 +17177,25 @@ export const App = () => {
           {manualModUpdateNotice}
         </div>
       ) : null}
+      <ModdingFlowActivationConfirmationHost
+        activationCapabilityState={
+          bridgeStatus?.capabilities?.features.moddingFlowActivation?.state
+        }
+        api={window.fluxora.moddingFlowActivations}
+        connectAccount={async (operationId) => {
+          const status = await window.fluxora.connections.connect('moddingflow', {
+            operationId
+          });
+          connectionCoordinator.acceptSnapshot(
+            mergeConnectionStatus(connectionSnapshot, status)
+          );
+          return status;
+        }}
+        isSecondaryWindow={isSecondaryWindow}
+        projects={projects}
+        selectedProjectId={selectedProject?.id ?? null}
+        selectedProjectProfiles={buildProfileOptions}
+      />
 
       <section
         className="workspace-with-ai"
@@ -17175,6 +17262,7 @@ export const App = () => {
             hostReady={aiHostStatus?.ready ?? false}
             language={bridgeStatus?.language ?? 'en-us'}
             providerDiagnostic={aiChatProviderDiagnostic}
+            quota={aiHostStatus?.quota}
             showCheckedSites={developerModeEnabled}
             showDeveloperDiagnostics={developerModeEnabled}
             state={aiChat}
@@ -17198,6 +17286,24 @@ export const App = () => {
               }).catch(() => undefined);
               dispatchAiChat({ type: 'close-chat', chatId });
             }}
+            onConnectAccount={async () => {
+              const operationId = createRendererOperationId('ai_moddingflow_connect');
+              const status = await window.fluxora.connections.connect('moddingflow', {
+                operationId
+              });
+              connectionCoordinator.acceptSnapshot(
+                mergeConnectionStatus(connectionSnapshot, status)
+              );
+              if (status.providerId !== 'moddingflow' || status.state !== 'ready') {
+                throw new Error(status.message || 'ModdingFlow authorization did not complete.');
+              }
+              const nextStatus = await window.fluxora.ai.getStatus({ operationId });
+              setAiHostStatus(nextStatus);
+              if (nextStatus.quota.availability === 'connectionRequired') {
+                throw new Error('ModdingFlow did not grant managed AI access.');
+              }
+            }}
+            onCreateAccount={() => openModdingFlowRegistration(window.fluxora.links.openExternal)}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
             onOpenSource={openAiSource}

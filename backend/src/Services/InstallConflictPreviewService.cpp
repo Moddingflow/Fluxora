@@ -414,7 +414,9 @@ namespace fluxora
         std::wstring_view operationId,
         std::wstring_view beforeOrderId,
         std::wstring_view afterOrderId,
-        int fallbackTargetIndex)
+        int fallbackTargetIndex,
+        std::int64_t expectedRevision,
+        bool applyIfCompleted)
     {
         return snapshotFromSession(
             projectDirectory,
@@ -423,7 +425,9 @@ namespace fluxora
                 operationId,
                 beforeOrderId,
                 afterOrderId,
-                fallbackTargetIndex));
+                fallbackTargetIndex,
+                expectedRevision,
+                applyIfCompleted));
     }
 
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::completeSession(

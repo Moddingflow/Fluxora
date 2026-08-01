@@ -3,27 +3,33 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const gatewaySource = readFileSync(
-  resolve(__dirname, '../../supabase/functions/fluxora-ai-gemini/index.ts'),
+const hostSource = readFileSync(
+  resolve(__dirname, '../src-tauri/src/bin/fluxora_ai_host.rs'),
+  'utf8'
+);
+const shellSource = readFileSync(
+  resolve(__dirname, '../src-tauri/src/lib.rs'),
   'utf8'
 );
 
-describe('managed Gemini gateway protocol v2', () => {
-  it('keeps v1 compatibility while v2 accepts only the product model and provider methods', () => {
-    expect(gatewaySource).toContain("const PROTOCOL_V1 = '1'");
-    expect(gatewaySource).toContain("const PROTOCOL_V2 = '2'");
-    expect(gatewaySource).toContain("const PRODUCT_MODEL_ID = 'gemini-3.1-flash-lite'");
-    expect(gatewaySource).toContain("'generateContent'");
-    expect(gatewaySource).toContain("'countTokens'");
-    expect(gatewaySource).toContain("'getModel'");
+describe('managed Gemini Website gateway protocol v3', () => {
+  it('uses only the fixed Website endpoint with OAuth and no publishable-key transport', () => {
+    expect(hostSource).toContain(
+      'const MANAGED_AI_GATEWAY_URL: &str = "https://moddingflow.com/api/fluxora/ai/gemini"'
+    );
+    expect(hostSource).toContain('const MANAGED_AI_GATEWAY_PROTOCOL: &str = "3"');
+    expect(hostSource).toContain('.bearer_auth(access_token)');
+    expect(hostSource).toContain('.header("x-fluxora-ai-search-mode", search_mode)');
+    expect(hostSource).toContain('"idempotency-key"');
+    expect(hostSource).not.toContain('DEFAULT_SUPABASE_PUBLISHABLE_KEY');
+    expect(hostSource).not.toContain('FLUXORA_AI_SUPABASE_ANON_KEY');
   });
 
-  it('forwards the v2 provider body and response as streams within explicit guards', () => {
-    expect(gatewaySource).toContain('64 * 1024 * 1024');
-    expect(gatewaySource).toContain('AbortSignal.timeout(120_000)');
-    expect(gatewaySource).toContain('body: method === \'getModel\' ? undefined : boundedRequestBody');
-    expect(gatewaySource).toContain('new Response(upstream.body');
-    expect(gatewaySource).toContain("request.headers.get('x-fluxora-ai-method')");
-    expect(gatewaySource).toContain("request.headers.get('x-fluxora-ai-model')");
+  it('keeps OAuth private and permits one refresh retry only', () => {
+    expect(shellSource).toContain('"moddingflow.getManagedAiAccessToken"');
+    expect(shellSource).toContain('PRIVATE_MANAGED_AI_ACCESS_TOKEN_FIELD');
+    expect(shellSource).toContain('completed_retries == 0');
+    expect(shellSource).toContain('with_managed_ai_access_token(app, params, &operation_id, true)');
+    expect(shellSource).not.toContain('window.fluxora.managedAiAccessToken');
   });
 });

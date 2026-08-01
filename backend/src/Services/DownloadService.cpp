@@ -4113,6 +4113,116 @@ namespace fluxora
             return entry;
         }
 
+        std::wstring managedDownloadStatus(ModdingFlowManagedDownloadState state)
+        {
+            switch (state)
+            {
+            case ModdingFlowManagedDownloadState::Queued: return L"Queued";
+            case ModdingFlowManagedDownloadState::Downloading: return L"Downloading";
+            case ModdingFlowManagedDownloadState::Paused: return L"Paused";
+            case ModdingFlowManagedDownloadState::RetryScheduled: return L"Retry scheduled";
+            case ModdingFlowManagedDownloadState::Failed: return L"Failed";
+            case ModdingFlowManagedDownloadState::Cancelled: return L"Cancelled";
+            case ModdingFlowManagedDownloadState::Completed: return L"Ready";
+            }
+            return L"Failed";
+        }
+
+        std::wstring managedDownloadTransferState(ModdingFlowManagedDownloadState state)
+        {
+            switch (state)
+            {
+            case ModdingFlowManagedDownloadState::Queued: return L"queued";
+            case ModdingFlowManagedDownloadState::Downloading: return L"downloading";
+            case ModdingFlowManagedDownloadState::Paused: return L"paused";
+            case ModdingFlowManagedDownloadState::RetryScheduled: return L"paused";
+            case ModdingFlowManagedDownloadState::Failed: return L"failed";
+            case ModdingFlowManagedDownloadState::Cancelled: return L"canceled";
+            case ModdingFlowManagedDownloadState::Completed: return L"idle";
+            }
+            return L"failed";
+        }
+
+        DownloadEntry buildManagedDownloadEntry(
+            const ModdingFlowManagedDownloadSnapshot& snapshot)
+        {
+            const bool completed =
+                snapshot.state == ModdingFlowManagedDownloadState::Completed;
+            const bool downloading =
+                snapshot.state == ModdingFlowManagedDownloadState::Queued ||
+                snapshot.state == ModdingFlowManagedDownloadState::Downloading;
+            const bool resumable =
+                snapshot.state == ModdingFlowManagedDownloadState::Paused ||
+                snapshot.state == ModdingFlowManagedDownloadState::RetryScheduled ||
+                snapshot.state == ModdingFlowManagedDownloadState::Cancelled;
+            const std::filesystem::path visiblePath = completed
+                ? snapshot.destinationPath
+                : snapshot.pendingPath;
+            const std::wstring extension = archiveExtensionFromFileName(snapshot.fileName);
+
+            DownloadEntry entry;
+            entry.id = visiblePath.wstring();
+            entry.name = !extension.empty() && snapshot.fileName.size() > extension.size()
+                ? snapshot.fileName.substr(0, snapshot.fileName.size() - extension.size())
+                : std::filesystem::path(snapshot.fileName).stem().wstring();
+            if (entry.name.empty())
+            {
+                entry.name = L"ModdingFlow " +
+                    std::wstring(
+                        snapshot.request.artifactId.begin(),
+                        snapshot.request.artifactId.end());
+            }
+            entry.fileName = snapshot.fileName;
+            entry.localPath = visiblePath;
+            entry.source = L"ModdingFlow";
+            entry.status = managedDownloadStatus(snapshot.state);
+            entry.transferState = managedDownloadTransferState(snapshot.state);
+            entry.transferMessage = snapshot.message.empty()
+                ? entry.status
+                : std::wstring(snapshot.message.begin(), snapshot.message.end());
+            entry.sizeText = formatSize(snapshot.expectedSize);
+            std::error_code timeError;
+            if (std::filesystem::exists(visiblePath, timeError))
+            {
+                const auto time = std::filesystem::last_write_time(visiblePath, timeError);
+                if (!timeError)
+                {
+                    entry.createdAtText = formatFileTime(time);
+                }
+            }
+            entry.progressPercent = snapshot.expectedSize == 0U
+                ? 0
+                : static_cast<int>((std::min<std::uint64_t>(
+                    snapshot.bytesReceived,
+                    snapshot.expectedSize) * 100U) / snapshot.expectedSize);
+            entry.progressText = (downloading || resumable)
+                ? formatSize(snapshot.bytesReceived) + L" / " + formatSize(snapshot.expectedSize)
+                : std::wstring();
+            entry.isDownloading = downloading;
+            entry.hasKnownProgress = downloading || resumable;
+            entry.hasResolvedFileName = true;
+            entry.canResume = resumable;
+            entry.canInstall = completed;
+            entry.canDelete = !downloading;
+            return entry;
+        }
+
+        void persistManagedDownloadMetadata(
+            const ModdingFlowManagedDownloadSnapshot& snapshot)
+        {
+            DownloadMetadata metadata;
+            metadata.source = L"ModdingFlow";
+            metadata.gameDomain = snapshot.gameSlug;
+            metadata.modId = std::wstring(
+                snapshot.request.modId.begin(), snapshot.request.modId.end());
+            metadata.fileId = std::wstring(
+                snapshot.request.artifactId.begin(), snapshot.request.artifactId.end());
+            metadata.version = snapshot.version;
+            metadata.downloadedFileVersion = snapshot.version;
+            metadata.lastRequestedUnixMs = snapshot.createdAtUnixMs;
+            writeMetadata(snapshot.destinationPath, metadata);
+        }
+
         std::wstring nowUtcText()
         {
             const std::time_t now = std::time(nullptr);
@@ -11197,6 +11307,10 @@ namespace fluxora
 
     DownloadService::~DownloadService()
     {
+        if (moddingFlowDownloads_ != nullptr)
+        {
+            moddingFlowDownloads_->shutdown();
+        }
         (void)stopNxmDownloadWorker();
     }
 
@@ -11260,6 +11374,30 @@ namespace fluxora
         return auth.linked &&
             auth.isPremium &&
             (!auth.protectedAccessToken.empty() || !auth.protectedApiKey.empty());
+    }
+
+    void DownloadService::configureModdingFlowDownloadQueue(
+        IModdingFlowDownloadQueueService* queue) noexcept
+    {
+        moddingFlowDownloads_ = queue;
+    }
+
+    DownloadEntry DownloadService::queueModdingFlowArtifact(
+        const ModdingFlowManagedDownloadRequest& request) const
+    {
+        if (moddingFlowDownloads_ == nullptr)
+        {
+            throw std::runtime_error("ModdingFlow managed downloads are unavailable.");
+        }
+        ModdingFlowManagedDownloadSnapshot snapshot =
+            moddingFlowDownloads_->queue(request);
+        if (snapshot.state == ModdingFlowManagedDownloadState::Completed)
+        {
+            persistManagedDownloadMetadata(snapshot);
+            moddingFlowDownloads_->acknowledgeCompleted(snapshot);
+            return buildCatalogEntry(request.projectDirectory, snapshot.destinationPath);
+        }
+        return buildManagedDownloadEntry(snapshot);
     }
 
     void DownloadService::processQueuedNxmDownload(const NxmDownloadJob& job) const
@@ -11766,6 +11904,11 @@ namespace fluxora
             return;
         }
 
+        if (moddingFlowDownloads_ != nullptr)
+        {
+            moddingFlowDownloads_->initialize();
+        }
+
         std::filesystem::create_directories(inboundDirectory());
         {
             std::lock_guard lock(nxmQueueMutex_);
@@ -11781,6 +11924,10 @@ namespace fluxora
 
     void DownloadService::shutdown()
     {
+        if (moddingFlowDownloads_ != nullptr)
+        {
+            moddingFlowDownloads_->shutdown();
+        }
         if (stopNxmDownloadWorker())
         {
             logger_.write(LogLevel::Info, "Download service shut down.");
@@ -11867,6 +12014,21 @@ namespace fluxora
                 "Removed stale download state backups: " + std::to_string(removedBackupCount));
         }
 
+        std::vector<ModdingFlowManagedDownloadSnapshot> managedSnapshots;
+        if (moddingFlowDownloads_ != nullptr)
+        {
+            managedSnapshots = moddingFlowDownloads_->list(projectDirectory);
+            for (const ModdingFlowManagedDownloadSnapshot& snapshot : managedSnapshots)
+            {
+                if (snapshot.state != ModdingFlowManagedDownloadState::Completed)
+                {
+                    continue;
+                }
+                persistManagedDownloadMetadata(snapshot);
+                moddingFlowDownloads_->acknowledgeCompleted(snapshot);
+            }
+        }
+
         std::vector<DownloadFileCatalogEntry> files;
         for (const auto& entry : std::filesystem::directory_iterator(directory))
         {
@@ -11935,6 +12097,15 @@ namespace fluxora
                     continue;
                 }
                 throw;
+            }
+        }
+
+
+        for (const ModdingFlowManagedDownloadSnapshot& snapshot : managedSnapshots)
+        {
+            if (snapshot.state != ModdingFlowManagedDownloadState::Completed)
+            {
+                entries.push_back(buildManagedDownloadEntry(snapshot));
             }
         }
 
@@ -12354,6 +12525,13 @@ namespace fluxora
             throw std::invalid_argument("Project directory and download path are required.");
         }
 
+        if (moddingFlowDownloads_ != nullptr &&
+            moddingFlowDownloads_->ownsPendingPath(projectDirectory, downloadPath))
+        {
+            moddingFlowDownloads_->remove(projectDirectory, downloadPath);
+            return;
+        }
+
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
         if (!std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -12399,6 +12577,18 @@ namespace fluxora
             throw std::invalid_argument("Project directory and download path are required.");
         }
 
+        if (moddingFlowDownloads_ != nullptr &&
+            moddingFlowDownloads_->ownsPendingPath(projectDirectory, downloadPath))
+        {
+            const std::string operation = Logger::operationId();
+            const std::wstring operationId = operation.empty()
+                ? L"moddingflow-download-cancel"
+                : std::wstring(operation.begin(), operation.end());
+            moddingFlowDownloads_->cancel(
+                projectDirectory, downloadPath, operationId);
+            return;
+        }
+
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
         if (!std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -12429,6 +12619,17 @@ namespace fluxora
         if (projectDirectory.empty() || downloadPath.empty())
         {
             throw std::invalid_argument("Project directory and download path are required.");
+        }
+
+        if (moddingFlowDownloads_ != nullptr &&
+            moddingFlowDownloads_->ownsPendingPath(projectDirectory, downloadPath))
+        {
+            const std::string operation = Logger::operationId();
+            const std::wstring operationId = operation.empty()
+                ? L"moddingflow-download-resume"
+                : std::wstring(operation.begin(), operation.end());
+            return buildManagedDownloadEntry(moddingFlowDownloads_->resume(
+                projectDirectory, downloadPath, operationId));
         }
 
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);

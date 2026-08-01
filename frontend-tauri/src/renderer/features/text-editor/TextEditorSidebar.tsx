@@ -10,7 +10,7 @@ import {
   Regex,
   WholeWord,
   X
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 
 import type {
   TextEditorFileTreeRow,

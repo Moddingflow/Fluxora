@@ -116,7 +116,9 @@ namespace fluxora
             std::wstring_view operationId,
             std::wstring_view beforeOrderId,
             std::wstring_view afterOrderId,
-            int fallbackTargetIndex);
+            int fallbackTargetIndex,
+            std::int64_t expectedRevision = -1,
+            bool applyIfCompleted = false);
 
         [[nodiscard]] static FluxoraInstallConflictSnapshot completeSession(
             const std::filesystem::path& projectDirectory,

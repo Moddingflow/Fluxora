@@ -154,15 +154,12 @@ describe('build detail header redesign', () => {
       grassCacheVisible: true,
       language: 'ru'
     });
-    const icon = readText('frontend-tauri', 'src', 'renderer', 'assets', 'icons', 'grass-cache.svg');
-
     expect(markup).toContain('aria-label="No Grass In Objects Grass Cache Generation"');
     expect(markup).toContain('class="build-header__grass-trigger"');
     expect(markup).toContain('build-header__grass-icon');
+    expect(markup).toContain('data-icon="sprout"');
     expect(markup).toContain('data:image/svg+xml');
     expect(markup).not.toContain('title="No Grass In Objects Grass Cache Generation"');
-    expect(icon).toContain('Minimalistic white three-blade grass icon');
-    expect(icon).toContain('fill="#FFFFFF"');
     expect(ruMarkup).toContain('aria-label="Генерация кэша травы No Grass In Objects"');
     expect(ruMarkup).not.toContain('title="Генерация кэша травы No Grass In Objects"');
   });

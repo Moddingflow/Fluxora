@@ -27,6 +27,8 @@ namespace fluxora
     class BodySlideIntegrationService;
     class LodGeneratorIntegrationService;
     class NexusModsAuthService;
+    class IModdingFlowConnectionCapability;
+    class IModdingFlowDownloadQueueService;
     class NexusUpdateApi;
     class ProjectService;
     class TemplateService;
@@ -62,6 +64,7 @@ namespace fluxora
         [[nodiscard]] LodGeneratorIntegrationService& lodGeneratorIntegration() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
         [[nodiscard]] ExternalConnectionService& externalConnections() noexcept;
+        [[nodiscard]] IModdingFlowConnectionCapability* moddingFlowConnectionCapability() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
         [[nodiscard]] GrassCacheService& grassCache() noexcept;
         [[nodiscard]] VirtualFileSystemService& virtualFileSystem() noexcept;
@@ -85,8 +88,10 @@ namespace fluxora
         std::unique_ptr<ProfileService> profiles_;
         std::unique_ptr<NexusModsAuthService> nexusModsAuth_;
         std::unique_ptr<ExternalConnectionService> externalConnections_;
+        std::unique_ptr<IModdingFlowConnectionCapability> moddingFlowConnectionCapability_;
         std::unique_ptr<NexusUpdateApi> nexusUpdateApi_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
+        std::unique_ptr<IModdingFlowDownloadQueueService> moddingFlowDownloadQueue_;
         std::unique_ptr<DownloadService> downloads_;
         std::unique_ptr<WorkspaceRevisionJournal> workspaceRevisions_;
         std::unique_ptr<InstallOperationService> installs_;

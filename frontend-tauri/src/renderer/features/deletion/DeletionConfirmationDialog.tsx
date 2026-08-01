@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type CSSProperties } from 'react';
 
 import trashIcon from '../../../../../Icons/trash.svg';

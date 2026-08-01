@@ -762,7 +762,7 @@ namespace fluxora::tests
         EXPECT_FALSE(completed.resultJson.empty());
         const JsonValue result = JsonReader::parse(completed.resultJson);
         ASSERT_NE(result.find(L"latestVersion"), nullptr);
-        EXPECT_EQ(result.find(L"latestVersion")->asString(), L"2.0.0");
+        EXPECT_EQ(result.find(L"latestVersion")->asString(), L"2.1.0");
         EXPECT_EQ(result.find(L"latestFileId")->asString(), L"654");
         EXPECT_EQ(result.find(L"updateCheckState")->asString(), L"baseline_pending");
         EXPECT_TRUE(result.find(L"sourceIsNexus")->asBoolean());

@@ -13,6 +13,12 @@
   "domains": [
     "skyrimspecialedition"
   ],
+  "externalProviderGameSlugs": {
+    "moddingflow": [
+      "skyrim-se-ae",
+      "skyrim-se"
+    ]
+  },
   "installFolderAliases": [
     "Skyrim Special Edition",
     "SkyrimSE",

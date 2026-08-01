@@ -24,14 +24,14 @@ export const managedExecutableDisplay = (
     case 'texGen':
       return {
         badgeLabel: 'TexGen · VFS',
-        outputModName: 'TexGen Output',
+        outputModName: `${projectName} - TexGen Output`,
         preparationLabel: 'Подготовка TexGen',
         toolName: 'TexGen'
       };
     case 'dynDoLod':
       return {
         badgeLabel: 'DynDOLOD · VFS',
-        outputModName: 'DynDOLOD Output',
+        outputModName: `${projectName} - DynDOLOD Output`,
         preparationLabel: 'Подготовка DynDOLOD',
         toolName: 'DynDOLOD'
       };

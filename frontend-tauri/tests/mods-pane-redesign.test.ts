@@ -207,7 +207,7 @@ describe('mods pane redesign', () => {
     expect(exclamationIcon).toContain('viewBox="0 0 16 16"');
     expect(iconsReadme).toContain('exclamation-lg.svg');
     expect(iconsReadme).toContain('BOOTSTRAP-ICONS-LICENSE.txt');
-    expect(iconsReadme).toContain('commercial use');
+    expect(iconsReadme).toContain('Commercial use is permitted');
     expect(styles).toMatch(/\.mod-separator-status\s*\{[^}]*grid-column: 5 \/ 6;[^}]*\}/);
     expect(styles).not.toContain('.mod-conflict-markers > span');
     expect(styles).not.toContain('.mod-status-chip');

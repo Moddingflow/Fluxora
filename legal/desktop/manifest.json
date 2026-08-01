@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-08-01",
+  "fallbackLanguage": "en",
+  "documents": [
+    {
+      "language": "en",
+      "kind": "privacy",
+      "path": "en/privacy.md",
+      "sha256": "69b340bb01e9a145cca9ff1c8ef6665497316e569303ca7fab52185a50b95c3f",
+      "title": "Privacy Policy"
+    },
+    {
+      "language": "en",
+      "kind": "terms",
+      "path": "en/terms.md",
+      "sha256": "1011225f5ebc413117dc4401c167f01a06ceee89006fa311c004bb9030b5dbe8",
+      "title": "Terms of Use"
+    },
+    {
+      "language": "en",
+      "kind": "third-party-notices",
+      "path": "en/third-party-notices.md",
+      "sha256": "d67d4e269910ee2d7934a8a64c10adc36f2226f9cb7203e5b2a5cb2ca4c3200e",
+      "title": "Third-Party Notices"
+    },
+    {
+      "language": "en",
+      "kind": "legal-notice",
+      "path": "en/legal-notice.md",
+      "sha256": "b7c70f33dec5b61d895df0a9ffaf2d7bdbb7a422d8c0bb930f10fa2303f69876",
+      "title": "Legal Notice"
+    },
+    {
+      "language": "de",
+      "kind": "privacy",
+      "path": "de/privacy.md",
+      "sha256": "26f238eb1ab21e5f1827245451bf49b23361da711fba6ecb6dd62b3fa4d30b7a",
+      "title": "Datenschutzerklärung"
+    },
+    {
+      "language": "de",
+      "kind": "terms",
+      "path": "de/terms.md",
+      "sha256": "c77b71daaec2152653b1d80d5c28cb533dcac40ded259f41a36570b883f4512c",
+      "title": "Nutzungsbedingungen"
+    },
+    {
+      "language": "de",
+      "kind": "third-party-notices",
+      "path": "de/third-party-notices.md",
+      "sha256": "3842a8279ba6e969b1bee28eb1ac3698ebcb0d4e6d71063bfd377528a23df4bd",
+      "title": "Hinweise zu Drittanbieter-Komponenten"
+    },
+    {
+      "language": "de",
+      "kind": "legal-notice",
+      "path": "de/legal-notice.md",
+      "sha256": "fa14edc00bb8b042aae1fb80698131bf52e8b7b92e5eaa31f953360571105c23",
+      "title": "Rechtliche Informationen"
+    },
+    {
+      "language": "ru",
+      "kind": "privacy",
+      "path": "ru/privacy.md",
+      "sha256": "adc9d25c35c900f7a859168748871af281f25206610d8d143e81708a02b77c25",
+      "title": "Политика конфиденциальности"
+    },
+    {
+      "language": "ru",
+      "kind": "terms",
+      "path": "ru/terms.md",
+      "sha256": "c819ed5c7b3379791acae7fd548f4b8d6e38a765726eae79769c6bcefa36b726",
+      "title": "Условия использования"
+    },
+    {
+      "language": "ru",
+      "kind": "third-party-notices",
+      "path": "ru/third-party-notices.md",
+      "sha256": "a319a587f7c2cbbe2f61d60a4dba630ffcadc85618cf3489787aec5973dbf010",
+      "title": "Уведомления о сторонних компонентах"
+    },
+    {
+      "language": "ru",
+      "kind": "legal-notice",
+      "path": "ru/legal-notice.md",
+      "sha256": "0c9fe6d26fa4a2a31d76d63725caa06c2006d25582c586521dd1ea9ede20deb2",
+      "title": "Правовая информация"
+    }
+  ],
+  "releaseGate": {
+    "publicReleaseBlockedUntilApproved": true,
+    "ownerApprovalRequired": true,
+    "qualifiedGermanCounselReviewRequired": true,
+    "translationsReviewRequired": true,
+    "unknownOrMissingLicenseBlocksRelease": true,
+    "unverifiedAssetProvenanceBlocksRelease": true
+  },
+  "reviewSources": {
+    "gdprArticle13": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32016R0679",
+    "ddgSection5": "https://www.gesetze-im-internet.de/ddg/__5.html",
+    "vsbgSection36": "https://www.gesetze-im-internet.de/vsbg/__36.html",
+    "tdddgSection25": "https://www.gesetze-im-internet.de/ttdsg/__25.html",
+    "bgbSection327f": "https://www.gesetze-im-internet.de/bgb/__327f.html",
+    "githubPrivacy": "https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement",
+    "formerOdrPlatformClosure": "https://consumer-redress.ec.europa.eu/site-relocation_en",
+    "operatorSource": "https://www.moddingflow.com/impressum/?lang=en"
+  }
+}

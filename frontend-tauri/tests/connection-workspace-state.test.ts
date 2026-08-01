@@ -82,13 +82,92 @@ describe('connection workspace state', () => {
     expect(loadCachedConnectionSnapshot(storage).providers).toEqual([]);
   });
 
+  it('persists only the allowlisted connection status fields', () => {
+    const values = new Map<string, string>();
+    const unsafeSnapshot = snapshot('ready') as FluxoraExternalConnectionSnapshot & {
+      authorizationUrl: string;
+      accessToken: string;
+    };
+    unsafeSnapshot.authorizationUrl = 'https://moddingflow.com/oauth/authorize?state=secret';
+    unsafeSnapshot.accessToken = 'secret-access-token';
+    (unsafeSnapshot.providers[0] as FluxoraExternalConnectionStatus & {
+      callbackUrl: string;
+      refreshToken: string;
+    }).callbackUrl = 'http://127.0.0.1:12345/oauth/fluxora/callback?code=secret';
+    (unsafeSnapshot.providers[0] as FluxoraExternalConnectionStatus & {
+      callbackUrl: string;
+      refreshToken: string;
+    }).refreshToken = 'secret-refresh-token';
+
+    saveCachedConnectionSnapshot(
+      {
+        setItem: (key, value) => values.set(key, value)
+      },
+      unsafeSnapshot
+    );
+
+    const persisted = values.get(connectionSnapshotStorageKey) ?? '';
+    expect(persisted).not.toContain('authorizationUrl');
+    expect(persisted).not.toContain('accessToken');
+    expect(persisted).not.toContain('callbackUrl');
+    expect(persisted).not.toContain('refreshToken');
+    expect(JSON.parse(persisted)).toEqual(snapshot('ready'));
+  });
+
+  it('never persists the ModdingFlow account display name and scrubs legacy cached names', () => {
+    const values = new Map<string, string>();
+    const moddingFlowSnapshot: FluxoraExternalConnectionSnapshot = {
+      ...snapshot('ready'),
+      providers: [{
+        ...status('ready'),
+        providerId: 'moddingflow',
+        label: 'ModdingFlow',
+        accountName: 'Private nickname'
+      }]
+    };
+
+    saveCachedConnectionSnapshot(
+      {
+        setItem: (key, value) => values.set(key, value)
+      },
+      moddingFlowSnapshot
+    );
+
+    const persisted = values.get(connectionSnapshotStorageKey) ?? '';
+    expect(persisted).not.toContain('Private nickname');
+    expect(loadCachedConnectionSnapshot({
+      getItem: (key) => values.get(key) ?? null
+    }).providers[0]?.accountName).toBe('');
+
+    values.set(connectionSnapshotStorageKey, JSON.stringify(moddingFlowSnapshot));
+    expect(loadCachedConnectionSnapshot({
+      getItem: (key) => values.get(key) ?? null
+    }).providers[0]?.accountName).toBe('');
+  });
+
   it('renders calm retrying state and reserves explicit error action for reauthentication', () => {
     expect(connectionSummary(status('restoring'))).toBe('Reconnecting');
     expect(connectionSummary(status('temporarilyUnavailable'))).toBe('Reconnecting');
-    expect(connectionActionLabel(status('reauthRequired'))).toBe('Sign in again');
+    expect(connectionSummary(status('connecting'))).toBe('Connecting');
+    expect(connectionActionLabel(status('connecting'))).toBe('Cancel');
+    expect(connectionActionLabel(status('reauthRequired'))).toBe('Reconnect');
+    expect(connectionActionLabel(status('ready'))).toBe('Disconnect');
+    expect(connectionActionLabel(status('notLinked'))).toBe('Connect');
     expect(connectionCanToggle(status('temporarilyUnavailable'), true)).toBe(false);
+    expect(connectionCanToggle(status('connecting'), true)).toBe(true);
     expect(connectionCanToggle(status('reauthRequired'), true)).toBe(true);
     expect(connectionSummary(status('ready'))).toBe('Connected - Valerii');
+  });
+
+  it('uses the explicit unavailable message instead of implying user configuration is missing', () => {
+    const unavailable = {
+      ...status('notConfigured'),
+      message: 'ModdingFlow connection is not available in this build.'
+    };
+    expect(connectionSummary(unavailable)).toBe(
+      'ModdingFlow connection is not available in this build.'
+    );
+    expect(connectionCanToggle(unavailable, true)).toBe(false);
   });
 
   it('merges one manual provider result without losing other providers', () => {

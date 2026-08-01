@@ -26,10 +26,13 @@ export const FluxoraIpcChannels = {
   aiTestProvider: 'fluxora:ai:test-provider',
   aiTranscribeVoice: 'fluxora:ai:transcribe-voice',
   apiLimitsList: 'fluxora:api-limits:list',
+  connectionsCancelConnect: 'fluxora:connections:cancel-connect',
   connectionsConnect: 'fluxora:connections:connect',
   connectionsDisconnect: 'fluxora:connections:disconnect',
   connectionsListStatus: 'fluxora:connections:list-status',
   connectionsRestoreAll: 'fluxora:connections:restore-all',
+  managerHandoffOpenDefaultAppSettings:
+    'fluxora:manager-handoff:open-default-app-settings',
   appGetInfo: 'fluxora:app:get-info',
   bridgeGetLanguage: 'fluxora:bridge:get-language',
   bridgeGetStatus: 'fluxora:bridge:get-status',
@@ -124,6 +127,12 @@ export const FluxoraIpcChannels = {
   nxmInboundLinksCaptured: 'fluxora:nxm:inbound-links-captured',
   nxmImportInboundDownloads: 'fluxora:nxm:import-inbound-downloads',
   nxmRegisterProtocol: 'fluxora:nxm:register-protocol',
+  moddingFlowActivationCaptured: 'fluxora:moddingflow:activation-captured',
+  moddingFlowActivationConsumePending: 'fluxora:moddingflow:activation-consume-pending',
+  moddingFlowActivationPreview: 'fluxora:moddingflow:activation-preview',
+  moddingFlowActivationPlanPreview: 'fluxora:moddingflow:activation-plan-preview',
+  moddingFlowActivationAccept: 'fluxora:moddingflow:activation-accept',
+  moddingFlowActivationDismiss: 'fluxora:moddingflow:activation-dismiss',
   nexusConnect: 'fluxora:nexus:connect',
   nexusConnectWithApiKey: 'fluxora:nexus:connect-with-api-key',
   nexusDisconnect: 'fluxora:nexus:disconnect',
@@ -171,6 +180,12 @@ export const FluxoraIpcChannels = {
   transferOpenMo2InMain: 'fluxora:transfer:open-mo2-in-main',
   transferMo2Handoff: 'fluxora:transfer:mo2-handoff',
   transferMo2Open: 'fluxora:transfer:mo2-open',
+  updatesCheck: 'fluxora:updates:check',
+  updatesCancel: 'fluxora:updates:cancel',
+  updatesDownloadAndInstall: 'fluxora:updates:download-and-install',
+  updatesGetStatus: 'fluxora:updates:get-status',
+  updatesRendererReady: 'fluxora:updates:renderer-ready',
+  updatesStatus: 'fluxora:updates:status',
   uiLog: 'fluxora:ui:log',
   windowClose: 'fluxora:window:close',
   windowMinimize: 'fluxora:window:minimize',
@@ -193,6 +208,42 @@ export interface FluxoraAppInfo {
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   isPackaged: boolean;
+}
+
+export type FluxoraUpdateState =
+  | 'idle'
+  | 'checking'
+  | 'upToDate'
+  | 'available'
+  | 'downloading'
+  | 'waitingForOperations'
+  | 'readyToInstall'
+  | 'launchingUpdater'
+  | 'error';
+
+export interface FluxoraUpdateError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface FluxoraUpdateStatus {
+  state: FluxoraUpdateState;
+  currentVersion: string;
+  availableVersion?: string;
+  assetKind?: 'delta' | 'full';
+  downloadedBytes?: number;
+  totalBytes?: number;
+  progressPercent?: number;
+  checkedAtUtc?: string;
+  operationId?: string;
+  error?: FluxoraUpdateError;
+}
+
+export interface FluxoraUpdateCancelResult {
+  accepted: boolean;
+  state: FluxoraUpdateState;
+  operationId: string;
 }
 export interface FluxoraSecurityState {
   contextIsolation: true;
@@ -298,6 +349,41 @@ export interface FluxoraAiModelCapability {
   supportsStreaming: true;
 }
 
+export type FluxoraAiQuotaAvailability =
+  | 'available'
+  | 'connectionRequired'
+  | 'premiumRequired'
+  | 'quotaExhausted'
+  | 'searchQuotaExhausted'
+  | 'rateLimited'
+  | 'temporaryServerError'
+  | 'disabled'
+  | 'byok';
+
+export interface FluxoraAiQuotaSnapshot {
+  schema: 'fluxora.ai.quota.v1';
+  availability: FluxoraAiQuotaAvailability;
+  available: boolean;
+  eligibility: boolean;
+  reason: string;
+  periodStart: string | null;
+  resetAt: string | null;
+  rollover: false;
+  limit: number;
+  used: number;
+  reserved: number;
+  remaining: number;
+  remainingInputTokenEquivalent: number;
+  search: {
+    limit: number;
+    used: number;
+    reserved: number;
+    remaining: number;
+  };
+  model: typeof FLUXORA_AI_MODEL_ID;
+  priceVersion: string | null;
+}
+
 export interface FluxoraAiHostStatus {
   ready: boolean;
   operationId: string;
@@ -309,6 +395,7 @@ export interface FluxoraAiHostStatus {
   providers: FluxoraAiProviderDescriptor[];
   models: FluxoraAiModelCapability[];
   capabilities: Record<string, unknown>;
+  quota: FluxoraAiQuotaSnapshot;
   error?: (NativeBridgeError & Partial<FluxoraAiChatError>) | FluxoraAiChatError;
 }
 
@@ -825,6 +912,7 @@ export interface FluxoraGameTemplate {
   executables?: string[];
   capabilities?: FluxoraTemplateCapability[];
   gameCapabilities?: FluxoraGameCapabilities;
+  externalProviderGameSlugs?: Record<string, string[]>;
   contentLayoutSummary?: Record<string, unknown>;
   executableDisplayMetadata?: unknown;
   launchTrackingMetadata?: unknown;
@@ -917,6 +1005,7 @@ export interface FluxoraProject {
   installRootDirectory: string;
   projectDirectory: string;
   configPath: string;
+  defaultProfile?: string;
   paths?: {
     gameDirectory?: string;
     modsDirectory?: string;
@@ -925,6 +1014,7 @@ export interface FluxoraProject {
     overwriteDirectory?: string;
   };
   gameCapabilities?: FluxoraGameCapabilities;
+  externalProviderGameSlugs?: Record<string, string[]>;
   gameHealthSummary?: Record<string, unknown>;
   projectFingerprint?: Record<string, unknown> | null;
   contentLayoutSummary?: Record<string, unknown>;
@@ -1948,6 +2038,8 @@ export interface FluxoraPendingInstallOrderAnchors {
   beforeOrderId?: string;
   afterOrderId?: string;
   fallbackTargetIndex: number;
+  expectedRevision: number;
+  applyIfCompleted: boolean;
 }
 
 export type FluxoraInstallConflictSnapshotState =
@@ -2055,6 +2147,89 @@ export interface FluxoraNxmInboundLinksCaptured {
   source: string;
 }
 
+export interface FluxoraModdingFlowActivation {
+  v: 1;
+  artifactId: string;
+}
+
+export type FluxoraModdingFlowActivationPreviewState =
+  | 'available'
+  | 'unknown'
+  | 'deleted'
+  | 'ineligible'
+  | 'disconnected'
+  | 'unsupportedGame'
+  | 'unavailable';
+
+export interface FluxoraModdingFlowActivationPreviewMetadata {
+  mod: {
+    id: string;
+    name: string;
+  };
+  version: {
+    id: string;
+    label: string;
+  };
+  game: {
+    id: string;
+    name: string;
+  };
+  file: {
+    name: string;
+    sizeBytes: number | null;
+  };
+}
+
+export interface FluxoraModdingFlowActivationPreview {
+  artifactId: string;
+  state: FluxoraModdingFlowActivationPreviewState;
+  eligible: boolean | null;
+  requiresAccount: boolean;
+  metadata: FluxoraModdingFlowActivationPreviewMetadata | null;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationPreviewRequest {
+  artifactId: string;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationAcceptRequest {
+  artifactId: string;
+  instanceId: string;
+  profileName: string;
+  confirmedPlanId: string;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationPlanPreviewRequest {
+  artifactId: string;
+  instanceId: string;
+  profileName: string;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationPlanPreview {
+  artifactId: string;
+  planId: string;
+  requiredDownloadCount: number;
+  optionalDownloadCount: number;
+  requiredDiskSizeBytes: number;
+  conflictCount: number;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationDismissRequest {
+  artifactId: string;
+  operationId: string;
+}
+
+export interface FluxoraModdingFlowActivationDecisionResult {
+  artifactId: string;
+  state: 'accepted' | 'dismissed';
+  operationId: string;
+}
+
 export interface FluxoraNexusModsAuthStatus {
   isConfigured: boolean;
   isLinked: boolean;
@@ -2072,6 +2247,7 @@ export interface FluxoraNexusModsAuthStatus {
 export type FluxoraExternalConnectionState =
   | 'notConfigured'
   | 'notLinked'
+  | 'connecting'
   | 'restoring'
   | 'ready'
   | 'temporarilyUnavailable'
@@ -2271,65 +2447,6 @@ export interface UiLogEntry {
   category?: string;
 }
 
-export interface FluxoraPublicApiEnvelope<TData = Record<string, unknown>> {
-  ok?: boolean;
-  code?: string;
-  data?: TData;
-  error?: Record<string, unknown>;
-}
-
-export interface FluxoraPublicApiCallOptions extends OperationRequest {
-  accessToken?: string;
-  baseUrl?: string;
-  headers?: Record<string, string>;
-}
-
-export interface FluxoraPublicApiCatalogRequest {
-  category?: string;
-  cursor?: string;
-  game?: string;
-  gameVersion?: string;
-  limit?: number;
-  loader?: string;
-  q?: string;
-  query?: string;
-  sort?: 'relevance' | 'latest' | 'trending' | 'downloads';
-}
-
-export interface FluxoraPublicApiDownloadResolveRequest {
-  preferred_cdn?: 'r2' | 'bunny' | null;
-}
-
-export interface FluxoraPublicApiInstallPlanResolveRequest {
-  artifact_id?: string;
-  artifact_ids?: string[];
-  game_slug: string;
-  game_version: string;
-  include_optional?: boolean;
-  loader?: string | null;
-  mod_id?: string;
-  mod_ids?: string[];
-  platform?: string | null;
-  version_id?: string;
-  version_ids?: string[];
-}
-
-export interface FluxoraPublicApiClient {
-  listMods: (
-    request?: FluxoraPublicApiCatalogRequest,
-    options?: FluxoraPublicApiCallOptions
-  ) => Promise<FluxoraPublicApiEnvelope>;
-  resolveDownload: (
-    artifactId: string,
-    request?: FluxoraPublicApiDownloadResolveRequest,
-    options?: FluxoraPublicApiCallOptions
-  ) => Promise<FluxoraPublicApiEnvelope>;
-  resolveInstallPlan: (
-    request: FluxoraPublicApiInstallPlanResolveRequest,
-    options?: FluxoraPublicApiCallOptions
-  ) => Promise<FluxoraPublicApiEnvelope>;
-}
-
 export type FluxoraFileDropPosition = {
   x: number;
   y: number;
@@ -2358,6 +2475,14 @@ export interface FluxoraApi {
   app: {
     getInfo: () => Promise<FluxoraAppInfo>;
   };
+  updates: {
+    getStatus: () => Promise<FluxoraUpdateStatus>;
+    rendererReady: () => Promise<void>;
+    check: (request?: OperationRequest) => Promise<FluxoraUpdateStatus>;
+    downloadAndInstall: (request?: OperationRequest) => Promise<FluxoraUpdateStatus>;
+    cancel: (request?: OperationRequest) => Promise<FluxoraUpdateCancelResult>;
+    onStatus: (callback: (status: FluxoraUpdateStatus) => void) => () => void;
+  };
   apiLimits: {
     list: (request?: OperationRequest) => Promise<FluxoraApiLimitStatus>;
   };
@@ -2371,12 +2496,18 @@ export interface FluxoraApi {
       providerId: string,
       request?: OperationRequest
     ) => Promise<FluxoraExternalConnectionStatus>;
+    cancelConnect: (
+      providerId: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraExternalConnectionStatus>;
     disconnect: (
       providerId: string,
       request?: OperationRequest
     ) => Promise<FluxoraExternalConnectionStatus>;
   };
-  publicApi: FluxoraPublicApiClient;
+  managerHandoff: {
+    openDefaultAppSettings: () => Promise<void>;
+  };
   ai: {
     armMicrophoneCapture: (request: OperationRequest) => Promise<void>;
     prepareVoice: (request: FluxoraVoicePrepareRequest) => Promise<FluxoraVoiceStatus>;
@@ -2937,6 +3068,24 @@ export interface FluxoraApi {
     ) => Promise<FluxoraDownloadEntry[]>;
     onInboundLinksCaptured: (
       callback: (event: FluxoraNxmInboundLinksCaptured) => void
+    ) => () => void;
+  };
+  moddingFlowActivations: {
+    consumePending: () => Promise<FluxoraModdingFlowActivation[]>;
+    preview: (
+      request: FluxoraModdingFlowActivationPreviewRequest
+    ) => Promise<FluxoraModdingFlowActivationPreview>;
+    previewPlan: (
+      request: FluxoraModdingFlowActivationPlanPreviewRequest
+    ) => Promise<FluxoraModdingFlowActivationPlanPreview>;
+    accept: (
+      request: FluxoraModdingFlowActivationAcceptRequest
+    ) => Promise<FluxoraModdingFlowActivationDecisionResult>;
+    dismiss: (
+      request: FluxoraModdingFlowActivationDismissRequest
+    ) => Promise<FluxoraModdingFlowActivationDecisionResult>;
+    onCaptured: (
+      callback: (activation: FluxoraModdingFlowActivation) => void
     ) => () => void;
   };
   nexus: {

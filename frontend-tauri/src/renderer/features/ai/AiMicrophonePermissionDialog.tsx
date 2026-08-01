@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Mic, X } from 'lucide-react';
+import { Mic, X } from '../../design-system/icons/lucide-compat';
 
 import { aiMicrophonePermissionCopy } from './ai-voice-copy';
 
@@ -95,4 +95,3 @@ export function AiMicrophonePermissionDialog({
     </div>
   );
 }
-

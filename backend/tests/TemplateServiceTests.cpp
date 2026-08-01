@@ -72,6 +72,10 @@ namespace fluxora::tests
         EXPECT_EQ(resolved.defaultProfileName, L"Default");
         EXPECT_EQ(resolved.dataDirectory, L"Data");
         EXPECT_EQ(resolved.nexusDomain, L"skyrimspecialedition");
+        ASSERT_EQ(resolved.externalProviderGameSlugs.size(), 1U);
+        EXPECT_EQ(
+            resolved.externalProviderGameSlugs.at(L"moddingflow"),
+            (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
         EXPECT_TRUE(contains(resolved.folders, L"mods"));
         EXPECT_TRUE(contains(resolved.profileFiles, L"plugins.txt"));
         EXPECT_TRUE(contains(resolved.profileFiles, L"loadorder.txt"));
@@ -105,7 +109,7 @@ namespace fluxora::tests
         const BuildTemplate listed = service.gameTemplates().front();
         const BuildTemplate resolved = service.resolve(listed.id);
 
-        // Deprecated bridge compatibility fields stay populated until the C#
+        // Deprecated serialized bridge compatibility fields stay populated until the
         // frontend moves to typed GameDefinition/capability models.
         EXPECT_EQ(listed.id, L"skyrimse");
         EXPECT_EQ(listed.displayName, L"Skyrim Special Edition");
@@ -116,6 +120,9 @@ namespace fluxora::tests
         EXPECT_EQ(resolved.defaultProfileName, L"Default");
         EXPECT_EQ(resolved.dataDirectory, L"Data");
         EXPECT_EQ(resolved.nexusDomain, L"skyrimspecialedition");
+        EXPECT_EQ(
+            resolved.externalProviderGameSlugs.at(L"moddingflow"),
+            (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
         EXPECT_TRUE(contains(resolved.folders, L"mods"));
         EXPECT_TRUE(contains(resolved.profileFiles, L"plugins.txt"));
         EXPECT_TRUE(contains(resolved.basePlugins, L"Skyrim.esm"));

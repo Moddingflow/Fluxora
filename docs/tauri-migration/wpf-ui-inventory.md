@@ -6,7 +6,7 @@
 
 ## Scope and sources
 
-Эта карта фиксирует текущий WPF интерфейс как контракт паритета для `frontend-tauri/`. Инвентаризация сделана по исходникам:
+Эта карта фиксирует удалённый исторический WPF-интерфейс как исходный контракт паритета для `frontend-tauri/`. Инвентаризация была сделана по существовавшим на тот момент исходникам:
 
 - `frontend/App.xaml.cs`
 - `frontend/MainWindow.xaml`
@@ -25,7 +25,7 @@
 - `frontend/Services/*CatalogService.cs`
 - `frontend/Services/CoreBridgeService.cs`
 
-Out of scope for Phase 0 frontend parity: `installer/Fluxora.Installer/MainWindow.xaml`. Это WPF-окно установщика, а не пользовательский frontend приложения. Его нужно учитывать отдельно в release/installer phase.
+Out of scope for Phase 0 frontend parity был `installer/Fluxora.Installer/MainWindow.xaml`: отдельное WPF-окно установщика. Его последующая миграция в изолированный Tauri Setup завершена; исходный C# проект удалён.
 
 Owner legend:
 
@@ -427,10 +427,9 @@ The following `CoreBridgeService` methods are part of WPF UI parity and should b
 
 ## Unknowns and follow-up checks
 
-No additional WPF windows or user-facing process surfaces were found outside the entrypoints listed above in `frontend/`. The separate WPF installer window under `installer/Fluxora.Installer/` is intentionally outside this frontend parity inventory and belongs to the release/installer migration work.
+No additional WPF windows or user-facing process surfaces were found outside the entrypoints listed above in the historical `frontend/` snapshot. The former WPF installer was tracked separately and has since been replaced by the native C++ + isolated Tauri Setup target.
 
-Manual checks still required before closing the visual baseline:
+The following list is retained only as an archival baseline checklist. The removed WPF application is no longer runnable from this repository; current acceptance uses the Tauri product, Setup and Updater targets.
 
-- Run the current WPF app.
 - Capture baseline screenshots for: startup, home/project catalog, create wizard, workspace mods, plugins, data tree, downloads, settings sections, build paths, profiles, executables, install options, archive details, FOMOD, MO2 transfer, FluxPack package/install, executable launch.
 - Time or record baseline for: startup, project open, section switch, mod search, large list scroll, file tree expansion, FOMOD wizard, archive install, MO2 import progress.

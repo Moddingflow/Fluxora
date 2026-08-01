@@ -1,4 +1,8 @@
-import { Check, ChevronDown, Globe2 } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Globe2
+} from '../../design-system/icons/lucide-compat';
 import {
   useCallback,
   useEffect,

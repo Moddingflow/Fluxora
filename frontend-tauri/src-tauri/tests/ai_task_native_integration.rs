@@ -153,7 +153,9 @@ fn text_turn(text: &str) -> Value {
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Option<(String, Value)> {
-    stream.set_read_timeout(Some(Duration::from_secs(30))).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .ok()?;
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
     let header_end = loop {
@@ -167,7 +169,10 @@ fn read_http_request(stream: &mut TcpStream) -> Option<(String, Value)> {
         }
     };
     let headers = String::from_utf8_lossy(&bytes[..header_end]).to_ascii_lowercase();
-    if headers.lines().any(|line| line.trim() == "expect: 100-continue") {
+    if headers
+        .lines()
+        .any(|line| line.trim() == "expect: 100-continue")
+    {
         stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").ok()?;
         stream.flush().ok()?;
     }
@@ -232,26 +237,25 @@ impl MockGeminiGateway {
                         .expect("record mock method")
                         .push(method.clone());
                     let response = match method.as_str() {
-                    "" => json!({
-                        "available": true,
-                        "providerId": "gemini",
-                        "modelId": "gemini-3.1-flash-lite"
-                    }),
-                    "getmodel" => json!({
-                        "inputTokenLimit": 1_048_576,
-                        "outputTokenLimit": 65_536
-                    }),
-                    "counttokens" => json!({ "totalTokens": 512 }),
-                    "generatecontent" => {
-                        let current = {
-                            let mut generation = request_generation
-                                .lock()
-                                .expect("advance mock generation");
-                            let current = *generation;
-                            *generation = generation.saturating_add(1);
-                            current
-                        };
-                        match current {
+                        "" => json!({
+                            "available": true,
+                            "providerId": "gemini",
+                            "modelId": "gemini-3.1-flash-lite"
+                        }),
+                        "getmodel" => json!({
+                            "inputTokenLimit": 1_048_576,
+                            "outputTokenLimit": 65_536
+                        }),
+                        "counttokens" => json!({ "totalTokens": 512 }),
+                        "generatecontent" => {
+                            let current = {
+                                let mut generation =
+                                    request_generation.lock().expect("advance mock generation");
+                                let current = *generation;
+                                *generation = generation.saturating_add(1);
+                                current
+                            };
+                            match current {
                             0 => text_turn("You can locate and edit the file manually."),
                             1 => function_turn(
                                 "declare-goal",
@@ -759,8 +763,8 @@ impl MockGeminiGateway {
                             ),
                             _ => text_turn("This unsupported file cannot be changed safely."),
                         }
-                    }
-                    _ => json!({}),
+                        }
+                        _ => json!({}),
                     };
                     write_http_response(&mut stream, response);
                 });
@@ -860,6 +864,10 @@ fn main() {
     let _bridge = EnvGuard::set("FLUXORA_BRIDGE_HOST_PATH", &bridge);
     let _provider = EnvGuard::set("FLUXORA_AI_HOST_PATH", &real_ai_host);
     let _gateway = EnvGuard::set("FLUXORA_AI_TEST_GATEWAY_URL", &gateway.url);
+    let _managed_access = EnvGuard::set(
+        "FLUXORA_AI_TEST_MANAGED_ACCESS_TOKEN",
+        "native-ai-integration-fixture-token",
+    );
 
     let result =
         fluxora_tauri_lib::run_native_ai_integration_fixture(&game, &install_root, &archive_path)
@@ -1074,7 +1082,9 @@ fn main() {
             .and_then(Value::as_str),
         Some("needs-input"),
         "ambiguous response: {}",
-        result.pointer("/ambiguousAudio/response").unwrap_or(&Value::Null)
+        result
+            .pointer("/ambiguousAudio/response")
+            .unwrap_or(&Value::Null)
     );
     assert_eq!(
         result
@@ -1086,7 +1096,8 @@ fn main() {
         result
             .pointer("/ambiguousAudio/response/execution/pendingQuestion")
             .and_then(Value::as_str)
-            .is_some_and(|question| question.contains("first setting") && question.contains("second setting")),
+            .is_some_and(|question| question.contains("first setting")
+                && question.contains("second setting")),
         "ambiguity must produce exactly one concrete decision question"
     );
     assert_eq!(
@@ -1114,14 +1125,16 @@ fn main() {
         result
             .pointer("/ambiguousAudio/sourceContent")
             .and_then(Value::as_str)
-            .is_some_and(|source| source.contains("CombatVolume=1.0") && source.contains("AmbientVolume=1.0")),
+            .is_some_and(|source| source.contains("CombatVolume=1.0")
+                && source.contains("AmbientVolume=1.0")),
         "the ambiguous source mod must remain unchanged"
     );
     assert!(
         result
             .pointer("/ambiguousAudio/managedContent")
             .and_then(Value::as_str)
-            .is_some_and(|managed| managed.contains("CombatVolume=0.35") && managed.contains("AmbientVolume=1.0")),
+            .is_some_and(|managed| managed.contains("CombatVolume=0.35")
+                && managed.contains("AmbientVolume=1.0")),
         "the continuation must change only the selected first setting"
     );
     assert_eq!(
@@ -1148,7 +1161,9 @@ fn main() {
             .and_then(Value::as_str),
         Some("binary"),
         "unsupported response: {}",
-        result.pointer("/unsupportedConfig/response").unwrap_or(&Value::Null)
+        result
+            .pointer("/unsupportedConfig/response")
+            .unwrap_or(&Value::Null)
     );
     assert_eq!(
         result
@@ -1215,13 +1230,15 @@ fn main() {
                     .and_then(Value::as_str)
                     .is_some_and(|message| message.contains("completed local.text.read"))
         }));
-        assert!(events.iter().filter(|event| {
-            event.get("type").and_then(Value::as_str) == Some("tool-started")
-        }).all(|event| {
-            event.pointer("/payload/data/tool")
-                .and_then(Value::as_str)
-                .is_some_and(|tool| !tool.is_empty())
-        }));
+        assert!(events
+            .iter()
+            .filter(|event| { event.get("type").and_then(Value::as_str) == Some("tool-started") })
+            .all(|event| {
+                event
+                    .pointer("/payload/data/tool")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tool| !tool.is_empty())
+            }));
     }
     let ngio_question = result
         .pointer("/ngioEvidenceFirst/response/execution/pendingQuestion")
@@ -1314,13 +1331,17 @@ fn main() {
         result
             .pointer("/ngioBatch/sourceAfterRollback")
             .and_then(Value::as_str),
-        result.pointer("/ngioBatch/sourceContent").and_then(Value::as_str)
+        result
+            .pointer("/ngioBatch/sourceContent")
+            .and_then(Value::as_str)
     );
     assert_eq!(
         result
             .pointer("/ngioBatch/managedAfterRollback")
             .and_then(Value::as_str),
-        result.pointer("/ngioBatch/managedContent").and_then(Value::as_str)
+        result
+            .pointer("/ngioBatch/managedContent")
+            .and_then(Value::as_str)
     );
     assert!(
         result

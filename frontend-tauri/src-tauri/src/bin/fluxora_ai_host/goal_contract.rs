@@ -172,7 +172,9 @@ impl FluxoraAiGoal {
         };
         Ok(Self {
             goal_id: if continued {
-                active_goal_id.expect("validated active goal id").to_string()
+                active_goal_id
+                    .expect("validated active goal id")
+                    .to_string()
             } else {
                 generated_goal_id.into()
             },

@@ -226,7 +226,9 @@ namespace fluxora
             return -1;
         }
 
-        std::wstring decodeQtByteArrayPayload(const std::wstring& payload)
+        std::wstring decodeQtByteArrayPayload(
+            const std::wstring& payload,
+            bool preserveUnknownEscapes = false)
         {
             std::string bytes;
             bytes.reserve(payload.size());
@@ -255,6 +257,9 @@ namespace fluxora
                 case L'\\':
                     bytes.push_back('\\');
                     break;
+                case L'"':
+                    bytes.push_back('"');
+                    break;
                 case L'x':
                 {
                     if (index + 2 < payload.size())
@@ -273,6 +278,10 @@ namespace fluxora
                     break;
                 }
                 default:
+                    if (preserveUnknownEscapes)
+                    {
+                        bytes.push_back('\\');
+                    }
                     appendWideCharacterAsBytes(bytes, escaped);
                     break;
                 }
@@ -312,7 +321,15 @@ namespace fluxora
                 return decodeQtByteArrayPayload(value.substr(11, value.size() - 12));
             }
 
-            return value;
+            const bool hasQtEscapes =
+                value.find(L"\\\\") != std::wstring::npos ||
+                value.find(L"\\\"") != std::wstring::npos ||
+                value.ends_with(L"\\n") ||
+                value.ends_with(L"\\r") ||
+                value.ends_with(L"\\t");
+            return hasQtEscapes
+                ? decodeQtByteArrayPayload(value, true)
+                : value;
         }
 
         std::wstring expandEnvironmentVariables(std::wstring value)

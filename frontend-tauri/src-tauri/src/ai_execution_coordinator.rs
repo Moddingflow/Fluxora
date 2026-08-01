@@ -571,11 +571,9 @@ fn recovery_action(code: &str) -> RecoveryAction {
         "invalid-scope" | "invalid-arguments" | "validation-failed" => {
             RecoveryAction::Retry("normalize-arguments-and-retry")
         }
-        "ambiguous"
-        | "conflict"
-        | "needs-input"
-        | "dirty-editor"
-        | "multiple-virtual-targets" => RecoveryAction::Question,
+        "ambiguous" | "conflict" | "needs-input" | "dirty-editor" | "multiple-virtual-targets" => {
+            RecoveryAction::Question
+        }
         "outside-scope"
         | "path-escape"
         | "protected"

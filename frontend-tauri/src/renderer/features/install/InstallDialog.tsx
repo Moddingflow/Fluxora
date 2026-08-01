@@ -8,7 +8,7 @@ import {
   Play,
   RefreshCw,
   X
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
 import installModIcon from '../../../../../Icons/package-plus.svg';

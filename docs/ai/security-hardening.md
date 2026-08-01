@@ -74,15 +74,19 @@ blocked. Unsaved Monaco buffers are protected by the Rust dirty-ref registry.
 
 ## Provider And Gateway Controls
 
-The renderer never handles provider secrets. A public Supabase publishable key
-may identify the Edge Function client, but it is not authorization to obtain
-the server-side Gemini key. Service-role/Vault access remains inside the
-deployed function.
+The renderer never handles provider secrets or OAuth tokens. C++ requests a
+short-lived token only for `agent:run`; Tauri receives it through a private
+native bridge method and injects it only into the AI sidecar stdin request.
+The production sidecar has one fixed Website endpoint and no publishable/anon
+key or legacy Supabase gateway fallback. Service-role, request-HMAC, and Gemini
+credentials remain server-side.
 
-The gateway enforces JWT verification, the single model, the three allowed
-provider methods, 64 MiB request limit, 120-second timeout, no-store response
-headers, and streaming pass-through. Protocol v1 remains only for deployment
-compatibility; new clients use v2.
+The Website gateway enforces OAuth signature/currentness, exact first-party
+client, `agent:run`, revocation/access revision, Premium, the single model, the
+three allowed provider methods, 32 MiB request limit, stable idempotency,
+explicit Search mode, rate/concurrency limits, and atomic reserve/settle
+accounting. Only a 401 triggers one Tauri refresh/retry; every other failure
+fails closed without switching to direct Gemini.
 
 No prompt, chat history, build fragment, or provider body is intentionally
 persisted in Supabase application tables. Infrastructure/provider logging and
@@ -110,7 +114,8 @@ Sanitization occurs before writing native logs or emitting renderer events.
 | Provider summary/context cursor | Local with its chat tab | Removed with that tab; updated at later 90% compression. |
 | File index metadata | Native local session/cache | Revision-bound; no permanent content index. |
 | Checkpoints/diffs | Local native mutation lifecycle | Kept only while needed for verified Undo; excluded from normal logs/support output. |
-| Managed request payload | Transient Supabase/Google processing | No application-table persistence; provider/infrastructure terms apply. |
+| Managed request payload | Transient Website/Google processing | No application-table persistence; provider/infrastructure terms apply. |
+| Managed aggregate accounting | Website database | Identifiers, request HMAC, aggregate usage/cost, status and timestamps only; terminal history is removed after 24 months, unresolved reservations stay until reconciliation. |
 | Operation logs | Separate local log channels | Minimized/redacted; current product retention controls apply. |
 
 ## Release Checks
@@ -118,7 +123,9 @@ Sanitization occurs before writing native logs or emitting renderer events.
 - Run focused `BuildFileWorkspaceService` and bridge protocol CTest coverage.
 - Run all Rust targets and the native AI fixture.
 - Run typecheck, complete Vitest, `test:ai-gate`, and Playwright AI smoke.
-- Probe deployed gateway v2 `status` and `getModel` with the current client key.
+- Probe deployed Website gateway v3 `status` and `getModel` with eligible
+  `desktop_mod_manager` OAuth; verify anonymous/publishable keys and missing
+  `agent:run` fail before provider dispatch.
 - Run `Build.ps1 -Configuration Release` and verify only the approved installer.
 - Run `graphify update .` and review the final diff for secrets and stale AI
   contracts.

@@ -1,6 +1,8 @@
 include(FetchContent)
 
-find_package(GTest CONFIG QUIET)
+if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
+    find_package(GTest CONFIG QUIET)
+endif()
 if(NOT TARGET GTest::gtest_main)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
@@ -49,6 +51,15 @@ add_executable(FluxoraCoreTests
     LodGeneratorIntegrationServiceTests.cpp
     ModFileOperationsIntegrationTests.cpp
     ModIdentityResolverTests.cpp
+    ModdingFlowArtifactLookupServiceTests.cpp
+    ModdingFlowDownloadQueueServiceTests.cpp
+    ModdingFlowAuthServiceTests.cpp
+    ModdingFlowExternalConnectionProviderTests.cpp
+    ModdingFlowOAuthAdaptersTests.cpp
+    ModdingFlowPublicApiClientTests.cpp
+    ModdingFlowProviderCatalogTests.cpp
+    ModdingFlowInstallPlanServiceTests.cpp
+    ModdingFlowRemoteDownloadResolverTests.cpp
     ModUpdateServiceTests.cpp
     NexusDownloadDuplicateResolverTests.cpp
     NexusFileLineageResolverTests.cpp
@@ -62,7 +73,11 @@ add_executable(FluxoraCoreTests
     PluginServiceTests.cpp
     ProjectServiceTests.cpp
     RootBuilderLaunchCacheReconcilerTests.cpp
+    SecureCredentialStoreTests.cpp
     ProjectStateTransactionTests.cpp
+    RemoteDownloadFoundationTests.cpp
+    RemoteDownloadTransferServiceTests.cpp
+    SignedRemoteDownloadTransportTests.cpp
     ScopedFileCleanupTests.cpp
     TemplateServiceTests.cpp
     VfsMountPlanTests.cpp
@@ -79,6 +94,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/BodySlideIntegrationService.cpp
     ../src/Services/ContentLayoutService.cpp
     ../src/GameSupport/DefinitionBackedGameSupport.cpp
+    ../src/GameSupport/GameDefinition.cpp
     ../src/GameSupport/GameDefinitionLoader.cpp
     ../src/GameSupport/GameDetectionService.cpp
     ../src/GameSupport/GameHealthCheckService.cpp
@@ -87,6 +103,13 @@ add_executable(FluxoraCoreTests
     ../src/GameSupport/SkyrimSpecialEditionSupport.cpp
     ../src/Services/DownloadService.cpp
     ../src/Services/DownloadTransferLimiter.cpp
+    ../src/Services/RemoteDownloadContracts.cpp
+    ../src/Services/RemoteDownloadCoordinator.cpp
+    ../src/Services/RemoteDownloadFileStore.cpp
+    ../src/Services/RemoteDownloadProviderRegistry.cpp
+    ../src/Services/RemoteDownloadSidecarStore.cpp
+    ../src/Services/RemoteDownloadTransferService.cpp
+    ../src/Services/SignedRemoteDownloadTransport.cpp
     ../src/Services/EffectiveFileTreeService.cpp
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp
@@ -105,6 +128,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/InstallProjectGate.cpp
     ../src/Services/InstallScheduler.cpp
     ../src/Services/InstallTransactionJournal.cpp
+    ../src/Services/LogRedaction.cpp
     ../src/Services/Logger.cpp
     ../src/Services/LodGeneratorIntegrationService.cpp
     ../src/Services/ModOrganizerExecutableImportService.cpp
@@ -116,6 +140,20 @@ add_executable(FluxoraCoreTests
     ../src/Services/NexusUpdateCache.cpp
     ../src/Services/NexusUpdateHttpApi.cpp
     ../src/Services/ModIdentityResolver.cpp
+    ../src/Services/ModdingFlowConfiguration.cpp
+    ../src/Services/ModdingFlowConnectionCapability.cpp
+    ../src/Services/ModdingFlowExternalConnectionProvider.cpp
+    ../src/Services/ModdingFlowApiResponse.cpp
+    ../src/Services/ModdingFlowArtifactLookupService.cpp
+    ../src/Services/ModdingFlowDownloadQueueService.cpp
+    ../src/Services/ModdingFlowAuthService.cpp
+    ../src/Services/ModdingFlowHttpTransport.cpp
+    ../src/Services/ModdingFlowJwksIdTokenVerifier.cpp
+    ../src/Services/ModdingFlowOAuthHttpClient.cpp
+    ../src/Services/ModdingFlowPublicApiClient.cpp
+    ../src/Services/ModdingFlowProviderCatalog.cpp
+    ../src/Services/ModdingFlowInstallPlanService.cpp
+    ../src/Services/ModdingFlowRemoteDownloadResolver.cpp
     ../src/Services/NifPreviewResolver.cpp
     ../src/Services/NexusModsAuthService.cpp
     ../src/Services/ModOrganizerPluginGroupService.cpp
@@ -127,6 +165,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ProfileService.cpp
     ../src/Services/ProjectService.cpp
     ../src/Services/RootBuilderLaunchCacheReconciler.cpp
+    ../src/Services/WindowsSecureCredentialStore.cpp
     ../src/Services/TemplateService.cpp
     ../src/Services/VfsMountPlan.cpp
     ../src/Services/WorkspaceRevisionJournal.cpp
@@ -135,6 +174,17 @@ add_executable(FluxoraCoreTests
     ../src/Storage/ProjectStateTransaction.cpp
     ../src/Support/LaunchDescriptorStore.cpp
 )
+
+target_compile_definitions(FluxoraCoreTests PRIVATE
+    FLUXORA_MODDINGFLOW_HTTP_TEST_HOOKS
+    FLUXORA_PRODUCT_VERSION="${FLUXORA_PRODUCT_VERSION}"
+)
+if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    target_compile_definitions(FluxoraCoreTests PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+    target_compile_definitions(FluxoraCoreTests PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+endif()
 
 if(WIN32)
     target_sources(FluxoraCoreTests
@@ -204,6 +254,12 @@ target_include_directories(FluxoraCoreApiTests
 )
 
 target_compile_features(FluxoraCoreApiTests PRIVATE cxx_std_20)
+if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    target_compile_definitions(FluxoraCoreApiTests PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+    target_compile_definitions(FluxoraCoreApiTests PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+endif()
 
 if(MSVC)
     target_compile_options(FluxoraCoreApiTests PRIVATE /W4 /permissive- /utf-8)
@@ -262,9 +318,39 @@ endif()
 gtest_discover_tests(FluxoraCoreApiTests DISCOVERY_MODE PRE_TEST)
 
 if(WIN32)
+    if(MSVC)
+        if(NOT DEFINED googletest_SOURCE_DIR)
+            message(FATAL_ERROR
+                "Fluxora installer static-runtime tests require the pinned GoogleTest source tree.")
+        endif()
+        add_library(FluxoraInstallerGTestMt STATIC
+            ${googletest_SOURCE_DIR}/googletest/src/gtest-all.cc)
+        target_include_directories(FluxoraInstallerGTestMt
+            PUBLIC ${googletest_SOURCE_DIR}/googletest/include
+            PRIVATE ${googletest_SOURCE_DIR}/googletest)
+        target_compile_features(FluxoraInstallerGTestMt PUBLIC cxx_std_20)
+        set_property(
+            TARGET FluxoraInstallerGTestMt
+            PROPERTY MSVC_RUNTIME_LIBRARY
+                "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
     add_executable(FluxoraInstallerCoreTests
+        InstallerGTestMain.cpp
+        InstallerLogServiceTests.cpp
+        InstallerSetupBootstrapTests.cpp
+        InstallerWindowsIntegrationTests.cpp
         InstallerCorePackageTests.cpp
+        UpdaterApplicationLaunchTests.cpp
+        UpdaterEngineTests.cpp
+        UpdaterHealthReceiptTests.cpp
+        UpdaterProcessSafetyTests.cpp
+        UpdaterRecoveryServicesTests.cpp
+        UpdaterWorkflowServiceTests.cpp
+        UpdaterWorkflowRequestTests.cpp
         TestFilesystem.hpp
+        WindowsProcessTestHelper.cpp
+        WindowsProcessTestHelper.hpp
     )
 
     target_include_directories(FluxoraInstallerCoreTests
@@ -273,6 +359,10 @@ if(WIN32)
     )
 
     target_compile_features(FluxoraInstallerCoreTests PRIVATE cxx_std_20)
+    set_property(
+        TARGET FluxoraInstallerCoreTests
+        PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
     if(MSVC)
         target_compile_options(FluxoraInstallerCoreTests PRIVATE /W4 /permissive- /utf-8)
@@ -280,10 +370,19 @@ if(WIN32)
         target_compile_options(FluxoraInstallerCoreTests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
-    target_link_libraries(FluxoraInstallerCoreTests PRIVATE
-        GTest::gtest_main
-        FluxoraInstallerCore
-        bcrypt)
+    if(MSVC)
+        target_link_libraries(FluxoraInstallerCoreTests PRIVATE
+            FluxoraInstallerGTestMt
+            FluxoraInstallerCore
+            bcrypt
+            crypt32)
+    else()
+        target_link_libraries(FluxoraInstallerCoreTests PRIVATE
+            GTest::gtest_main
+            FluxoraInstallerCore
+            bcrypt
+            crypt32)
+    endif()
 
     add_custom_command(
         TARGET FluxoraInstallerCoreTests
@@ -298,6 +397,17 @@ endif()
 if(WIN32)
     find_program(FLUXORA_POWERSHELL_EXECUTABLE NAMES pwsh powershell REQUIRED)
 
+    set(FLUXORA_BRIDGE_PROTOCOL_MODDINGFLOW_ARGS)
+    if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+        list(APPEND FLUXORA_BRIDGE_PROTOCOL_MODDINGFLOW_ARGS
+            -ExpectPrivateModdingFlowCapability
+            -ExpectInMemoryModdingFlowCredentialStore)
+    endif()
+    if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+        list(APPEND FLUXORA_BRIDGE_PROTOCOL_MODDINGFLOW_ARGS
+            -ExpectManagedModdingFlowDownloadCapability)
+    endif()
+
     add_test(
         NAME FluxoraBridgeHostProtocol
         COMMAND "${FLUXORA_POWERSHELL_EXECUTABLE}"
@@ -305,7 +415,8 @@ if(WIN32)
             -NonInteractive
             -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/BridgeHostProtocol.Tests.ps1"
-            -HostPath "$<TARGET_FILE:FluxoraBridgeHost>")
+            -HostPath "$<TARGET_FILE:FluxoraBridgeHostProtocolHarness>"
+            ${FLUXORA_BRIDGE_PROTOCOL_MODDINGFLOW_ARGS})
     set_tests_properties(FluxoraBridgeHostProtocol PROPERTIES
         LABELS "bridge;smoke"
         TIMEOUT 30)
@@ -317,7 +428,7 @@ if(WIN32)
             -NonInteractive
             -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/BuildFilesBridgeProtocol.Tests.ps1"
-            -HostPath "$<TARGET_FILE:FluxoraBridgeHost>")
+            -HostPath "$<TARGET_FILE:FluxoraBridgeHostProtocolHarness>")
     set_tests_properties(FluxoraBuildFilesBridgeProtocol PROPERTIES
         LABELS "bridge;smoke;ai-files"
         PASS_REGULAR_EXPRESSION "Build-files bridge protocol passed"

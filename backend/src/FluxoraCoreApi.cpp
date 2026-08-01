@@ -20,6 +20,11 @@
 #include "FluxoraCore/Services/InstallOperationService.hpp"
 #include "FluxoraCore/Services/InstallProjectGate.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+#include "FluxoraCore/Services/ModdingFlowConnectionCapability.hpp"
+#include "FluxoraCore/Services/ModdingFlowExternalConnectionProvider.hpp"
+#include "FluxoraCore/Services/ModdingFlowInstallPlanService.hpp"
+#endif
 #include "FluxoraCore/Services/ModUpdateService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
@@ -69,6 +74,7 @@ namespace
 
     bool isBlank(const wchar_t* value);
     fluxora::Core& core();
+    std::wstring messageToWide(std::string_view message);
     void logOperation(fluxora::LogLevel level, std::string_view category, std::string_view message) noexcept;
 
     void writeCapabilities(fluxora::JsonWriter& writer, const fluxora::BuildTemplate& tpl)
@@ -709,6 +715,18 @@ namespace
         return writer.str();
     }
 
+    void writeExternalProviderGameSlugs(
+        fluxora::JsonWriter& writer,
+        const fluxora::ExternalProviderGameSlugMap& mappings)
+    {
+        writer.beginObject();
+        for (const auto& [providerId, gameSlugs] : mappings)
+        {
+            writer.stringArray(providerId, gameSlugs);
+        }
+        writer.endObject();
+    }
+
     std::wstring serializeManagedLaunchCompletion(
         const fluxora::ManagedLaunchCompletion& completion)
     {
@@ -821,6 +839,8 @@ namespace
         writer.field(L"defaultProfile", tpl.defaultProfileName);
         writer.field(L"dataDirectory", tpl.dataDirectory);
         writer.field(L"nexusDomain", tpl.nexusDomain);
+        writer.key(L"externalProviderGameSlugs");
+        writeExternalProviderGameSlugs(writer, tpl.externalProviderGameSlugs);
         writer.stringArray(L"folders", tpl.folders);
         writer.stringArray(L"profileFiles", tpl.profileFiles);
         writer.stringArray(L"basePlugins", tpl.basePlugins);
@@ -888,6 +908,13 @@ namespace
         writer.field(L"configPath", project.configPath.wstring());
         writer.key(L"gameCapabilities");
         writeGameCapabilities(writer, metadata.capabilities);
+        writer.key(L"externalProviderGameSlugs");
+        writeExternalProviderGameSlugs(
+            writer,
+            result.resolvedTemplate.externalProviderGameSlugs);
+        writer.field(
+            L"defaultProfile",
+            result.resolvedTemplate.defaultProfileName);
         writer.key(L"gameHealthSummary");
         writeProjectHealthSummary(
             writer,
@@ -991,6 +1018,8 @@ namespace
             writer.field(L"gameName", tpl.gameName);
             writer.field(L"summary", tpl.summary);
             writer.field(L"uiTemplateId", metadata.uiTemplateId);
+            writer.key(L"externalProviderGameSlugs");
+            writeExternalProviderGameSlugs(writer, tpl.externalProviderGameSlugs);
             writer.key(L"gameCapabilities");
             writeGameCapabilities(writer, metadata.capabilities);
             writer.stringArray(L"archiveExtensions", metadata.archiveExtensions);
@@ -1084,6 +1113,106 @@ namespace
         writer.endObject();
         return writer.str();
     }
+
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    std::wstring serializeModdingFlowConnectStart(const fluxora::ModdingFlowConnectStart& start)
+    {
+        const auto widenAscii = [](std::string_view value)
+        {
+            return std::wstring(value.begin(), value.end());
+        };
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"transactionId", widenAscii(start.transactionId));
+        writer.field(L"authorizationUrl", widenAscii(start.authorizationUrl));
+        writer.field(
+            L"expiresAtEpochSeconds",
+            static_cast<std::uintmax_t>(
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    start.expiresAt.time_since_epoch()).count()));
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeModdingFlowArtifactPreview(
+        const fluxora::ModdingFlowArtifactPreview& preview)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"artifactId", messageToWide(preview.artifactId));
+        writer.field(L"modId", messageToWide(preview.modId));
+        writer.field(L"versionId", messageToWide(preview.versionId));
+        writer.field(L"gameId", messageToWide(preview.gameId));
+        writer.field(L"gameSlug", messageToWide(preview.gameSlug));
+        writer.key(L"title").beginObject();
+        for (const auto& [locale, value] : preview.title)
+        {
+            writer.field(messageToWide(locale), messageToWide(value));
+        }
+        writer.endObject();
+        writer.field(L"version", messageToWide(preview.version));
+        writer.field(L"filename", messageToWide(preview.filename));
+        writer.field(L"sizeBytes", static_cast<std::uintmax_t>(preview.sizeBytes));
+        writer.field(L"sha256", messageToWide(preview.sha256));
+        writer.field(L"accessTier", messageToWide(preview.accessTier));
+        writer.field(L"operationId", preview.operationId);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeModdingFlowActivationPlan(
+        const fluxora::ModdingFlowInstallPlan& plan)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"planId", messageToWide(plan.planId));
+        writer.field(L"gameSlug", messageToWide(plan.gameSlug));
+        writer.field(L"gameVersion", messageToWide(plan.gameVersion));
+        writer.field(
+            L"requiredDiskSizeBytes",
+            static_cast<std::uintmax_t>(plan.requiredDiskSizeBytes));
+        writer.key(L"conflicts").beginArray();
+        for (const fluxora::ModdingFlowInstallPlanConflict& conflict : plan.conflicts)
+        {
+            writer.beginObject();
+            writer.field(L"dependencyId", messageToWide(conflict.dependencyId));
+            if (conflict.modId)
+            {
+                writer.field(L"modId", messageToWide(*conflict.modId));
+            }
+            if (conflict.targetModId)
+            {
+                writer.field(L"targetModId", messageToWide(*conflict.targetModId));
+            }
+            writer.field(L"relation", messageToWide(conflict.relation));
+            if (conflict.reason)
+            {
+                writer.field(L"reason", messageToWide(*conflict.reason));
+            }
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.key(L"steps").beginArray();
+        for (const fluxora::ModdingFlowInstallPlanStep& step : plan.steps)
+        {
+            writer.beginObject();
+            writer.field(L"index", static_cast<std::uintmax_t>(step.index));
+            writer.field(L"modId", messageToWide(step.modId));
+            writer.field(L"versionId", messageToWide(step.versionId));
+            writer.field(L"artifactId", messageToWide(step.artifactId));
+            writer.field(L"required", step.required);
+            writer.field(L"selectionKind", messageToWide(step.selectionKind));
+            writer.field(L"fileKind", messageToWide(step.fileKind));
+            writer.field(L"sizeBytes", static_cast<std::uintmax_t>(step.sizeBytes));
+            writer.field(L"sha256", messageToWide(step.sha256));
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.field(L"operationId", plan.operationId);
+        writer.endObject();
+        return writer.str();
+    }
+#endif
 
     void writeNullableNumber(fluxora::JsonWriter& writer, std::wstring_view name, long long value)
     {
@@ -3569,6 +3698,156 @@ namespace
             : FluxoraCoreResultCoreError;
     }
 
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    void clearPrivateModdingFlowBufferedOutput() noexcept
+    {
+        lastRequiredBufferLength = 0;
+        lastBufferedOutput.clear();
+        hasLastBufferedOutput = false;
+    }
+
+    int invalidPrivateModdingFlowArgument(std::wstring message) noexcept
+    {
+        clearPrivateModdingFlowBufferedOutput();
+        lastError = std::move(message);
+        return FluxoraCoreResultInvalidArgument;
+    }
+
+    int mapPrivateModdingFlowFailure() noexcept
+    {
+        clearPrivateModdingFlowBufferedOutput();
+        lastError = L"ModdingFlow connection operation failed.";
+        return FluxoraCoreResultCoreError;
+    }
+
+    int mapPrivateModdingFlowManagedAiAuthFailure(
+        const fluxora::ModdingFlowAuthException& exception) noexcept
+    {
+        clearPrivateModdingFlowBufferedOutput();
+        std::wstring code = L"connection-required";
+        if (exception.code() == fluxora::ModdingFlowAuthErrorCode::TemporarilyUnavailable)
+        {
+            code = L"temporarily-unavailable";
+        }
+        else if (exception.code() == fluxora::ModdingFlowAuthErrorCode::MissingScope ||
+            exception.code() == fluxora::ModdingFlowAuthErrorCode::ReauthRequired)
+        {
+            code = L"reconnect-required";
+        }
+        lastError = L"moddingflow-ai-auth:" + code;
+        logOperation(
+            fluxora::LogLevel::Warning,
+            "ModdingFlowManagedAiAuth",
+            "Managed AI access-token request failed with a safe typed code.");
+        return FluxoraCoreResultCoreError;
+    }
+
+    int mapPrivateModdingFlowArtifactFailure(
+        const fluxora::ModdingFlowApiException& exception) noexcept
+    {
+        clearPrivateModdingFlowBufferedOutput();
+        std::wstring code = L"invalid-response";
+        std::wstring message = L"Artifact metadata response could not be trusted.";
+        switch (exception.code())
+        {
+        case fluxora::ModdingFlowApiErrorCode::NotFound:
+            code = L"not-found";
+            message = L"Artifact metadata was not found.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::Unauthorized:
+        case fluxora::ModdingFlowApiErrorCode::Forbidden:
+            code = L"authentication-required";
+            message = L"Artifact metadata requires an eligible ModdingFlow account.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::RateLimited:
+        case fluxora::ModdingFlowApiErrorCode::ServerFailure:
+        case fluxora::ModdingFlowApiErrorCode::Timeout:
+        case fluxora::ModdingFlowApiErrorCode::TransportFailure:
+            code = L"temporarily-unavailable";
+            message = L"Artifact metadata is temporarily unavailable.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::InvalidRequest:
+            code = L"invalid-request";
+            message = L"Artifact metadata lookup request is invalid.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::SecurityFailure:
+        case fluxora::ModdingFlowApiErrorCode::ProtocolFailure:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyMismatch:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyInProgress:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyReplayUnavailable:
+            break;
+        default:
+            break;
+        }
+        lastError = L"moddingflow-artifact:" + code + L":" + message;
+        logOperation(
+            fluxora::LogLevel::Warning,
+            "ModdingFlowArtifactLookup",
+            "Artifact metadata lookup failed with a safe typed code.");
+        return exception.code() == fluxora::ModdingFlowApiErrorCode::InvalidRequest
+            ? FluxoraCoreResultInvalidArgument
+            : FluxoraCoreResultCoreError;
+    }
+
+    int mapPrivateModdingFlowPlanFailure(
+        const fluxora::ModdingFlowApiException& exception) noexcept
+    {
+        clearPrivateModdingFlowBufferedOutput();
+        std::wstring code = L"invalid-response";
+        std::wstring message = L"Install plan response could not be trusted.";
+        switch (exception.code())
+        {
+        case fluxora::ModdingFlowApiErrorCode::NotFound:
+            code = L"not-found";
+            message = L"An install plan selection was not found.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::Unauthorized:
+        case fluxora::ModdingFlowApiErrorCode::Forbidden:
+            code = L"authentication-required";
+            message = L"Install plan resolution requires an eligible ModdingFlow account.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::RateLimited:
+        case fluxora::ModdingFlowApiErrorCode::ServerFailure:
+        case fluxora::ModdingFlowApiErrorCode::Timeout:
+        case fluxora::ModdingFlowApiErrorCode::TransportFailure:
+            code = L"temporarily-unavailable";
+            message = L"Install plan resolution is temporarily unavailable.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::InvalidRequest:
+            code = L"invalid-request";
+            message = L"Install plan request is invalid.";
+            break;
+        case fluxora::ModdingFlowApiErrorCode::SecurityFailure:
+        case fluxora::ModdingFlowApiErrorCode::ProtocolFailure:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyMismatch:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyInProgress:
+        case fluxora::ModdingFlowApiErrorCode::IdempotencyReplayUnavailable:
+            break;
+        default:
+            break;
+        }
+        lastError = L"moddingflow-plan:" + code + L":" + message;
+        logOperation(
+            fluxora::LogLevel::Warning,
+            "ModdingFlowInstallPlan",
+            "Install plan resolution failed with a safe typed code.");
+        return exception.code() == fluxora::ModdingFlowApiErrorCode::InvalidRequest
+            ? FluxoraCoreResultInvalidArgument
+            : FluxoraCoreResultCoreError;
+    }
+
+    fluxora::IModdingFlowConnectionCapability& moddingFlowCapability()
+    {
+        fluxora::IModdingFlowConnectionCapability* capability =
+            core().moddingFlowConnectionCapability();
+        if (capability == nullptr)
+        {
+            throw std::runtime_error("ModdingFlow connection capability is unavailable.");
+        }
+        return *capability;
+    }
+#endif
+
     int mapUnknownException(std::string_view operation)
     {
         lastRequiredBufferLength = 0;
@@ -5900,6 +6179,278 @@ extern "C"
         }
     }
 
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    int fluxora_moddingflow_begin_connect(
+        const wchar_t* redirectUri,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(redirectUri) || isBlank(operationId))
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow redirect URI and operation id are required.");
+            }
+            const fluxora::ModdingFlowConnectStart start =
+                moddingFlowCapability().beginConnect(
+                    utf8FromWide(redirectUri),
+                    operationId);
+            return writeToBuffer(
+                serializeModdingFlowConnectStart(start),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+
+    int fluxora_moddingflow_complete_connect(
+        const wchar_t* transactionId,
+        int callbackKind,
+        const wchar_t* authorizationCode,
+        const wchar_t* oauthError,
+        const wchar_t* errorDescription,
+        const wchar_t* state,
+        const wchar_t* issuer,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(transactionId) || isBlank(state) || isBlank(issuer) ||
+                isBlank(operationId))
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow callback binding and operation context are required.");
+            }
+
+            fluxora::ModdingFlowConnectCompletion completion;
+            if (callbackKind == FluxoraModdingFlowCallbackSuccess)
+            {
+                if (isBlank(authorizationCode) || !isBlank(oauthError) || !isBlank(errorDescription))
+                {
+                    return invalidPrivateModdingFlowArgument(
+                        L"ModdingFlow success callback shape is invalid.");
+                }
+                completion = fluxora::ModdingFlowAuthorizationSuccess{
+                    utf8FromWide(authorizationCode),
+                    utf8FromWide(state),
+                    utf8FromWide(issuer)};
+            }
+            else if (callbackKind == FluxoraModdingFlowCallbackError)
+            {
+                if (!isBlank(authorizationCode) || isBlank(oauthError))
+                {
+                    return invalidPrivateModdingFlowArgument(
+                        L"ModdingFlow error callback shape is invalid.");
+                }
+                completion = fluxora::ModdingFlowAuthorizationError{
+                    utf8FromWide(oauthError),
+                    isBlank(errorDescription) ? std::string{} : utf8FromWide(errorDescription),
+                    utf8FromWide(state),
+                    utf8FromWide(issuer)};
+            }
+            else
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow callback kind is invalid.");
+            }
+
+            const fluxora::ModdingFlowAuthStatus status =
+                moddingFlowCapability().completeConnect(
+                    utf8FromWide(transactionId),
+                    std::move(completion),
+                    operationId);
+            return writeToBuffer(
+                serializeExternalConnectionStatus(
+                    fluxora::mapModdingFlowExternalConnectionStatus(status, operationId)),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+
+    int fluxora_moddingflow_cancel_pending_connect(
+        const wchar_t* transactionId,
+        const wchar_t* operationId)
+    {
+        try
+        {
+            if (isBlank(transactionId) || isBlank(operationId))
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow transaction and operation id are required.");
+            }
+            moddingFlowCapability().cancelPendingConnect(
+                utf8FromWide(transactionId),
+                operationId);
+            clearPrivateModdingFlowBufferedOutput();
+            lastError.clear();
+            return FluxoraCoreResultOk;
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+
+    int fluxora_moddingflow_get_managed_ai_access_token(
+        int forceRefresh,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(operationId) || (forceRefresh != 0 && forceRefresh != 1))
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"Managed AI token request requires an operation id and a boolean refresh flag.");
+            }
+            std::string accessToken = moddingFlowCapability().managedAiAccessToken(
+                operationId,
+                forceRefresh == 1);
+            fluxora::JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"accessToken", messageToWide(accessToken));
+            writer.field(L"scope", L"agent:run");
+            writer.endObject();
+            std::fill(accessToken.begin(), accessToken.end(), '\0');
+            return writeToBuffer(writer.str(), jsonBuffer, jsonBufferLength);
+        }
+        catch (const fluxora::ModdingFlowAuthException& exception)
+        {
+            return mapPrivateModdingFlowManagedAiAuthFailure(exception);
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+
+    int fluxora_moddingflow_lookup_artifact_preview(
+        const wchar_t* artifactId,
+        int authMode,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(artifactId) || isBlank(operationId))
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow artifact id and operation id are required.");
+            }
+
+            fluxora::ModdingFlowArtifactLookupAuthMode lookupAuthMode;
+            if (authMode == FluxoraModdingFlowArtifactLookupAnonymous)
+            {
+                lookupAuthMode = fluxora::ModdingFlowArtifactLookupAuthMode::Anonymous;
+            }
+            else if (authMode == FluxoraModdingFlowArtifactLookupBearerModsRead)
+            {
+                lookupAuthMode = fluxora::ModdingFlowArtifactLookupAuthMode::BearerModsRead;
+            }
+            else
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow artifact lookup auth mode is invalid.");
+            }
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "ModdingFlowArtifactLookup",
+                "Artifact metadata lookup started.");
+            const fluxora::ModdingFlowArtifactPreview preview =
+                moddingFlowCapability().lookupArtifactPreview(
+                    utf8FromWide(artifactId),
+                    lookupAuthMode,
+                    operationId);
+            logOperation(
+                fluxora::LogLevel::Info,
+                "ModdingFlowArtifactLookup",
+                "Artifact metadata lookup completed.");
+            return writeToBuffer(
+                serializeModdingFlowArtifactPreview(preview),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const fluxora::ModdingFlowApiException& exception)
+        {
+            return mapPrivateModdingFlowArtifactFailure(exception);
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+
+    int fluxora_moddingflow_preview_activation_plan(
+        const wchar_t* artifactId,
+        const wchar_t* gameSlug,
+        const wchar_t* gameVersion,
+        int includeOptional,
+        const wchar_t* idempotencyKey,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(artifactId) || isBlank(gameSlug) || isBlank(gameVersion) ||
+                isBlank(idempotencyKey) || isBlank(operationId) || includeOptional != 0)
+            {
+                return invalidPrivateModdingFlowArgument(
+                    L"ModdingFlow activation plan requires one artifact, a game target, a stable key, optional dependencies disabled, and an operation id.");
+            }
+
+            fluxora::IModProviderActivationPreviewResolver* resolver =
+                moddingFlowCapability().activationPreviewResolver();
+            if (resolver == nullptr)
+            {
+                throw std::runtime_error("ModdingFlow install-plan capability is unavailable.");
+            }
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "ModdingFlowInstallPlan",
+                "Activation install plan resolution started.");
+            const fluxora::ModdingFlowInstallPlan plan = resolver->previewActivation({
+                .artifactIds = {utf8FromWide(artifactId)},
+                .gameSlug = utf8FromWide(gameSlug),
+                .gameVersion = utf8FromWide(gameVersion),
+                .includeOptional = false,
+                .idempotencyKey = utf8FromWide(idempotencyKey),
+                .operationId = operationId});
+            logOperation(
+                fluxora::LogLevel::Info,
+                "ModdingFlowInstallPlan",
+                "Activation install plan resolution completed.");
+            return writeToBuffer(
+                serializeModdingFlowActivationPlan(plan),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const fluxora::ModdingFlowApiException& exception)
+        {
+            return mapPrivateModdingFlowPlanFailure(exception);
+        }
+        catch (...)
+        {
+            return mapPrivateModdingFlowFailure();
+        }
+    }
+#endif
+
     int fluxora_get_app_theme(wchar_t* themeBuffer, int themeBufferLength)
     {
         try
@@ -7569,6 +8120,43 @@ extern "C"
         }
     }
 
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+    int fluxora_queue_moddingflow_download(
+        const wchar_t* projectDirectory,
+        const wchar_t* artifactId,
+        const wchar_t* modId,
+        const wchar_t* versionId,
+        const wchar_t* jobId,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(artifactId) || isBlank(modId) ||
+                isBlank(versionId) || isBlank(jobId) || isBlank(operationId))
+            {
+                lastError = L"Project, stable artifact identity, job id and operation id are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const fluxora::DownloadEntry download =
+                core().downloads().queueModdingFlowArtifact({
+                    .projectDirectory = std::filesystem::path(projectDirectory),
+                    .artifactId = utf8FromWide(artifactId),
+                    .modId = utf8FromWide(modId),
+                    .versionId = utf8FromWide(versionId),
+                    .jobId = utf8FromWide(jobId),
+                    .operationId = operationId});
+            return writeToBuffer(
+                serializeDownload(download), jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+#endif
+
     int fluxora_capture_nxm_links(
         const wchar_t* projectDirectory,
         const wchar_t* nxmLinksJson,
@@ -9208,6 +9796,29 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_rebase_pending_install_with_anchors_and_revision(
+            projectDirectory,
+            operationId,
+            beforeOrderId,
+            afterOrderId,
+            fallbackTargetIndex,
+            -1,
+            0,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_rebase_pending_install_with_anchors_and_revision(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        int fallbackTargetIndex,
+        long long expectedRevision,
+        int applyIfCompleted,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(projectDirectory) || isBlank(operationId))
@@ -9223,7 +9834,9 @@ extern "C"
                         operationId,
                         isBlank(beforeOrderId) ? std::wstring_view{} : std::wstring_view(beforeOrderId),
                         isBlank(afterOrderId) ? std::wstring_view{} : std::wstring_view(afterOrderId),
-                        fallbackTargetIndex)),
+                        fallbackTargetIndex,
+                        static_cast<std::int64_t>(expectedRevision),
+                        applyIfCompleted != 0)),
                 jsonBuffer,
                 jsonBufferLength);
         }

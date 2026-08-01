@@ -1,4 +1,4 @@
-import { LoaderCircle, X } from 'lucide-react';
+import { LoaderCircle, X } from '../../design-system/icons/lucide-compat';
 
 import { aiVoiceCancelLabel, aiVoiceProcessingStatus } from './ai-voice-copy';
 

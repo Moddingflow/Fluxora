@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/lucide-icons/lucide",
+  "sourceTag": "1.21.0",
+  "license": "ISC",
+  "licenseFile": "LUCIDE-LICENSE.txt",
+  "projectOwnedAssets": [
+    {
+      "file": "Fluxora.svg",
+      "sha256": "491f5d7b9a345c990bfaa6e0239a5354d0cc5acaa4262c102776d172059ef3ee",
+      "license": "project-owned",
+      "licenseFile": "FLUXORA-ASSET-NOTICE.txt",
+      "usedBy": ["setup-titlebar", "updater-titlebar"]
+    }
+  ],
+  "icons": [
+    {
+      "file": "alert-triangle.svg",
+      "upstreamPath": "icons/triangle-alert.svg",
+      "sha256": "4866f38b8560d410f21e3226413e0b77997b6dfbb6931fadfe0a0d5aef9ffeb4",
+      "usedBy": ["setup-warning", "updater-native-failure"]
+    },
+    {
+      "file": "circle-check.svg",
+      "upstreamPath": "icons/circle-check.svg",
+      "sha256": "3e519680ab8e2a8ad8f56a340c10d61957d872237aaa868cf324b0900a74f384",
+      "usedBy": ["setup-success"]
+    },
+    {
+      "file": "circle-x.svg",
+      "upstreamPath": "icons/circle-x.svg",
+      "sha256": "bcd8788901e6f29e1b231a81ba5e707d083d06cb4848a28f29407fab4f8e0b64",
+      "usedBy": ["setup-failure", "updater-failure"]
+    },
+    {
+      "file": "file-text.svg",
+      "upstreamPath": "icons/file-text.svg",
+      "sha256": "52ca55846c202335fb870c8aa23e9345630ec10489303756d62e750f7109605c",
+      "usedBy": ["setup-legal-documents", "setup-open-logs"]
+    },
+    {
+      "file": "flag-germany.svg",
+      "sourceRepository": "https://github.com/jdecked/twemoji",
+      "sourceTag": "v16.0.1",
+      "license": "CC-BY-4.0",
+      "licenseFile": "TWEMOJI-LICENSE.txt",
+      "upstreamPath": "assets/svg/1f1e9-1f1ea.svg",
+      "sha256": "8e3c8f938c6fc4fc97c81f398a71d0d789b44b6be458469d7056372a2c05837a",
+      "usedBy": ["setup-language-choice"]
+    },
+    {
+      "file": "flag-russia.svg",
+      "sourceRepository": "https://github.com/jdecked/twemoji",
+      "sourceTag": "v16.0.1",
+      "license": "CC-BY-4.0",
+      "licenseFile": "TWEMOJI-LICENSE.txt",
+      "upstreamPath": "assets/svg/1f1f7-1f1fa.svg",
+      "sha256": "c120796701b12f5a9869de1fa4f4bfe41cb9127582e27e9fb6e951637a475168",
+      "usedBy": ["setup-language-choice"]
+    },
+    {
+      "file": "flag-united-kingdom.svg",
+      "sourceRepository": "https://github.com/jdecked/twemoji",
+      "sourceTag": "v16.0.1",
+      "license": "CC-BY-4.0",
+      "licenseFile": "TWEMOJI-LICENSE.txt",
+      "upstreamPath": "assets/svg/1f1ec-1f1e7.svg",
+      "sha256": "5ff2f32ed6905d887f7d771029c1e65b1ef059e92260b548908cabb4e886bf19",
+      "usedBy": ["setup-language-choice"]
+    },
+    {
+      "file": "folder-open.svg",
+      "upstreamPath": "icons/folder-open.svg",
+      "sha256": "ee57452b40e71df310214091dd9da1941a397c83197b8ff8d7ae66dd4242578b",
+      "usedBy": ["setup-folder-picker", "setup-open-installed-folder"]
+    },
+    {
+      "file": "hard-drive.svg",
+      "upstreamPath": "icons/hard-drive.svg",
+      "sha256": "324363c40f54e4ca843de0ad1d023b063b70a26a83bb2e0a9e9f4aad9af37378",
+      "usedBy": ["setup-disk-space-optional"]
+    },
+    {
+      "file": "play.svg",
+      "upstreamPath": "icons/play.svg",
+      "sha256": "d7c34786135922a92b6896f6c2384ceeb0346afbf6041dc79982011411409833",
+      "usedBy": ["setup-launch-fluxora"]
+    },
+    {
+      "file": "window-close.svg",
+      "upstreamPath": "icons/x.svg",
+      "sha256": "4a9cdab38fbb96162e7dace28e33f4ca0e49d8963a6162abc3d4691b7d675117",
+      "usedBy": ["setup-titlebar", "updater-titlebar"]
+    },
+    {
+      "file": "window-minimize.svg",
+      "upstreamPath": "icons/minus.svg",
+      "sha256": "a0c743ab6dbf545d8a6e19ef3874f48ede686ce68d25e231bd81f540d97b1f19",
+      "usedBy": ["setup-titlebar", "updater-titlebar"]
+    }
+  ]
+}

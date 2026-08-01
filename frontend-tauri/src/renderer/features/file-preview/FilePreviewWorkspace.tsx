@@ -1,4 +1,7 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight
+} from '../../design-system/icons/lucide-compat';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import * as THREE from 'three';

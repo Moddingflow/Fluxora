@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <system_error>
@@ -471,15 +472,54 @@ namespace fluxora
         ManagedOutputMod ensureOutputMod(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory,
+            std::wstring_view projectName,
             const ToolDefinition& definition)
         {
-            const std::filesystem::path outputPath =
-                modsDirectory / definition.outputFolderName;
+            const std::wstring effectiveProjectName = projectName.empty()
+                ? projectDirectory.filename().wstring()
+                : std::wstring(projectName);
+            const std::wstring displayName =
+                effectiveProjectName + L" - " + definition.outputFolderName;
+            const std::wstring folderName = safePathSegment(
+                displayName,
+                definition.outputFolderName);
+            const std::filesystem::path outputPath = modsDirectory / folderName;
             const PathSafetyService safety;
             safety.validateDirectoryWriteRoot(modsDirectory)
                 .throwIfUnsafe("Mods directory is unsafe");
             safety.validateWritePath(modsDirectory, outputPath)
                 .throwIfUnsafe("LOD generator output mod path is unsafe");
+
+            const std::vector<InstalledModRecord> installed =
+                InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
+            std::optional<InstalledModRecord> owned;
+            std::optional<InstalledModRecord> desired;
+            for (const InstalledModRecord& mod : installed)
+            {
+                if (samePath(mod.path, outputPath))
+                {
+                    desired = mod;
+                }
+                if (mod.source.provider != definition.provider)
+                {
+                    continue;
+                }
+                if (owned.has_value() && owned->uuid != mod.uuid)
+                {
+                    throwIntegrationError(
+                        L"LOD_GENERATOR_CONFIGURATION_FAILED",
+                        L"Fluxora обнаружила несколько управляемых " +
+                            definition.displayName + L" Output и не будет выбирать один автоматически.");
+                }
+                owned = mod;
+            }
+
+            if (desired.has_value() && desired->source.provider != definition.provider)
+            {
+                throwIntegrationError(
+                    L"LOD_GENERATOR_OUTPUT_CONFLICT",
+                    L"Имя " + displayName + L" уже занято пользовательским модом.");
+            }
 
             std::error_code error;
             const bool existed = std::filesystem::exists(outputPath, error);
@@ -497,23 +537,49 @@ namespace fluxora
             {
                 throw std::runtime_error("Could not inspect the LOD generator output mod directory.");
             }
+            if (existed && !desired.has_value())
+            {
+                throwIntegrationError(
+                    L"LOD_GENERATOR_OUTPUT_CONFLICT",
+                    L"Каталог " + displayName +
+                        L" уже существует, но Fluxora не может подтвердить его принадлежность.");
+            }
 
             bool created = false;
             try
             {
-                if (!existed)
+                InstalledModRecord record;
+                if (owned.has_value() && !samePath(owned->path, outputPath))
                 {
-                    std::filesystem::create_directories(outputPath);
-                    created = true;
+                    if (existed)
+                    {
+                        throwIntegrationError(
+                            L"LOD_GENERATOR_OUTPUT_CONFLICT",
+                            L"Новое имя " + displayName +
+                                L" уже занято; существующий output сохранён без изменений.");
+                    }
+                    record = InstanceMetadataStore::renameInstalledMod(
+                        projectDirectory,
+                        owned->path,
+                        outputPath,
+                        displayName);
                 }
-                ModSourceRecord source;
-                source.provider = definition.provider;
-                const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
-                    projectDirectory,
-                    outputPath,
-                    definition.outputFolderName,
-                    {},
-                    source);
+                else
+                {
+                    if (!existed)
+                    {
+                        std::filesystem::create_directories(outputPath);
+                        created = true;
+                    }
+                    ModSourceRecord source;
+                    source.provider = definition.provider;
+                    record = InstanceMetadataStore::registerInstalledMod(
+                        projectDirectory,
+                        outputPath,
+                        displayName,
+                        {},
+                        source);
+                }
                 return toManagedOutput(record, definition.provider);
             }
             catch (...)
@@ -527,12 +593,48 @@ namespace fluxora
             }
         }
 
+        std::optional<ManagedOutputMod> findOwnedOutputMod(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory,
+            const ToolDefinition& definition)
+        {
+            std::optional<InstalledModRecord> owned;
+            for (const InstalledModRecord& mod :
+                 InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory))
+            {
+                if (mod.source.provider != definition.provider)
+                {
+                    continue;
+                }
+                if (owned.has_value() && owned->uuid != mod.uuid)
+                {
+                    throwIntegrationError(
+                        L"LOD_GENERATOR_CONFIGURATION_FAILED",
+                        L"Fluxora обнаружила несколько управляемых " +
+                            definition.displayName + L" Output и не будет выбирать один автоматически.");
+                }
+                owned = mod;
+            }
+            if (!owned.has_value())
+            {
+                return std::nullopt;
+            }
+            if (!isContainedPath(modsDirectory, owned->path))
+            {
+                throwIntegrationError(
+                    L"LOD_GENERATOR_CONFIGURATION_FAILED",
+                    L"Путь управляемого " + definition.displayName +
+                        L" Output находится вне каталога модов.");
+            }
+            return toManagedOutput(*owned, definition.provider);
+        }
+
         void ensureOutputOrderForProfile(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory,
             std::wstring_view profileName,
-            const ManagedOutputMod& texGenOutput,
-            const ManagedOutputMod& dynDoLodOutput)
+            const std::optional<ManagedOutputMod>& texGenOutput,
+            const std::optional<ManagedOutputMod>& dynDoLodOutput)
         {
             InstanceMetadataStore::ensureProfileState(
                 projectDirectory,
@@ -557,10 +659,12 @@ namespace fluxora
                     continue;
                 }
                 if (!item.hasMod ||
-                    item.mod.uuid == texGenOutput.id ||
-                    item.mod.uuid == dynDoLodOutput.id ||
-                    samePath(item.mod.path, texGenOutput.path) ||
-                    samePath(item.mod.path, dynDoLodOutput.path))
+                    (texGenOutput.has_value() &&
+                     (item.mod.uuid == texGenOutput->id ||
+                      samePath(item.mod.path, texGenOutput->path))) ||
+                    (dynDoLodOutput.has_value() &&
+                     (item.mod.uuid == dynDoLodOutput->id ||
+                      samePath(item.mod.path, dynDoLodOutput->path))))
                 {
                     continue;
                 }
@@ -569,26 +673,38 @@ namespace fluxora
                     item.mod.folderName,
                     {}});
             }
-            ordered.push_back(ProfileOrderImportItemRecord{
-                L"mod",
-                texGenOutput.folderName,
-                {}});
-            ordered.push_back(ProfileOrderImportItemRecord{
-                L"mod",
-                dynDoLodOutput.folderName,
-                {}});
+            if (texGenOutput.has_value())
+            {
+                ordered.push_back(ProfileOrderImportItemRecord{
+                    L"mod",
+                    texGenOutput->folderName,
+                    {}});
+            }
+            if (dynDoLodOutput.has_value())
+            {
+                ordered.push_back(ProfileOrderImportItemRecord{
+                    L"mod",
+                    dynDoLodOutput->folderName,
+                    {}});
+            }
             InstanceMetadataStore::replaceProfileOrderItems(
                 projectDirectory,
                 profileName,
                 ordered);
-            InstanceMetadataStore::setInstalledModEnabled(
-                projectDirectory,
-                texGenOutput.path,
-                true);
-            InstanceMetadataStore::setInstalledModEnabled(
-                projectDirectory,
-                dynDoLodOutput.path,
-                true);
+            if (texGenOutput.has_value())
+            {
+                InstanceMetadataStore::setInstalledModEnabled(
+                    projectDirectory,
+                    texGenOutput->path,
+                    true);
+            }
+            if (dynDoLodOutput.has_value())
+            {
+                InstanceMetadataStore::setInstalledModEnabled(
+                    projectDirectory,
+                    dynDoLodOutput->path,
+                    true);
+            }
         }
 
         std::wstring projectPathHash(const std::filesystem::path& projectDirectory)
@@ -609,7 +725,7 @@ namespace fluxora
 
         std::filesystem::path virtualOutputDirectory(
             const ResolvedExecutableLaunch& resolved,
-            const ToolDefinition& definition)
+            std::wstring_view outputFolderName)
         {
             std::filesystem::path root = normalizedCanonicalPath(
                 resolved.gamePath.empty() ? resolved.projectDirectory : resolved.gamePath)
@@ -621,7 +737,7 @@ namespace fluxora
             return (root /
                 std::filesystem::path(virtualOutputRootName) /
                 projectPathHash(resolved.projectDirectory) /
-                definition.outputFolderName)
+                std::filesystem::path(outputFolderName))
                 .lexically_normal();
         }
 
@@ -690,6 +806,128 @@ namespace fluxora
             return arguments;
         }
 
+        std::wstring decodeLegacyQtEscapedArguments(std::wstring_view value)
+        {
+            if (value.find(L"\\\"") == std::wstring_view::npos)
+            {
+                return std::wstring(value);
+            }
+
+            std::wstring decoded;
+            decoded.reserve(value.size());
+            bool quoted = false;
+            for (std::size_t index = 0; index < value.size(); ++index)
+            {
+                const wchar_t character = value[index];
+                if (character != L'\\' || index + 1 >= value.size())
+                {
+                    decoded.push_back(character);
+                    if (character == L'"')
+                    {
+                        quoted = !quoted;
+                    }
+                    continue;
+                }
+
+                const wchar_t escaped = value[index + 1];
+                switch (escaped)
+                {
+                case L'\\':
+                    decoded.push_back(L'\\');
+                    ++index;
+                    break;
+                case L'"':
+                    decoded.push_back(L'"');
+                    quoted = !quoted;
+                    ++index;
+                    break;
+                case L'n':
+                    if (quoted ||
+                        (index + 2 < value.size() && !std::iswspace(value[index + 2])))
+                    {
+                        decoded.append(L"\\n");
+                    }
+                    else
+                    {
+                        decoded.push_back(L'\n');
+                    }
+                    ++index;
+                    break;
+                case L'r':
+                    if (quoted ||
+                        (index + 2 < value.size() && !std::iswspace(value[index + 2])))
+                    {
+                        decoded.append(L"\\r");
+                    }
+                    else
+                    {
+                        decoded.push_back(L'\r');
+                    }
+                    ++index;
+                    break;
+                case L't':
+                    if (quoted ||
+                        (index + 2 < value.size() && !std::iswspace(value[index + 2])))
+                    {
+                        decoded.append(L"\\t");
+                    }
+                    else
+                    {
+                        decoded.push_back(L'\t');
+                    }
+                    ++index;
+                    break;
+                default:
+                    decoded.push_back(character);
+                    break;
+                }
+            }
+            for (std::size_t index = 0; index < decoded.size(); ++index)
+            {
+                if (decoded[index] != L'"' ||
+                    (index + 1 < decoded.size() && !std::iswspace(decoded[index + 1])))
+                {
+                    continue;
+                }
+
+                std::size_t slashCount = 0;
+                for (std::size_t slash = index; slash > 0 && decoded[slash - 1] == L'\\'; --slash)
+                {
+                    ++slashCount;
+                }
+                if ((slashCount % 2) != 0)
+                {
+                    decoded.insert(index, 1, L'\\');
+                    ++index;
+                }
+            }
+            return decoded;
+        }
+
+        std::wstring normalizeConfiguredArguments(
+            std::wstring_view commandLine,
+            std::wstring_view configuredArguments)
+        {
+            std::wstring normalized(commandLine);
+            if (configuredArguments.empty())
+            {
+                return normalized;
+            }
+
+            const std::wstring decoded = decodeLegacyQtEscapedArguments(configuredArguments);
+            if (decoded == configuredArguments)
+            {
+                return normalized;
+            }
+
+            const std::size_t configuredPosition = normalized.find(configuredArguments);
+            if (configuredPosition != std::wstring::npos)
+            {
+                normalized.replace(configuredPosition, configuredArguments.size(), decoded);
+            }
+            return normalized;
+        }
+
         std::wstring quoteCommandLineArgument(std::wstring_view value)
         {
             if (!value.empty() &&
@@ -736,12 +974,310 @@ namespace fluxora
             return std::find(switches.begin(), switches.end(), lowered) != switches.end();
         }
 
+        std::wstring directoryArgumentPath(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            std::filesystem::path absolute = std::filesystem::absolute(path, error);
+            if (error)
+            {
+                absolute = path;
+            }
+            std::wstring value = absolute.lexically_normal().wstring();
+            std::replace(value.begin(), value.end(), L'/', L'\\');
+            if (!value.empty() && !value.ends_with(L'\\'))
+            {
+                value.push_back(L'\\');
+            }
+            return value;
+        }
+
+        std::string_view trimAsciiWhitespace(std::string_view value)
+        {
+            const std::size_t first = value.find_first_not_of(" \t");
+            if (first == std::string_view::npos)
+            {
+                return {};
+            }
+            const std::size_t last = value.find_last_not_of(" \t");
+            return value.substr(first, last - first + 1);
+        }
+
+        bool equalsAsciiIgnoreCase(
+            std::string_view left,
+            std::string_view right)
+        {
+            if (left.size() != right.size())
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < left.size(); ++index)
+            {
+                const auto lower = [](unsigned char character)
+                {
+                    return character >= 'A' && character <= 'Z'
+                        ? static_cast<unsigned char>(character - 'A' + 'a')
+                        : character;
+                };
+                if (lower(static_cast<unsigned char>(left[index])) !=
+                    lower(static_cast<unsigned char>(right[index])))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        std::string rewriteManagedOutputPath(
+            std::string_view content,
+            std::string_view sectionName,
+            std::string_view managedOutputPath,
+            bool& changed)
+        {
+            std::string rewritten;
+            rewritten.reserve(content.size() + managedOutputPath.size());
+            bool inManagedSection = false;
+            std::size_t cursor = 0;
+            while (cursor < content.size())
+            {
+                const std::size_t lineEnd = content.find_first_of("\r\n", cursor);
+                const std::size_t contentEnd =
+                    lineEnd == std::string_view::npos ? content.size() : lineEnd;
+                std::size_t next = contentEnd;
+                if (next < content.size() && content[next] == '\r')
+                {
+                    ++next;
+                }
+                if (next < content.size() && content[next] == '\n')
+                {
+                    ++next;
+                }
+
+                const std::string_view line = content.substr(cursor, contentEnd - cursor);
+                std::string_view trimmed = trimAsciiWhitespace(line);
+                if (cursor == 0 && trimmed.starts_with("\xEF\xBB\xBF"))
+                {
+                    trimmed = trimAsciiWhitespace(trimmed.substr(3));
+                }
+                if (trimmed.size() >= 2 &&
+                    trimmed.front() == '[' &&
+                    trimmed.back() == ']')
+                {
+                    inManagedSection = equalsAsciiIgnoreCase(
+                        trimAsciiWhitespace(trimmed.substr(1, trimmed.size() - 2)),
+                        sectionName);
+                }
+
+                bool replacedLine = false;
+                if (inManagedSection &&
+                    !trimmed.empty() &&
+                    trimmed.front() != ';' &&
+                    trimmed.front() != '#')
+                {
+                    const std::size_t equals = line.find('=');
+                    if (equals != std::string_view::npos &&
+                        equalsAsciiIgnoreCase(
+                            trimAsciiWhitespace(line.substr(0, equals)),
+                            "OutputPath"))
+                    {
+                        std::size_t valueStart = equals + 1;
+                        while (valueStart < line.size() &&
+                               (line[valueStart] == ' ' || line[valueStart] == '\t'))
+                        {
+                            ++valueStart;
+                        }
+                        rewritten.append(line.substr(0, valueStart));
+                        rewritten.append(managedOutputPath);
+                        changed = changed ||
+                            trimAsciiWhitespace(line.substr(valueStart)) != managedOutputPath;
+                        replacedLine = true;
+                    }
+                }
+
+                if (!replacedLine)
+                {
+                    rewritten.append(line);
+                }
+                rewritten.append(content.substr(contentEnd, next - contentEnd));
+                cursor = next;
+            }
+            return changed ? rewritten : std::string(content);
+        }
+
+        void atomicWriteExactText(
+            const std::filesystem::path& path,
+            const std::string& content,
+            std::wstring_view stateName,
+            bool keepBackup)
+        {
+            AtomicFileWriteOptions options;
+            options.stateName = std::wstring(stateName);
+            options.validation = ProjectStateValidation::None;
+            options.keepBackup = keepBackup;
+            options.validator = [content](const std::filesystem::path& candidate)
+            {
+                if (readFileBytes(
+                        candidate,
+                        std::max<std::uintmax_t>(content.size(), 1U)) != content)
+                {
+                    throw std::runtime_error(
+                        "Managed LOD generator INI verification failed.");
+                }
+            };
+            AtomicFileStore().writeTextFile(path, content, options);
+        }
+
+        struct ManagedIniUpdate
+        {
+            std::filesystem::path path;
+            std::string original;
+            std::string updated;
+        };
+
+        std::size_t normalizeManagedPresetOutputPaths(
+            const std::filesystem::path& executablePath,
+            const ToolDefinition& definition,
+            const std::filesystem::path& managedOutputPath)
+        {
+            constexpr std::uintmax_t maximumIniBytes = 2U * 1024U * 1024U;
+            const std::filesystem::path scriptsRoot =
+                executablePath.parent_path() / L"Edit Scripts";
+            if (!std::filesystem::exists(scriptsRoot))
+            {
+                return 0;
+            }
+            std::error_code error;
+            const bool scriptsDirectoryExists =
+                std::filesystem::is_directory(scriptsRoot, error);
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Could not inspect the DynDOLOD Edit Scripts directory.");
+            }
+            if (!scriptsDirectoryExists)
+            {
+                return 0;
+            }
+
+            const PathSafetyService safety;
+            safety.validateDirectoryWriteRoot(scriptsRoot)
+                .throwIfUnsafe("DynDOLOD Edit Scripts directory is unsafe");
+            const std::string sectionName = toUtf8(definition.displayName);
+            const std::string outputPath = toUtf8(directoryArgumentPath(managedOutputPath));
+            std::vector<ManagedIniUpdate> updates;
+            for (std::filesystem::recursive_directory_iterator iterator(
+                     scriptsRoot,
+                     std::filesystem::directory_options::none,
+                     error),
+                 end;
+                 iterator != end;
+                 iterator.increment(error))
+            {
+                if (error)
+                {
+                    throw std::runtime_error(
+                        "Could not enumerate DynDOLOD preset files.");
+                }
+                if (!iterator->is_regular_file(error))
+                {
+                    if (error)
+                    {
+                        throw std::runtime_error(
+                            "Could not inspect a DynDOLOD preset file.");
+                    }
+                    continue;
+                }
+                if (toLower(iterator->path().extension().wstring()) != L".ini")
+                {
+                    continue;
+                }
+                if (!isContainedPath(scriptsRoot, iterator->path()))
+                {
+                    throw std::runtime_error(
+                        "A DynDOLOD preset resolves outside the managed scripts directory.");
+                }
+                const std::uintmax_t fileSize =
+                    std::filesystem::file_size(iterator->path(), error);
+                if (error || fileSize > maximumIniBytes)
+                {
+                    throw std::runtime_error(
+                        "A DynDOLOD preset is unavailable or unexpectedly large.");
+                }
+
+                std::string original = readFileBytes(iterator->path(), maximumIniBytes);
+                bool changed = false;
+                std::string updated = rewriteManagedOutputPath(
+                    original,
+                    sectionName,
+                    outputPath,
+                    changed);
+                if (!changed)
+                {
+                    continue;
+                }
+                safety.validateWritePath(scriptsRoot, iterator->path())
+                    .throwIfUnsafe("DynDOLOD preset path is unsafe");
+                updates.push_back(ManagedIniUpdate{
+                    iterator->path(),
+                    std::move(original),
+                    std::move(updated)});
+            }
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Could not enumerate DynDOLOD preset files.");
+            }
+
+            std::size_t written = 0;
+            try
+            {
+                for (const ManagedIniUpdate& update : updates)
+                {
+                    atomicWriteExactText(
+                        update.path,
+                        update.updated,
+                        L"DynDOLOD managed OutputPath",
+                        true);
+                    ++written;
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                bool rollbackFailed = false;
+                while (written > 0)
+                {
+                    --written;
+                    try
+                    {
+                        atomicWriteExactText(
+                            updates[written].path,
+                            updates[written].original,
+                            L"DynDOLOD managed OutputPath rollback",
+                            false);
+                    }
+                    catch (...)
+                    {
+                        rollbackFailed = true;
+                    }
+                }
+                throwIntegrationError(
+                    L"LOD_GENERATOR_CONFIGURATION_FAILED",
+                    rollbackFailed
+                        ? L"Fluxora не смогла безопасно обновить и откатить OutputPath в preset-файлах DynDOLOD."
+                        : L"Fluxora не смогла безопасно обновить OutputPath в preset-файлах DynDOLOD: " +
+                            fromUtf8(exception.what()));
+            }
+            return updates.size();
+        }
+
         std::wstring managedCommandLine(
             std::wstring_view original,
+            std::wstring_view configuredArguments,
+            const std::filesystem::path& dataPath,
             const std::filesystem::path& outputPath,
             bool& replacedManagedArgument)
         {
-            std::vector<std::wstring> arguments = parseWindowsCommandLine(original);
+            std::vector<std::wstring> arguments = parseWindowsCommandLine(
+                normalizeConfiguredArguments(original, configuredArguments));
             if (arguments.empty())
             {
                 throw std::invalid_argument("LOD generator command line is empty.");
@@ -752,12 +1288,14 @@ namespace fluxora
             for (std::size_t index = 1; index < arguments.size(); ++index)
             {
                 const std::wstring lowered = toLower(arguments[index]);
-                if (isGameModeSwitch(lowered) || lowered.starts_with(L"-o:"))
+                if (isGameModeSwitch(lowered) ||
+                    lowered.starts_with(L"-d:") ||
+                    lowered.starts_with(L"-o:"))
                 {
                     replacedManagedArgument = true;
                     continue;
                 }
-                if (lowered == L"-o")
+                if (lowered == L"-d" || lowered == L"-o")
                 {
                     replacedManagedArgument = true;
                     if (index + 1 < arguments.size())
@@ -778,8 +1316,10 @@ namespace fluxora
                 }
                 commandLine.append(quoteCommandLineArgument(argument));
             }
-            commandLine.append(L" -sse -o:");
-            commandLine.append(quoteCommandLineArgument(outputPath.wstring()));
+            commandLine.append(L" -sse -d:");
+            commandLine.append(quoteCommandLineArgument(directoryArgumentPath(dataPath)));
+            commandLine.append(L" -o:");
+            commandLine.append(quoteCommandLineArgument(directoryArgumentPath(outputPath)));
             return commandLine;
         }
 
@@ -886,7 +1426,7 @@ namespace fluxora
                 const InstalledModRecord refreshed = InstanceMetadataStore::registerInstalledMod(
                     state.projectDirectory,
                     state.outputMod.path,
-                    definition.outputFolderName,
+                    state.outputMod.displayName,
                     {},
                     source);
                 InstanceMetadataStore::invalidateModFileCaches(
@@ -1005,17 +1545,40 @@ namespace fluxora
 
         LodGeneratorLaunchPreparation preparation;
         preparation.managedToolKind = definition.kind;
-        const ManagedOutputMod texGenOutput = ensureOutputMod(
+        const ToolDefinition texGenDefinition = definitionFor(texGenManagedToolKind);
+        const ToolDefinition dynDoLodDefinition = definitionFor(dynDoLodManagedToolKind);
+        std::optional<ManagedOutputMod> texGenOutput = findOwnedOutputMod(
             resolved.projectDirectory,
             settings.modsDirectory,
-            definitionFor(texGenManagedToolKind));
-        const ManagedOutputMod dynDoLodOutput = ensureOutputMod(
+            texGenDefinition);
+        std::optional<ManagedOutputMod> dynDoLodOutput = findOwnedOutputMod(
             resolved.projectDirectory,
             settings.modsDirectory,
-            definitionFor(dynDoLodManagedToolKind));
-        preparation.outputMod = definition.kind == texGenManagedToolKind
-            ? texGenOutput
-            : dynDoLodOutput;
+            dynDoLodDefinition);
+        if (definition.kind == texGenManagedToolKind)
+        {
+            texGenOutput = ensureOutputMod(
+                resolved.projectDirectory,
+                settings.modsDirectory,
+                resolved.projectName,
+                texGenDefinition);
+            preparation.outputMod = *texGenOutput;
+        }
+        else
+        {
+            if (!texGenOutput.has_value())
+            {
+                throwIntegrationError(
+                    L"LOD_GENERATOR_TEXGEN_OUTPUT_REQUIRED",
+                    L"Сначала запустите TexGen: DynDOLOD использует его output как входные данные.");
+            }
+            dynDoLodOutput = ensureOutputMod(
+                resolved.projectDirectory,
+                settings.modsDirectory,
+                resolved.projectName,
+                dynDoLodDefinition);
+            preparation.outputMod = *dynDoLodOutput;
+        }
 
         std::set<std::wstring> profiles;
         for (const std::wstring& profile :
@@ -1040,8 +1603,10 @@ namespace fluxora
         preparation.activeProfileMods.reserve(resolved.activeProfileMods.size() + 1);
         for (const ExecutableLaunchMod& mod : resolved.activeProfileMods)
         {
-            const bool isTexGenOutput = samePath(mod.path, texGenOutput.path);
-            const bool isDynDoLodOutput = samePath(mod.path, dynDoLodOutput.path);
+            const bool isTexGenOutput = texGenOutput.has_value() &&
+                samePath(mod.path, texGenOutput->path);
+            const bool isDynDoLodOutput = dynDoLodOutput.has_value() &&
+                samePath(mod.path, dynDoLodOutput->path);
             if (isDynDoLodOutput ||
                 (definition.kind == texGenManagedToolKind && isTexGenOutput))
             {
@@ -1056,13 +1621,13 @@ namespace fluxora
                 preparation.activeProfileMods.end(),
                 [&texGenOutput](const ExecutableLaunchMod& mod)
                 {
-                    return samePath(mod.path, texGenOutput.path);
+                    return samePath(mod.path, texGenOutput->path);
                 });
             if (texGenInSnapshot == preparation.activeProfileMods.end())
             {
                 preparation.activeProfileMods.push_back(ExecutableLaunchMod{
-                    texGenOutput.path,
-                    texGenOutput.displayName,
+                    texGenOutput->path,
+                    texGenOutput->displayName,
                     {}});
             }
         }
@@ -1123,16 +1688,20 @@ namespace fluxora
             preparation.sessionId);
         preparation.stagingDirectory = stageSession / L"output";
         preparation.virtualOutputDirectory =
-            virtualOutputDirectory(resolved, definition);
+            virtualOutputDirectory(resolved, preparation.outputMod.folderName);
+        const std::filesystem::path managedDataPath =
+            resolved.gamePath / resolved.dataDirectory;
         bool replacedManagedArgument = false;
         preparation.commandLine = managedCommandLine(
             resolved.commandLine,
+            resolved.executable.arguments,
+            managedDataPath,
             preparation.virtualOutputDirectory,
             replacedManagedArgument);
         if (replacedManagedArgument)
         {
             preparation.warnings.push_back(
-                L"Fluxora заменила прежние game mode/output аргументы на управляемые -sse и -o.");
+                L"Fluxora заменила прежние game mode/Data/output аргументы на управляемые -sse, -d и -o.");
         }
         if (preparation.configurationStatus.empty())
         {
@@ -1144,10 +1713,15 @@ namespace fluxora
             .throwIfUnsafe("Mods directory is unsafe");
         safety.validateWritePath(settings.modsDirectory, stageSession)
             .throwIfUnsafe("LOD generator session directory is unsafe");
+        std::size_t normalizedPresetCount = 0;
         try
         {
             std::filesystem::remove_all(stageSession);
             std::filesystem::create_directories(preparation.stagingDirectory);
+            normalizedPresetCount = normalizeManagedPresetOutputPaths(
+                resolved.resolvedExecutablePath,
+                definition,
+                preparation.virtualOutputDirectory);
 
             SessionState state;
             state.sessionId = preparation.sessionId;
@@ -1179,15 +1753,25 @@ namespace fluxora
             std::filesystem::remove_all(lockPath, cleanupError);
             throw;
         }
+        if (normalizedPresetCount > 0)
+        {
+            preparation.warnings.push_back(
+                L"Fluxora обновила OutputPath в preset-файлах " +
+                definition.displayName +
+                L", чтобы они не возвращали вывод в старую сборку.");
+        }
 
         logger_.writeOperation(
             LogLevel::Info,
             toUtf8(definition.displayName),
             "Prepared managed " + toUtf8(definition.displayName) +
                 " session id=\"" + toUtf8(preparation.sessionId) +
+                "\", dataPath=\"" + toUtf8(directoryArgumentPath(managedDataPath)) +
                 "\", virtualOutput=\"" +
                 toUtf8(preparation.virtualOutputDirectory.wstring()) +
-                "\", outputMod=\"" + toUtf8(preparation.outputMod.path.wstring()) + "\".");
+                "\", outputMod=\"" + toUtf8(preparation.outputMod.path.wstring()) +
+                "\", normalizedPresetCount=" +
+                std::to_string(normalizedPresetCount) + ".");
         return preparation;
     }
 

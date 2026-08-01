@@ -167,9 +167,12 @@ describe('redesign primitives', () => {
       )
     );
 
-    expect(iconMarkup).toContain('stroke="currentColor"');
-    expect(playMarkup).toContain('stroke-width="2.35"');
-    expect(playMarkup).toContain('M5 5a2 2 0 0 1 3.008-1.728');
+    expect(iconMarkup).toContain('data-icon="settings"');
+    expect(iconMarkup).toContain('background-color:currentColor');
+    expect(iconMarkup).toContain('mask-image:');
+    expect(iconMarkup).not.toContain('<svg');
+    expect(playMarkup).toContain('data-icon="play"');
+    expect(playMarkup).toContain('data-stroke-width="2.35"');
     expect(buttonMarkup).toContain('aria-label="Open settings"');
     expect(buttonMarkup).toContain('title="Open settings"');
     expect(buttonMarkup).toContain('data-variant="boxed"');

@@ -776,6 +776,60 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, MovePluginUsesVisibleOrderWhenAnotherPluginIsTemporarilyMissing)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Visible Plugin Order Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path alphaPlugin = mods / L"Alpha Mod" / L"AddOns" / L"Alpha.ABC";
+        const std::filesystem::path betaPlugin = mods / L"Beta Mod" / L"AddOns" / L"Beta.ABC";
+        const std::filesystem::path gammaPlugin = mods / L"Gamma Mod" / L"AddOns" / L"Gamma.ABC";
+        writeTextFile(alphaPlugin, "plugin");
+        writeTextFile(betaPlugin, "plugin");
+        writeTextFile(gammaPlugin, "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Alpha Mod", L"Alpha Mod", {}, true, {}},
+                InstalledModImportRecord{mods / L"Beta Mod", L"Beta Mod", {}, true, {}},
+                InstalledModImportRecord{mods / L"Gamma Mod", L"Gamma Mod", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+        const std::vector<PluginEntry> initial = plugins.listPlugins(project, context, L"Default");
+        ASSERT_NE(findPlugin(initial, L"Alpha.ABC"), nullptr);
+        ASSERT_NE(findPlugin(initial, L"Beta.ABC"), nullptr);
+        ASSERT_NE(findPlugin(initial, L"Gamma.ABC"), nullptr);
+
+        std::filesystem::remove(betaPlugin);
+        const std::vector<PluginEntry> withMissingPlugin =
+            plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* alpha = findPlugin(withMissingPlugin, L"Alpha.ABC");
+        ASSERT_NE(alpha, nullptr);
+        ASSERT_EQ(findPlugin(withMissingPlugin, L"Beta.ABC"), nullptr);
+
+        const std::vector<PluginEntry> moved =
+            plugins.movePlugin(project, context, L"Default", alpha->orderId, 2);
+
+        ASSERT_GE(moved.size(), 3U);
+        EXPECT_EQ(moved[0].name, L"Base.master");
+        EXPECT_EQ(moved[1].name, L"Gamma.ABC");
+        EXPECT_EQ(moved[2].name, L"Alpha.ABC");
+#endif
+    }
+
     TEST(PluginServiceTests, MovePluginRejectsOrdersThatPlaceDependenciesBeforeTheirMasters)
     {
 #ifndef _WIN32

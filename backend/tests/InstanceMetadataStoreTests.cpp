@@ -1072,6 +1072,61 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(InstanceMetadataStoreTests, ExplicitModdingFlowProviderDoesNotDeriveNexusFromRemoteIds)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path modPath = mods / L"ModdingFlow Artifact";
+        writeTextFile(modPath / L"Data" / L"Artifact.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{
+                    modPath,
+                    L"ModdingFlow Artifact",
+                    L"1.0",
+                    true,
+                    ModSourceRecord{
+                        L"moddingflow",
+                        L"skyrim-se-ae",
+                        L"5e5c1565-5a7d-4b0c-8de1-42a9b863f7f8",
+                        L"01cb8d90-61bf-43ae-9bdc-749a5de1c6f3",
+                        L"https://moddingflow.com/mods/example"
+                    }
+                }
+            });
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project, mods);
+        const InstalledModRecord* mod = findInstalledMod(records, L"ModdingFlow Artifact");
+        ASSERT_NE(mod, nullptr);
+        EXPECT_EQ(mod->source.provider, L"moddingflow");
+        EXPECT_TRUE(mod->sourceIsModdingFlow);
+        EXPECT_FALSE(mod->sourceIsNexus);
+        EXPECT_FALSE(mod->isLocal);
+
+        const std::string manifest = readTextFile(portableManifestPath(modPath));
+        EXPECT_NE(manifest.find(R"("sourceIsModdingFlow":true)"), std::string::npos);
+        EXPECT_NE(manifest.find(R"("sourceIsNexus":false)"), std::string::npos);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                project / L"instance.db",
+                "SELECT COUNT(*) FROM mod_tags WHERE tag = 'source:moddingflow';"),
+            1);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                project / L"instance.db",
+                "SELECT COUNT(*) FROM mod_tags WHERE tag = 'source:nexus';"),
+            0);
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, RefreshInstalledModsFromDiskRecreatesMissingPortableManifest)
     {
 #ifndef _WIN32
@@ -1334,6 +1389,197 @@ namespace fluxora::tests
         EXPECT_EQ(cached[0].kind, L"separator");
         EXPECT_EQ(cached[1].pluginName, L"First.esp");
         EXPECT_EQ(cached[2].pluginName, L"Second.esp");
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, MoveProfileOrderUsesVisibleIndexWhenDeletedRowsRemainCached)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path first = mods / L"First Mod";
+        const std::filesystem::path deleted = mods / L"Deleted Mod";
+        const std::filesystem::path second = mods / L"Second Mod";
+        const std::filesystem::path third = mods / L"Third Mod";
+        writeTextFile(first / L"Data" / L"First.esp", "first");
+        writeTextFile(deleted / L"Data" / L"Deleted.esp", "deleted");
+        writeTextFile(second / L"Data" / L"Second.esp", "second");
+        writeTextFile(third / L"Data" / L"Third.esp", "third");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{first, L"First Mod", {}, true, {}},
+                InstalledModImportRecord{deleted, L"Deleted Mod", {}, true, {}},
+                InstalledModImportRecord{second, L"Second Mod", {}, true, {}},
+                InstalledModImportRecord{third, L"Third Mod", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"First Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Deleted Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Second Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Third Mod", {}}
+            });
+
+        const std::filesystem::path database = project / L"instance.db";
+        sqliteExec(
+            database,
+            "UPDATE mods SET state = 'deleted' WHERE folder_name = 'Deleted Mod';");
+
+        const std::vector<ProfileOrderItemRecord> visibleBefore =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        ASSERT_EQ(visibleBefore.size(), 3U);
+        const ProfileOrderItemRecord* firstItem = findProfileOrderMod(visibleBefore, L"First Mod");
+        ASSERT_NE(firstItem, nullptr);
+
+        const std::vector<ProfileOrderItemRecord> moved =
+            InstanceMetadataStore::moveProfileOrderItem(
+                project,
+                L"Default",
+                firstItem->id,
+                2,
+                mods);
+
+        ASSERT_EQ(moved.size(), 3U);
+        EXPECT_EQ(moved[0].mod.folderName, L"Second Mod");
+        EXPECT_EQ(moved[1].mod.folderName, L"Third Mod");
+        EXPECT_EQ(moved[2].mod.folderName, L"First Mod");
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM profile_order_items oi "
+                "JOIN mods m ON m.id = oi.mod_id "
+                "WHERE oi.profile_name = 'Default' "
+                "AND m.folder_name = 'Deleted Mod' AND m.state = 'deleted';"),
+            1);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, MovePluginOrderUsesVisibleIndexWhenMissingRowsRemainCached)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::replaceProfilePluginOrderItems(
+            project,
+            L"Default",
+            {
+                ProfilePluginOrderImportItemRecord{L"plugin", L"First.esp", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Missing.esp", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Second.esp", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Third.esp", {}}
+            });
+        const std::vector<std::wstring> visiblePluginNames{
+            L"First.esp",
+            L"Second.esp",
+            L"Third.esp"
+        };
+        const std::vector<ProfilePluginOrderItemRecord> before =
+            InstanceMetadataStore::listProfilePluginOrderItems(
+                project,
+                L"Default",
+                visiblePluginNames);
+        const auto first = std::find_if(
+            before.begin(),
+            before.end(),
+            [](const ProfilePluginOrderItemRecord& item)
+            {
+                return item.pluginName == L"First.esp";
+            });
+        ASSERT_NE(first, before.end());
+
+        const std::vector<ProfilePluginOrderItemRecord> moved =
+            InstanceMetadataStore::moveProfilePluginOrderItem(
+                project,
+                L"Default",
+                visiblePluginNames,
+                first->id,
+                2);
+
+        std::vector<std::wstring> visibleMovedNames;
+        for (const ProfilePluginOrderItemRecord& item : moved)
+        {
+            if (std::find(
+                    visiblePluginNames.begin(),
+                    visiblePluginNames.end(),
+                    item.pluginName) != visiblePluginNames.end())
+            {
+                visibleMovedNames.push_back(item.pluginName);
+            }
+        }
+        EXPECT_EQ(
+            visibleMovedNames,
+            (std::vector<std::wstring>{L"Second.esp", L"Third.esp", L"First.esp"}));
+        EXPECT_EQ(
+            sqliteIntScalar(
+                project / L"instance.db",
+                "SELECT COUNT(*) FROM profile_plugin_order_items "
+                "WHERE profile_name = 'Default' AND plugin_name = 'Missing.esp';"),
+            1);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, MovePluginSeparatorMatchesSingleRowRendererSemantics)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::replaceProfilePluginOrderItems(
+            project,
+            L"Default",
+            {
+                ProfilePluginOrderImportItemRecord{L"separator", {}, L"First group"},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"First.esp", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Second.esp", {}},
+                ProfilePluginOrderImportItemRecord{L"separator", {}, L"Second group"},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Third.esp", {}}
+            });
+        const std::vector<std::wstring> pluginNames{
+            L"First.esp",
+            L"Second.esp",
+            L"Third.esp"
+        };
+        const std::vector<ProfilePluginOrderItemRecord> before =
+            InstanceMetadataStore::listProfilePluginOrderItems(
+                project,
+                L"Default",
+                pluginNames);
+        const auto firstSeparator = std::find_if(
+            before.begin(),
+            before.end(),
+            [](const ProfilePluginOrderItemRecord& item)
+            {
+                return item.separatorTitle == L"First group";
+            });
+        ASSERT_NE(firstSeparator, before.end());
+
+        const std::vector<ProfilePluginOrderItemRecord> moved =
+            InstanceMetadataStore::moveProfilePluginOrderItem(
+                project,
+                L"Default",
+                pluginNames,
+                firstSeparator->id,
+                3);
+
+        ASSERT_EQ(moved.size(), 5U);
+        EXPECT_EQ(moved[0].pluginName, L"First.esp");
+        EXPECT_EQ(moved[1].pluginName, L"Second.esp");
+        EXPECT_EQ(moved[2].separatorTitle, L"Second group");
+        EXPECT_EQ(moved[3].separatorTitle, L"First group");
+        EXPECT_EQ(moved[4].pluginName, L"Third.esp");
 #endif
     }
 
@@ -2375,7 +2621,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(InstanceMetadataStoreTests, CompletedPendingInstallIgnoresDelayedRebaseAcrossSeparator)
+    TEST(InstanceMetadataStoreTests, CompletedPendingInstallIgnoresNonUserRebaseAcrossSeparator)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
@@ -2433,6 +2679,8 @@ namespace fluxora::tests
                 L"Incoming Mod",
                 L"1.0.0",
                 ModSourceRecord{L"local"});
+        const PendingInstallSessionRecord completed =
+            InstanceMetadataStore::pendingInstallSession(project, L"op_completed_rebase");
 
         const PendingInstallSessionRecord replay =
             InstanceMetadataStore::rebasePendingInstallSession(
@@ -2440,7 +2688,9 @@ namespace fluxora::tests
                 L"op_completed_rebase",
                 before[0].id,
                 before[1].id,
-                1);
+                1,
+                static_cast<std::int64_t>(completed.revision),
+                false);
         const std::vector<ProfileOrderItemRecord> after =
             InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
 
@@ -2457,7 +2707,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(InstanceMetadataStoreTests, ReplacementPreservesStableOrderIdentityBesideEmptySeparator)
+    TEST(InstanceMetadataStoreTests, CompletedReplacementRetriesStaleUserRebaseAcrossSeparator)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
@@ -2502,10 +2752,11 @@ namespace fluxora::tests
             2,
             before[1].id,
             before[2].id);
-        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+        const PendingInstallSessionRecord ready =
+            InstanceMetadataStore::preparePendingInstallSession(
             project,
             L"op_replace_stable_order",
-            {InstallConflictFile{L"Data/Target.esp", 3, L"1"}}));
+            {InstallConflictFile{L"Data/Target.esp", 3, L"1"}});
         writeTextFile(target / L"Data" / L"Target.esp", "new");
 
         const FinalizedPendingInstallRecord finalized =
@@ -2516,20 +2767,128 @@ namespace fluxora::tests
                 L"Target Mod",
                 L"2.0.0",
                 ModSourceRecord{L"local"});
-        const PendingInstallSessionRecord delayedRebase =
+        const PendingInstallSessionRecord staleRebase =
             InstanceMetadataStore::rebasePendingInstallSession(
                 project,
                 L"op_replace_stable_order",
                 before[0].id,
                 before[1].id,
-                1);
+                1,
+                static_cast<std::int64_t>(ready.revision),
+                true);
+        const std::vector<ProfileOrderItemRecord> afterStaleRebase =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        const PendingInstallSessionRecord appliedRebase =
+            InstanceMetadataStore::rebasePendingInstallSession(
+                project,
+                L"op_replace_stable_order",
+                before[0].id,
+                before[1].id,
+                1,
+                static_cast<std::int64_t>(staleRebase.revision),
+                true);
         const std::vector<ProfileOrderItemRecord> after =
             InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
 
         EXPECT_EQ(finalized.mod.uuid, before[2].mod.uuid);
         EXPECT_EQ(finalized.orderId, before[2].id);
-        EXPECT_EQ(delayedRebase.state, L"completed");
-        EXPECT_EQ(delayedRebase.finalOrderId, before[2].id);
+        EXPECT_EQ(staleRebase.state, L"completed");
+        EXPECT_EQ(staleRebase.finalOrderId, before[2].id);
+        EXPECT_EQ(appliedRebase.state, L"completed");
+        EXPECT_EQ(appliedRebase.finalOrderId, before[2].id);
+        ASSERT_EQ(afterStaleRebase.size(), before.size());
+        for (std::size_t index = 0; index < before.size(); ++index)
+        {
+            EXPECT_EQ(afterStaleRebase[index].id, before[index].id);
+        }
+        ASSERT_EQ(after.size(), before.size());
+        EXPECT_EQ(after[0].id, before[0].id);
+        EXPECT_EQ(after[1].id, before[2].id);
+        EXPECT_EQ(after[2].id, before[1].id);
+        EXPECT_EQ(after[3].id, before[3].id);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ReplacementFinalizationUsesVisibleAnchorsWhenDeletedRowsRemainCached)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Replacement Visible Anchors";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path deletedOne = mods / L"Deleted One";
+        const std::filesystem::path deletedTwo = mods / L"Deleted Two";
+        const std::filesystem::path target = mods / L"Target Mod";
+        const std::filesystem::path trailing = mods / L"Trailing Mod";
+        writeTextFile(deletedOne / L"Data" / L"DeletedOne.esp", "deleted-one");
+        writeTextFile(deletedTwo / L"Data" / L"DeletedTwo.esp", "deleted-two");
+        writeTextFile(target / L"Data" / L"Target.esp", "old");
+        writeTextFile(trailing / L"Data" / L"Trailing.esp", "trailing");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{deletedOne, L"Deleted One", L"1.0.0", true, {}},
+                InstalledModImportRecord{deletedTwo, L"Deleted Two", L"1.0.0", true, {}},
+                InstalledModImportRecord{target, L"Target Mod", L"1.0.0", true, {}},
+                InstalledModImportRecord{trailing, L"Trailing Mod", L"1.0.0", true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"separator", {}, L"First Section"},
+                ProfileOrderImportItemRecord{L"mod", L"Deleted One", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Deleted Two", {}},
+                ProfileOrderImportItemRecord{L"separator", {}, L"Target Section"},
+                ProfileOrderImportItemRecord{L"mod", L"Target Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Trailing Mod", {}}
+            });
+        const std::filesystem::path database = project / L"instance.db";
+        sqliteExec(
+            database,
+            "UPDATE mods SET state = 'deleted' "
+            "WHERE folder_name IN ('Deleted One', 'Deleted Two');");
+        std::filesystem::remove_all(deletedOne);
+        std::filesystem::remove_all(deletedTwo);
+        const std::vector<ProfileOrderItemRecord> before =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        ASSERT_EQ(before.size(), 4U);
+        ASSERT_TRUE(before[2].hasMod);
+        ASSERT_EQ(before[2].mod.folderName, L"Target Mod");
+
+        InstanceMetadataStore::beginPendingInstallSession(
+            project,
+            L"op_replace_visible_anchors",
+            L"Default",
+            InstallConflictPreviewMode::Replace,
+            L"pending-install:op_replace_visible_anchors",
+            before[2].mod.uuid,
+            2,
+            before[1].id,
+            before[3].id);
+        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+            project,
+            L"op_replace_visible_anchors",
+            {InstallConflictFile{L"Data/Target.esp", 3, L"1"}}));
+        writeTextFile(target / L"Data" / L"Target.esp", "new");
+
+        const FinalizedPendingInstallRecord finalized =
+            InstanceMetadataStore::finalizePendingInstalledMod(
+                project,
+                L"op_replace_visible_anchors",
+                target,
+                L"Target Mod",
+                L"2.0.0",
+                ModSourceRecord{L"local"});
+        const std::vector<ProfileOrderItemRecord> after =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+
+        EXPECT_EQ(finalized.mod.uuid, before[2].mod.uuid);
+        EXPECT_EQ(finalized.orderId, before[2].id);
         ASSERT_EQ(after.size(), before.size());
         for (std::size_t index = 0; index < before.size(); ++index)
         {

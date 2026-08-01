@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -146,6 +147,20 @@ namespace
         return package;
     }
 
+    std::uint64_t expandedPayloadBytes(
+        const std::vector<unsigned char>& package)
+    {
+        constexpr std::size_t offset =
+            PackageMagic.size() + sizeof(std::uint32_t) + sizeof(std::uint64_t);
+        if (package.size() < offset + sizeof(std::uint64_t))
+        {
+            throw std::invalid_argument("Test package header is truncated.");
+        }
+        std::uint64_t value = 0;
+        std::memcpy(&value, package.data() + offset, sizeof(value));
+        return value;
+    }
+
     struct VectorReadState
     {
         const std::vector<unsigned char>* package{nullptr};
@@ -186,6 +201,16 @@ namespace
         }
     }
 
+    void throwFromProgress(const wchar_t*, void*)
+    {
+        throw 42;
+    }
+
+    std::int64_t throwFromRead(void*, std::uint64_t, void*)
+    {
+        throw 42;
+    }
+
     struct InstallCallResult
     {
         int code{FluxoraInstallerResultInstallError};
@@ -222,6 +247,77 @@ namespace
             }
         }
 
+        return result;
+    }
+
+    struct SetupCancelState
+    {
+        int queryCount{0};
+        int cancelOnQuery{0};
+        int boundaryCount{0};
+        VectorReadState* readState{nullptr};
+        std::size_t cancelWhenOffsetReaches{0};
+    };
+
+    int setupCancelCallback(int enterCommitBoundary, void* userData)
+    {
+        auto* state = static_cast<SetupCancelState*>(userData);
+        if (state == nullptr)
+        {
+            return 0;
+        }
+        if (enterCommitBoundary != 0)
+        {
+            ++state->boundaryCount;
+            return 0;
+        }
+        ++state->queryCount;
+        const bool queryTriggered =
+            state->cancelOnQuery != 0 &&
+            state->queryCount >= state->cancelOnQuery;
+        const bool offsetTriggered =
+            state->readState != nullptr &&
+            state->cancelWhenOffsetReaches != 0 &&
+            state->readState->offset >= state->cancelWhenOffsetReaches;
+        return queryTriggered || offsetTriggered
+            ? 1
+            : 0;
+    }
+
+    InstallCallResult installSetupForTest(
+        VectorReadState& readState,
+        const std::filesystem::path& installDirectory,
+        SetupCancelState* cancelState = nullptr,
+        std::optional<std::uint64_t> trustedExpandedBytes = std::nullopt)
+    {
+        std::array<wchar_t, 4096> json{};
+        InstallCallResult result;
+        result.code = fluxora_installer_install_setup_payload_stream(
+            readVectorPackage,
+            &readState,
+            installDirectory.c_str(),
+            trustedExpandedBytes.value_or(
+                expandedPayloadBytes(*readState.package)),
+            0,
+            L"op_setup_test_abcdef12",
+            cancelState == nullptr ? nullptr : setupCancelCallback,
+            cancelState,
+            nullptr,
+            nullptr,
+            json.data(),
+            static_cast<int>(json.size()));
+        result.json = json.data();
+        if (result.code != FluxoraInstallerResultOk)
+        {
+            std::array<wchar_t, 4096> error{};
+            if (fluxora_installer_get_last_error(
+                    error.data(),
+                    static_cast<int>(error.size())) ==
+                FluxoraInstallerResultOk)
+            {
+                result.error = error.data();
+            }
+        }
         return result;
     }
 
@@ -324,6 +420,23 @@ TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
 }
 
+TEST(InstallerCorePackageTests, NativeOperationContextRejectsUnsafeOrOversizedIds)
+{
+    EXPECT_EQ(
+        FluxoraInstallerResultInvalidArgument,
+        fluxora_installer_set_operation_context(L"unsafe\noperation"));
+    EXPECT_EQ(
+        FluxoraInstallerResultInvalidArgument,
+        fluxora_installer_set_operation_context(
+            std::wstring(129, L'a').c_str()));
+    EXPECT_EQ(
+        FluxoraInstallerResultOk,
+        fluxora_installer_set_operation_context(L"op_safe_abcdef12"));
+    EXPECT_EQ(
+        FluxoraInstallerResultOk,
+        fluxora_installer_set_operation_context(nullptr));
+}
+
 TEST(InstallerCorePackageTests, InstallPackageStreamIncludesTauriResources)
 {
     fluxora::tests::TempDirectory temp;
@@ -353,6 +466,208 @@ TEST(InstallerCorePackageTests, InstallPackageStreamIncludesTauriResources)
     EXPECT_NE(std::wstring(json.data()).find(L"Fluxora.exe"), std::wstring::npos);
     ASSERT_FALSE(progressUpdates.empty());
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
+}
+
+TEST(InstallerCorePackageTests, SafeSetupRefusesForeignDirectoryBeforeReadingPayload)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path installDirectory =
+        temporary.path() / L"foreign";
+    std::filesystem::create_directories(installDirectory);
+    fluxora::tests::writeTextFile(
+        installDirectory / L"foreign.txt",
+        "keep");
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "new executable"}});
+    VectorReadState readState{&package, 0, 17};
+
+    const InstallCallResult result =
+        installSetupForTest(readState, installDirectory);
+
+    EXPECT_EQ(FluxoraInstallerResultInvalidArgument, result.code);
+    EXPECT_EQ(0u, readState.offset);
+    EXPECT_EQ(
+        "keep",
+        fluxora::tests::readTextFile(installDirectory / L"foreign.txt"));
+    EXPECT_FALSE(std::filesystem::exists(
+        installDirectory / L"Fluxora.exe"));
+}
+
+TEST(InstallerCorePackageTests, SetupCAbiReturnsVersionedBootstrapAndValidationSchemas)
+{
+    fluxora::tests::TempDirectory temporary;
+    std::array<wchar_t, 4096> bootstrap{};
+    std::array<wchar_t, 4096> validation{};
+
+    EXPECT_EQ(
+        FluxoraInstallerResultOk,
+        fluxora_installer_get_setup_bootstrap_state(
+            1024,
+            bootstrap.data(),
+            static_cast<int>(bootstrap.size())));
+    EXPECT_EQ(
+        FluxoraInstallerResultOk,
+        fluxora_installer_validate_install_options(
+            (temporary.path() / L"install").c_str(),
+            1024,
+            validation.data(),
+            static_cast<int>(validation.size())));
+
+    const std::wstring bootstrapJson(bootstrap.data());
+    const std::wstring validationJson(validation.data());
+    EXPECT_NE(
+        std::wstring::npos,
+        bootstrapJson.find(L"\"schemaVersion\":1"));
+    EXPECT_NE(
+        std::wstring::npos,
+        bootstrapJson.find(L"\"requiredBytes\":"));
+    EXPECT_NE(
+        std::wstring::npos,
+        validationJson.find(L"\"schemaVersion\":1"));
+    EXPECT_NE(
+        std::wstring::npos,
+        validationJson.find(L"\"status\":\"valid\""));
+    EXPECT_NE(
+        std::wstring::npos,
+        validationJson.find(L"\"code\":\"ok\""));
+}
+
+TEST(InstallerCorePackageTests, SafeSetupRejectsSmallResultBufferBeforeReadingPayload)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "new executable"}});
+    VectorReadState readState{&package, 0, 17};
+    std::array<wchar_t, 1> json{};
+
+    const int result = fluxora_installer_install_setup_payload_stream(
+        readVectorPackage,
+        &readState,
+        (temporary.path() / L"install").c_str(),
+        expandedPayloadBytes(package),
+        0,
+        L"op_small_buffer_abcdef12",
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultBufferTooSmall, result);
+    EXPECT_EQ(0u, readState.offset);
+    EXPECT_FALSE(std::filesystem::exists(
+        temporary.path() / L"install"));
+}
+
+TEST(InstallerCorePackageTests, SafeSetupHonorsCancellationAfterFinalPayloadByteBeforeCommit)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path installDirectory =
+        temporary.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "new executable"},
+        {"resources/legal/en/privacy.md", "privacy"}});
+    VectorReadState readState{&package, 0, 17};
+    SetupCancelState cancel;
+    cancel.readState = &readState;
+    cancel.cancelWhenOffsetReaches = package.size();
+
+    const InstallCallResult result =
+        installSetupForTest(readState, installDirectory, &cancel);
+
+    EXPECT_EQ(FluxoraInstallerResultCancelled, result.code)
+        << testing::PrintToString(result.error);
+    EXPECT_EQ(package.size(), readState.offset);
+    EXPECT_EQ(0, cancel.boundaryCount);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+TEST(InstallerCorePackageTests, SafeSetupStopsStreamPromptlyOnMidPayloadCancellation)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path installDirectory =
+        temporary.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", std::string(1024 * 1024, 'x')}});
+    VectorReadState readState{&package, 0, 4096};
+    SetupCancelState cancel;
+    cancel.readState = &readState;
+    cancel.cancelWhenOffsetReaches = 64 * 1024;
+
+    const InstallCallResult result =
+        installSetupForTest(readState, installDirectory, &cancel);
+
+    EXPECT_EQ(FluxoraInstallerResultCancelled, result.code)
+        << testing::PrintToString(result.error);
+    EXPECT_GE(readState.offset, 64u * 1024u);
+    EXPECT_LE(readState.offset, 68u * 1024u);
+    EXPECT_LT(readState.offset, package.size());
+    EXPECT_EQ(0, cancel.boundaryCount);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+TEST(InstallerCorePackageTests, SafeSetupRejectsMismatchedExpandedSizeBeforeExtraction)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path installDirectory =
+        temporary.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", std::string(1024 * 1024, 'x')}});
+    VectorReadState readState{&package, 0, 4096};
+
+    const InstallCallResult result =
+        installSetupForTest(readState, installDirectory, nullptr, 1);
+
+    EXPECT_EQ(FluxoraInstallerResultInvalidArgument, result.code);
+    EXPECT_EQ(
+        PackageMagic.size() + sizeof(std::uint32_t) +
+            (2 * sizeof(std::uint64_t)),
+        readState.offset);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+TEST(InstallerCorePackageTests, CAbiContainsNonStandardReadCallbackExceptions)
+{
+    fluxora::tests::TempDirectory temporary;
+    std::array<wchar_t, 512> json{};
+
+    const int result = fluxora_installer_install_setup_payload_stream(
+        throwFromRead,
+        nullptr,
+        (temporary.path() / L"install").c_str(),
+        1,
+        0,
+        L"op_nonstd_read_abcdef12",
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result);
+}
+
+TEST(InstallerCorePackageTests, CAbiContainsNonStandardProgressCallbackExceptions)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "new executable"}});
+    VectorReadState readState{&package, 0, 17};
+    std::array<wchar_t, 4096> json{};
+
+    const int result = fluxora_installer_install_package_stream(
+        readVectorPackage,
+        &readState,
+        (temporary.path() / L"install").c_str(),
+        0,
+        throwFromProgress,
+        nullptr,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
 }
 
 TEST(InstallerCorePackageTests, InstallPackageStreamRejectsTamperedPayload)

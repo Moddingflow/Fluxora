@@ -16,6 +16,7 @@ describe('single-agent panel', () => {
     expect(styles).toContain('grid-template-areas:');
     expect(styles).toContain('"tabs"');
     expect(styles).toContain('"context"');
+    expect(styles).toContain('"quota"');
     expect(styles).toContain('"diagnostic"');
     expect(styles).toContain('"messages"');
     expect(styles).toContain('"input"');
@@ -25,6 +26,138 @@ describe('single-agent panel', () => {
     expect(styles).toContain('padding: 12px 16px 16px;');
     expect(styles).toContain('border-top: 0;');
     expect(styles).not.toContain('.ai-chat-panel__resize');
+  });
+
+  it('shows agent limits as an accessible usage rail and clearly separates BYOK', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    const chat = session.chats[0];
+    const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: [], session };
+    const noop = () => undefined;
+    const common = {
+      hostReady: true,
+      state,
+      onCancel: noop,
+      onClose: noop,
+      onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
+      onCreateChat: noop,
+      onDraftChange: noop,
+      onOpenSource: noop,
+      onOpenFileChange: noop,
+      onRollbackFileRun: noop,
+      onUndoCapability: noop,
+      onSend: noop,
+      onSelectChat: noop,
+      onToggleCollapse: noop
+    };
+    const managed = renderToStaticMarkup(createElement(AiChatPanel, {
+      ...common,
+      language: 'en-US',
+      quota: {
+        schema: 'fluxora.ai.quota.v1',
+        availability: 'available',
+        available: true,
+        eligibility: true,
+        reason: 'eligible',
+        periodStart: '2026-07-01T00:00:00.000Z',
+        resetAt: '2026-08-01T00:00:00.000Z',
+        rollover: false,
+        limit: 1_000_000,
+        used: 250_000,
+        reserved: 0,
+        remaining: 750_000,
+        remainingInputTokenEquivalent: 100_000,
+        search: { limit: 24, used: 6, reserved: 0, remaining: 18 },
+        model: 'gemini-3.1-flash-lite',
+        priceVersion: '2026-07'
+      }
+    }));
+    expect(managed).toContain('Agent limit');
+    expect(managed).toContain('75% remaining');
+    expect(managed).toContain('role="progressbar"');
+    expect(managed).toContain('aria-label="Agent limit, 75% remaining"');
+    expect(managed).toContain('aria-valuenow="75"');
+    expect(managed).toContain('Search <strong>18 / 24</strong>');
+    expect(managed).toContain('dateTime="2026-08-01T00:00:00.000Z"');
+
+    const byok = renderToStaticMarkup(createElement(AiChatPanel, {
+      ...common,
+      language: 'de-DE',
+      quota: {
+        schema: 'fluxora.ai.quota.v1',
+        availability: 'byok',
+        available: true,
+        eligibility: true,
+        reason: 'byok_user_paid',
+        periodStart: null,
+        resetAt: null,
+        rollover: false,
+        limit: 0,
+        used: 0,
+        reserved: 0,
+        remaining: 0,
+        remainingInputTokenEquivalent: 0,
+        search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+        model: 'gemini-3.1-flash-lite',
+        priceVersion: null
+      }
+    }));
+    expect(byok).toContain('Eigener Schlüssel');
+    expect(byok).toContain('Fluxora-Kontingent bleibt unberührt.');
+  });
+
+  it('replaces the agent workspace with a ModdingFlow sign-in gate when the gateway requires OAuth', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    const chat = session.chats[0];
+    const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: [], session };
+    const noop = () => undefined;
+    const html = renderToStaticMarkup(createElement(AiChatPanel, {
+      hostReady: true,
+      language: 'ru-RU',
+      quota: {
+        schema: 'fluxora.ai.quota.v1',
+        availability: 'connectionRequired',
+        available: false,
+        eligibility: false,
+        reason: 'ai_oauth_invalid',
+        periodStart: null,
+        resetAt: null,
+        rollover: false,
+        limit: 0,
+        used: 0,
+        reserved: 0,
+        remaining: 0,
+        remainingInputTokenEquivalent: 0,
+        search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+        model: 'gemini-3.1-flash-lite',
+        priceVersion: null
+      },
+      state,
+      onCancel: noop,
+      onClose: noop,
+      onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
+      onCreateChat: noop,
+      onDraftChange: noop,
+      onOpenSource: noop,
+      onOpenFileChange: noop,
+      onRollbackFileRun: noop,
+      onUndoCapability: noop,
+      onSend: noop,
+      onSelectChat: noop,
+      onToggleCollapse: noop
+    }));
+
+    expect(html).toContain('Войдите в ModdingFlow');
+    expect(html).toContain('Аккаунт нужен, чтобы безопасно подтвердить Premium');
+    expect(html).toContain('>Войти<');
+    expect(html).toContain('Нет аккаунта?');
+    expect(html).toContain('>Создать аккаунт<');
+    expect(html).toContain('<img');
+    expect(html).not.toContain('Message Fluxora AI');
+    expect(html).not.toContain('Agent usage limits');
   });
 
   it('shows exact context usage, sources and undo without model/routing/subagent UI', () => {
@@ -95,6 +228,8 @@ describe('single-agent panel', () => {
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
       onCreateChat: noop,
       onDraftChange: noop,
       onOpenSource: noop,
@@ -132,6 +267,8 @@ describe('single-agent panel', () => {
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
       onCreateChat: noop,
       onDraftChange: noop,
       onOpenSource: noop,
@@ -187,6 +324,8 @@ describe('single-agent panel', () => {
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
       onCreateChat: noop,
       onDraftChange: noop,
       onOpenSource: noop,
@@ -244,6 +383,8 @@ describe('single-agent panel', () => {
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
       onCreateChat: noop,
       onDraftChange: noop,
       onOpenSource: noop,

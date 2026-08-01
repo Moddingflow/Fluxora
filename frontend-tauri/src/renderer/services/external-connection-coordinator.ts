@@ -34,8 +34,8 @@ export interface ExternalConnectionCoordinator {
 const shouldRetrySnapshot = (snapshot: FluxoraExternalConnectionSnapshot): boolean =>
   snapshot.providers.some(
     (provider) =>
-      provider.retryable &&
-      (provider.state === 'restoring' || provider.state === 'temporarilyUnavailable')
+      provider.state === 'restoring' ||
+      (provider.retryable && provider.state === 'temporarilyUnavailable')
   );
 
 export const createExternalConnectionCoordinator = (
@@ -158,15 +158,11 @@ export const createExternalConnectionCoordinator = (
       }
       if (!stopped) {
         publish(local);
+        if (shouldRetrySnapshot(local)) {
+          scheduleRetry();
+        }
       }
-      if (!shouldRetrySnapshot(local) &&
-          local.providers.every((provider) =>
-            provider.state === 'notConfigured' ||
-            provider.state === 'notLinked' ||
-            provider.state === 'reauthRequired')) {
-        return local;
-      }
-      return restore('startup');
+      return local;
     },
     retryNow: (reason) => {
       if (

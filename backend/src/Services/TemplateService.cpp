@@ -219,6 +219,7 @@ namespace fluxora
                 : identity.defaultProfileName;
             projected.dataDirectory = projectedDataDirectory(contentLayoutRules);
             projected.nexusDomain = identity.domains.empty() ? L"" : identity.domains.front();
+            projected.externalProviderGameSlugs = identity.externalProviderGameSlugs;
             projected.folders = {};
             if (pluginRules != nullptr)
             {
@@ -334,6 +335,7 @@ namespace fluxora
         {
             resolved.nexusDomain = game.nexusDomain;
         }
+        resolved.externalProviderGameSlugs = game.externalProviderGameSlugs;
 
         mergeStrings(resolved.folders, game.folders);
         mergeStrings(resolved.profileFiles, game.profileFiles);
@@ -371,6 +373,7 @@ namespace fluxora
         base_.defaultProfileName = L"Default";
         base_.dataDirectory = L"";
         base_.nexusDomain = L"";
+        base_.externalProviderGameSlugs = {};
         base_.folders = {L"mods", L"profiles", L"overwrite", L"webcache", L"logs"};
         base_.profileFiles = {L"modlist.txt"};
         base_.basePlugins = {};

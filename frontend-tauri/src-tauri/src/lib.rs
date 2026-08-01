@@ -7,6 +7,7 @@ use notify_debouncer_full::{
     },
     DebounceEventResult, DebouncedEvent, Debouncer, NoCache, RecommendedCache,
 };
+use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -38,7 +39,20 @@ mod ai_capability_adapters;
 #[path = "bin/fluxora_ai_host/tool_contract.rs"]
 mod ai_tool_contract;
 mod microphone_permission;
+#[allow(dead_code)]
+mod moddingflow_activation;
+#[allow(dead_code)]
+mod moddingflow_activation_confirmation;
+mod moddingflow_activation_runtime;
+mod moddingflow_connection_facade;
+#[allow(dead_code)]
+mod moddingflow_oauth;
+#[allow(dead_code)]
+mod oauth_loopback;
 mod speech;
+mod update_manifest;
+mod update_service;
+mod update_shared;
 
 use ai_capability_adapters::{
     find_download_can_install, find_download_state, find_mod_enabled, find_plugin_order,
@@ -50,9 +64,28 @@ use microphone_permission::{
     configure_main_webview, fluxora_ai_arm_microphone_capture,
     fluxora_ai_reset_microphone_permission, MicrophonePermissionState,
 };
+use moddingflow_activation::FluxoraActivationSource;
+use moddingflow_activation_confirmation::{
+    fluxora_moddingflow_accept_activation, fluxora_moddingflow_dismiss_activation,
+    fluxora_moddingflow_preview_activation, fluxora_moddingflow_preview_activation_plan,
+    MODDINGFLOW_ACTIVATION_CONFIRMATION_ENABLED,
+};
+use moddingflow_activation_runtime::{
+    fluxora_moddingflow_consume_activations, ModdingFlowActivationRuntimeState,
+    MODDINGFLOW_ACTIVATION_CAPTURED_EVENT, MODDINGFLOW_ACTIVATION_FEATURE_ENABLED,
+};
+use moddingflow_connection_facade::{
+    fluxora_moddingflow_cancel_connect, fluxora_moddingflow_connect,
+    fluxora_moddingflow_connection_status, fluxora_moddingflow_disconnect,
+    fluxora_moddingflow_restore_connection, ModdingFlowConnectionRuntimeState,
+};
 use speech::{
     fluxora_ai_cancel_voice_transcription, fluxora_ai_open_microphone_privacy_settings,
     fluxora_ai_prepare_voice, fluxora_ai_transcribe_voice, SpeechHostState,
+};
+use update_service::{
+    fluxora_updates_cancel, fluxora_updates_check, fluxora_updates_download_and_install,
+    fluxora_updates_get_status, fluxora_updates_renderer_ready, UpdateRuntimeState,
 };
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
@@ -62,7 +95,17 @@ const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 10 * 60 * 1_000 + 30_000;
 const PRIVATE_NEXUS_API_AUTH_HEADER_METHOD: &str = "nexus.getApiAuthHeader";
+const PRIVATE_MODDINGFLOW_NATIVE_METHODS: [&str; 7] = [
+    "connections.beginConnect",
+    "connections.completeConnect",
+    "connections.cancelPendingConnect",
+    "moddingflow.getManagedAiAccessToken",
+    "moddingflow.lookupArtifactPreview",
+    "moddingflow.previewActivationPlan",
+    "downloads.queueModdingFlowArtifact",
+];
 const PRIVATE_AI_NEXUS_CREDENTIAL_FIELD: &str = "nativeNexusApiCredential";
+const PRIVATE_MANAGED_AI_ACCESS_TOKEN_FIELD: &str = "managedAiAccessToken";
 const AI_CREDENTIAL_SERVICE: &str = "app.fluxora.desktop.ai.provider";
 const PROGRESS_EVENT: &str = "fluxora:operations:progress";
 const INSTALL_PROGRESS_EVENT: &str = "fluxora:installs:progress";
@@ -235,7 +278,6 @@ async fn record_operation_progress(app: &AppHandle, payload: &Value) {
     }
 }
 
-#[derive(Default)]
 struct BridgeState {
     process: Mutex<BridgeProcess>,
     plugin_process: Mutex<BridgeProcess>,
@@ -381,8 +423,8 @@ struct BuildContentWatchEventContext {
     sequence: Arc<AtomicU64>,
 }
 
-#[derive(Default)]
 struct BridgeProcess {
+    lane: BridgeLane,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     pending_responses: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
@@ -823,6 +865,28 @@ fn merge_runtime_capabilities(mut capabilities: Value) -> Value {
                     "supports": ["https", "mailto"]
                 }),
             );
+            features.insert(
+                "moddingFlowActivation".to_string(),
+                json!({
+                    "state": if MODDINGFLOW_ACTIVATION_FEATURE_ENABLED
+                        && MODDINGFLOW_ACTIVATION_CONFIRMATION_ENABLED
+                    {
+                        "available"
+                    } else {
+                        "disabled"
+                    },
+                    "platforms": ["win32", "linux", "darwin"],
+                    "requires": ["trusted-metadata", "confirmation-ui", "protocol-registration"],
+                    "supports": ["command-line-capture", "single-instance-capture"],
+                    "reason": if MODDINGFLOW_ACTIVATION_FEATURE_ENABLED
+                        && MODDINGFLOW_ACTIVATION_CONFIRMATION_ENABLED
+                    {
+                        Value::Null
+                    } else {
+                        json!("Rollout remains disabled until trusted metadata and confirmation are complete.")
+                    }
+                }),
+            );
         }
         object
             .entry("supportMatrix")
@@ -994,24 +1058,18 @@ fn is_transient_install_work_component(value: &str) -> bool {
             // "<install-work-directory>.layout[-N]" sibling.
             continuation.is_empty()
                 || continuation == ".layout"
-                || continuation
-                    .strip_prefix(".layout-")
-                    .is_some_and(|suffix| {
-                        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
-                    })
+                || continuation.strip_prefix(".layout-").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                })
         })
     })
 }
 
 fn is_transient_build_content_path(path: &Path) -> bool {
     if path.components().any(|component| {
-        component
-            .as_os_str()
-            .to_str()
-            .is_some_and(|value| {
-                value.eq_ignore_ascii_case(".flow")
-                    || is_transient_install_work_component(value)
-            })
+        component.as_os_str().to_str().is_some_and(|value| {
+            value.eq_ignore_ascii_case(".flow") || is_transient_install_work_component(value)
+        })
     }) {
         return true;
     }
@@ -1231,10 +1289,7 @@ fn emit_downloads_folder_watch_result(
             let revision = revision.clone();
             tauri::async_runtime::spawn(async move {
                 let mut current_revision = revision.lock().await;
-                let operation_id = format!(
-                    "op_{}_downloads_changed_{sequence}",
-                    now_millis()
-                );
+                let operation_id = format!("op_{}_downloads_changed_{sequence}", now_millis());
                 let request = OperationRequest {
                     operation_id: Some(operation_id),
                 };
@@ -1252,16 +1307,10 @@ fn emit_downloads_folder_watch_result(
                 .await;
                 match delta {
                     Ok(delta) => {
-                        if let Some(next_revision) =
-                            delta.get("revision").and_then(Value::as_str)
-                        {
+                        if let Some(next_revision) = delta.get("revision").and_then(Value::as_str) {
                             *current_revision = next_revision.to_string();
                         }
-                        let _ = app.emit_to(
-                            MAIN_WINDOW_LABEL,
-                            DOWNLOADS_CHANGED_EVENT,
-                            delta,
-                        );
+                        let _ = app.emit_to(MAIN_WINDOW_LABEL, DOWNLOADS_CHANGED_EVENT, delta);
                     }
                     Err(error) => {
                         drop(current_revision);
@@ -1270,9 +1319,7 @@ fn emit_downloads_folder_watch_result(
                             "main",
                             "warning",
                             "DownloadsFolderWatcher",
-                            &format!(
-                                "Failed to capture downloads delta. reason={error}"
-                            ),
+                            &format!("Failed to capture downloads delta. reason={error}"),
                             None,
                         )
                         .await;
@@ -1454,6 +1501,75 @@ fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'stati
     tauri::async_runtime::spawn(async move {
         queue_inbound_nxm_links(app, links, source).await;
     });
+}
+
+fn handle_runtime_activation_args(
+    app: AppHandle,
+    args: Vec<String>,
+    source: FluxoraActivationSource,
+) {
+    let source_name = match source {
+        FluxoraActivationSource::Startup => "startup",
+        FluxoraActivationSource::DeepLink => "deep-link",
+        FluxoraActivationSource::SecondInstance => "second-instance",
+    };
+    handle_nxm_activation_args(app.clone(), args.clone(), source_name);
+
+    let state = app.state::<ModdingFlowActivationRuntimeState>();
+    let report = state.capture_args(args, source, |activation| {
+        app.emit_to(
+            MAIN_WINDOW_LABEL,
+            MODDINGFLOW_ACTIVATION_CAPTURED_EVENT,
+            activation,
+        )
+        .is_ok()
+    });
+    if report.disabled {
+        return;
+    }
+    let activity_count =
+        report.queued + report.duplicates + report.rejected + report.full + report.delivered;
+    if activity_count == 0 {
+        return;
+    }
+    let log_app = app.clone();
+    let report_message = moddingflow_activation_report_message(source_name, report);
+    tauri::async_runtime::spawn(async move {
+        let _ = write_log(
+            &log_app,
+            "main",
+            if report.rejected + report.full > 0 {
+                "warning"
+            } else {
+                "info"
+            },
+            "ModdingFlowActivation",
+            &report_message,
+            None,
+        )
+        .await;
+    });
+    if report.queued + report.duplicates + report.delivered == 0 {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        show_background_activation_window(&window);
+    }
+}
+
+fn moddingflow_activation_report_message(
+    source: &str,
+    report: moddingflow_activation_runtime::ActivationRouteReport,
+) -> String {
+    format!(
+        "Activation routing completed. source={} queued={} duplicates={} rejected={} full={} delivered={}",
+        source,
+        report.queued,
+        report.duplicates,
+        report.rejected,
+        report.full,
+        report.delivered
+    )
 }
 
 async fn queue_inbound_nxm_links(app: AppHandle, links: Vec<String>, source: &'static str) {
@@ -1733,19 +1849,20 @@ async fn request_operation_cancel(
     }))
 }
 
-fn redact_query_key(value: &str) -> String {
+fn redact_named_query_value(value: &str, key: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut rest = value;
+    let needle = format!("{key}=");
 
-    while let Some(index) = rest.to_ascii_lowercase().find("key=") {
+    while let Some(index) = rest.to_ascii_lowercase().find(&needle) {
         output.push_str(&rest[..index]);
-        output.push_str("key=[redacted-secret]");
-        let after_key = &rest[index + 4..];
+        output.push_str(&format!("{key}=[redacted-secret]"));
+        let after_key = &rest[index + needle.len()..];
         let end = after_key
             .find(|character: char| {
                 character == '&'
                     || character.is_whitespace()
-                    || matches!(character, '"' | '\'' | ')' | ']')
+                    || matches!(character, '"' | '\'' | ')' | ']' | '#')
             })
             .unwrap_or(after_key.len());
         rest = &after_key[end..];
@@ -1753,6 +1870,29 @@ fn redact_query_key(value: &str) -> String {
 
     output.push_str(rest);
     output
+}
+
+fn redact_query_secrets(value: &str) -> String {
+    [
+        "x-amz-security-token",
+        "x-amz-signature",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "authorization_code",
+        "code_verifier",
+        "code_challenge",
+        "signed_url",
+        "signature",
+        "nonce",
+        "state",
+        "code",
+        "key",
+    ]
+    .into_iter()
+    .fold(value.to_string(), |current, key| {
+        redact_named_query_value(&current, key)
+    })
 }
 
 fn redact_bearer_tokens(value: &str) -> String {
@@ -1782,6 +1922,16 @@ fn redact_named_secret_assignments(value: &str) -> String {
             for key in [
                 "api_key",
                 "apikey",
+                "access_token",
+                "refresh_token",
+                "id_token",
+                "authorization_code",
+                "code_verifier",
+                "code_challenge",
+                "signed_url",
+                "signature",
+                "nonce",
+                "state",
                 "token",
                 "secret",
                 "password",
@@ -1797,11 +1947,44 @@ fn redact_named_secret_assignments(value: &str) -> String {
         .join(" ")
 }
 
+fn redact_personal_identifiers(value: &str) -> String {
+    static EMAIL_PATTERN: OnceLock<Regex> = OnceLock::new();
+    static UUID_PATTERN: OnceLock<Regex> = OnceLock::new();
+    let email_pattern = EMAIL_PATTERN.get_or_init(|| {
+        Regex::new(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+            .expect("static email redaction pattern")
+    });
+    let uuid_pattern = UUID_PATTERN.get_or_init(|| {
+        Regex::new(
+            r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-5][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}",
+        )
+        .expect("static UUID redaction pattern")
+    });
+    let value = email_pattern.replace_all(value, "[redacted-email]");
+    uuid_pattern
+        .replace_all(value.as_ref(), "[redacted-uuid]")
+        .into_owned()
+}
+
 fn sanitize_log(value: &str) -> String {
     let value = value.replace(['\r', '\n'], " ");
-    let value = redact_query_key(&value);
+    let value = redact_query_secrets(&value);
     let value = redact_bearer_tokens(&value);
-    redact_named_secret_assignments(&value).trim().to_string()
+    let value = redact_named_secret_assignments(&value);
+    redact_personal_identifiers(&value).trim().to_string()
+}
+
+fn sanitize_log_operation_id(value: &str) -> String {
+    if !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        value.to_string()
+    } else {
+        "[invalid-operation-id]".to_string()
+    }
 }
 
 fn serialize_bridge_invoke_error(method: &str, operation_id: &str, error: &Value) -> String {
@@ -2021,7 +2204,7 @@ async fn write_log(
         .map_err(|error| error.to_string())?;
     let file = dir.join(format!("fluxora-tauri-{}-{}.log", channel, "current"));
     let op = operation_id
-        .map(|value| format!(" [operationId={}]", sanitize_log(value)))
+        .map(|value| format!(" [operationId={}]", sanitize_log_operation_id(value)))
         .unwrap_or_default();
     let line = format!(
         "[{}] [{}] [{}]{} {}\n",
@@ -2227,6 +2410,18 @@ fn fluxora_app_root() -> Result<PathBuf, String> {
 }
 
 impl BridgeProcess {
+    fn for_lane(lane: BridgeLane) -> Self {
+        Self {
+            lane,
+            child: None,
+            stdin: None,
+            pending_responses: Arc::new(Mutex::new(HashMap::new())),
+            reader_task: None,
+            host_path: None,
+            handshake: None,
+        }
+    }
+
     async fn reset(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;
@@ -2237,6 +2432,10 @@ impl BridgeProcess {
         self.pending_responses.lock().await.clear();
         self.stdin = None;
         self.handshake = None;
+    }
+
+    fn is_running(&self) -> bool {
+        self.child.is_some()
     }
 
     async fn ensure_started(&mut self, app: &AppHandle) -> Result<(), String> {
@@ -2268,6 +2467,7 @@ impl BridgeProcess {
             .env("FLUXORA_LOG_DIR", &native_log_dir)
             .env("FLUXORA_OPERATION_CANCEL_DIR", &cancel_dir)
             .env("FLUXORA_APP_ROOT", &app_root)
+            .env("FLUXORA_BRIDGE_LANE", self.lane.label())
             .env("FLUXORA_TAURI_PROCESS_ID", std::process::id().to_string());
 
         #[cfg(windows)]
@@ -2396,6 +2596,35 @@ impl BridgeProcess {
         request: OperationRequest,
         timeout_ms: u64,
     ) -> Result<Value, String> {
+        let _update_drain_permit =
+            update_service::enter_bridge_request(method).map_err(str::to_string)?;
+        self.request_admitted(app, method, params, request, timeout_ms)
+            .await
+    }
+
+    async fn request_for_update(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        let _update_drain_permit =
+            update_service::enter_update_drain_request().map_err(str::to_string)?;
+        self.request_admitted(app, method, params, request, timeout_ms)
+            .await
+    }
+
+    async fn request_admitted(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        update_service::observe_project_directory(&params);
         self.ensure_started(app).await?;
         if method != "system.handshake" && self.handshake.is_none() {
             let handshake = self
@@ -2442,7 +2671,7 @@ impl BridgeProcess {
                 "protocolVersion": BRIDGE_PROTOCOL_VERSION,
                 "operationId": operation_id,
                 "requestSource": "tauri-shell",
-                "appVersion": "0.0.0",
+                "appVersion": env!("CARGO_PKG_VERSION"),
                 "platform": platform_name(),
                 "arch": arch_name(),
                 "locale": "ru-RU"
@@ -2553,20 +2782,68 @@ impl BridgeProcess {
     }
 
     async fn shutdown(&mut self, app: &AppHandle, request: OperationRequest) -> Result<(), String> {
+        self.shutdown_with_admission(app, request, false).await
+    }
+
+    async fn shutdown_for_update(
+        &mut self,
+        app: &AppHandle,
+        request: OperationRequest,
+    ) -> Result<(), String> {
+        self.shutdown_with_admission(app, request, true).await
+    }
+
+    async fn shutdown_with_admission(
+        &mut self,
+        app: &AppHandle,
+        request: OperationRequest,
+        update_drain: bool,
+    ) -> Result<(), String> {
         if self.child.is_none() {
             return Ok(());
         }
-        let _ = self
-            .request(
+        if update_drain {
+            self.request_for_update(
                 app,
                 "system.shutdown",
                 json!({}),
                 request,
                 BRIDGE_TIMEOUT_MS,
             )
-            .await;
-        self.reset().await;
-        Ok(())
+            .await?;
+        } else {
+            self.request(
+                app,
+                "system.shutdown",
+                json!({}),
+                request,
+                BRIDGE_TIMEOUT_MS,
+            )
+            .await?;
+        }
+        self.stdin = None;
+        let mut child = self
+            .child
+            .take()
+            .ok_or_else(|| "Bridge host process disappeared during shutdown.".to_string())?;
+        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(_)) => {
+                if let Some(reader_task) = self.reader_task.take() {
+                    reader_task.abort();
+                }
+                self.pending_responses.lock().await.clear();
+                self.handshake = None;
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                self.child = Some(child);
+                Err(error.to_string())
+            }
+            Err(_) => {
+                self.child = Some(child);
+                Err("Bridge host did not exit after acknowledging shutdown.".to_string())
+            }
+        }
     }
 }
 
@@ -2579,6 +2856,10 @@ impl AiHostProcess {
         self.stdin = None;
         self.stdout = None;
         self.handshake = None;
+    }
+
+    fn is_running(&self) -> bool {
+        self.child.is_some()
     }
 
     async fn ensure_started(&mut self, app: &AppHandle) -> Result<(), String> {
@@ -2651,6 +2932,34 @@ impl AiHostProcess {
         request: OperationRequest,
         timeout_ms: u64,
     ) -> Result<Value, String> {
+        let _update_drain_permit =
+            update_service::enter_host_request(method).map_err(str::to_string)?;
+        self.request_admitted(app, method, params, request, timeout_ms)
+            .await
+    }
+
+    async fn request_for_update(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        let _update_drain_permit =
+            update_service::enter_update_drain_request().map_err(str::to_string)?;
+        self.request_admitted(app, method, params, request, timeout_ms)
+            .await
+    }
+
+    async fn request_admitted(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
         self.ensure_started(app).await?;
         if method != "system.handshake" && self.handshake.is_none() {
             let handshake = self
@@ -2671,7 +2980,33 @@ impl AiHostProcess {
             self.handshake = Some(handshake);
         }
 
-        self.send_request(app, method, params, request, timeout_ms)
+        let operation_id = operation_id(Some(&request), method);
+        let managed_request = ai_host_requires_managed_credential(method)
+            && !ai_credential_available("gemini");
+        let first_params = if managed_request {
+            match with_managed_ai_access_token(app, params.clone(), &operation_id, false).await {
+                Ok(params) => params,
+                Err(_) if method == "system.health" => params.clone(),
+                Err(error) => return Err(error),
+            }
+        } else {
+            params.clone()
+        };
+        let first = self
+            .send_request(app, method, first_params, request.clone(), timeout_ms)
+            .await;
+        if !managed_request
+            || !first
+                .as_ref()
+                .err()
+                .is_some_and(|error| should_retry_managed_ai_oauth(error, 0))
+        {
+            return first;
+        }
+
+        let retry_params =
+            with_managed_ai_access_token(app, params, &operation_id, true).await?;
+        self.send_request(app, method, retry_params, request, timeout_ms)
             .await
     }
 
@@ -2695,7 +3030,7 @@ impl AiHostProcess {
                 "protocolVersion": AI_HOST_PROTOCOL_VERSION,
                 "operationId": operation_id,
                 "requestSource": "tauri-shell",
-                "appVersion": "0.0.0",
+                "appVersion": env!("CARGO_PKG_VERSION"),
                 "platform": platform_name(),
                 "arch": arch_name(),
                 "locale": "ru-RU"
@@ -2885,20 +3220,66 @@ impl AiHostProcess {
     }
 
     async fn shutdown(&mut self, app: &AppHandle, request: OperationRequest) -> Result<(), String> {
+        self.shutdown_with_admission(app, request, false).await
+    }
+
+    async fn shutdown_for_update(
+        &mut self,
+        app: &AppHandle,
+        request: OperationRequest,
+    ) -> Result<(), String> {
+        self.shutdown_with_admission(app, request, true).await
+    }
+
+    async fn shutdown_with_admission(
+        &mut self,
+        app: &AppHandle,
+        request: OperationRequest,
+        update_drain: bool,
+    ) -> Result<(), String> {
         if self.child.is_none() {
             return Ok(());
         }
-        let _ = self
-            .request(
+        if update_drain {
+            self.request_for_update(
                 app,
                 "system.shutdown",
                 json!({}),
                 request,
                 AI_HOST_TIMEOUT_MS,
             )
-            .await;
-        self.reset().await;
-        Ok(())
+            .await?;
+        } else {
+            self.request(
+                app,
+                "system.shutdown",
+                json!({}),
+                request,
+                AI_HOST_TIMEOUT_MS,
+            )
+            .await?;
+        }
+        self.stdin = None;
+        self.stdout = None;
+        let mut child = self
+            .child
+            .take()
+            .ok_or_else(|| "AI host process disappeared during shutdown.".to_string())?;
+        match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+            Ok(Ok(_)) => {
+                self.handshake = None;
+                self.active_process_id.store(0, Ordering::SeqCst);
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                self.child = Some(child);
+                Err(error.to_string())
+            }
+            Err(_) => {
+                self.child = Some(child);
+                Err("AI host did not exit after acknowledging shutdown.".to_string())
+            }
+        }
     }
 }
 
@@ -2967,6 +3348,101 @@ fn ai_credential_available(provider_id: &str) -> bool {
         .and_then(|entry| entry.get_password().map_err(|_| "missing".to_string()))
         .map(|secret| !secret.trim().is_empty())
         .unwrap_or(false)
+}
+
+fn ai_host_requires_managed_credential(method: &str) -> bool {
+    matches!(
+        method,
+        "system.health"
+            | "providers.test"
+            | "chat.respond"
+            | "chat.beginToolRun"
+            | "chat.continueToolRun"
+            | "chat.estimateContext"
+    )
+}
+
+fn ai_host_error_has_code(error: &str, code: &str) -> bool {
+    serde_json::from_str::<Value>(error)
+        .ok()
+        .and_then(|payload| payload.get("code").and_then(Value::as_str).map(str::to_string))
+        .as_deref()
+        == Some(code)
+}
+
+fn should_retry_managed_ai_oauth(error: &str, completed_retries: u8) -> bool {
+    completed_retries == 0 && ai_host_error_has_code(error, "ai.oauth.refresh-required")
+}
+
+fn managed_ai_native_error(error: &str) -> String {
+    let temporary = error.contains("temporarilyUnavailable")
+        || error.contains("temporarily-unavailable")
+        || error.contains("timed out");
+    serde_json::to_string(&json!({
+        "code": if temporary { "ai.managed.accounting-unavailable" } else { "ai.managed.connection-required" },
+        "category": if temporary { "gateway" } else { "provider-credential" },
+        "stage": "session-start",
+        "retryable": temporary,
+        "userMessage": if temporary {
+            "Managed Fluxora AI is temporarily unavailable. Try again shortly."
+        } else {
+            "Connect ModdingFlow again to use managed Fluxora AI."
+        },
+        "debugId": format!("shell-{}", now_millis())
+    }))
+    .unwrap_or_else(|_| "Managed AI credential request failed.".to_string())
+}
+
+async fn with_managed_ai_access_token(
+    app: &AppHandle,
+    mut params: Value,
+    operation_id: &str,
+    force_refresh: bool,
+) -> Result<Value, String> {
+    if ai_credential_available("gemini") {
+        if let Some(object) = params.as_object_mut() {
+            object.remove(PRIVATE_MANAGED_AI_ACCESS_TOKEN_FIELD);
+        }
+        return Ok(params);
+    }
+
+    #[cfg(feature = "native-ai-integration-fixture")]
+    let token_result = std::env::var("FLUXORA_AI_TEST_MANAGED_ACCESS_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|access_token| json!({ "accessToken": access_token, "scope": "agent:run" }));
+    #[cfg(not(feature = "native-ai-integration-fixture"))]
+    let token_result: Option<Value> = None;
+
+    let token_result = match token_result {
+        Some(value) => value,
+        None => trusted_moddingflow_bridge_request(
+            app,
+            "moddingflow.getManagedAiAccessToken",
+            json!({ "forceRefresh": force_refresh }),
+            operation_id,
+            BRIDGE_TIMEOUT_MS,
+        )
+        .await
+        .map_err(|error| managed_ai_native_error(&error))?,
+    };
+    if token_result.get("scope").and_then(Value::as_str) != Some("agent:run") {
+        return Err(managed_ai_native_error("missing agent:run scope"));
+    }
+    let access_token = token_result
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| managed_ai_native_error("missing managed AI access token"))?;
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| managed_ai_native_error("invalid AI host params"))?;
+    object.insert(
+        PRIVATE_MANAGED_AI_ACCESS_TOKEN_FIELD.to_string(),
+        json!(access_token),
+    );
+    Ok(params)
 }
 
 fn with_ai_provider_connection_state(mut providers: Value) -> Value {
@@ -3103,6 +3579,39 @@ fn ai_context_usage_fallback(request: &Value, operation_id: &str) -> Value {
     })
 }
 
+fn ai_quota_from_error(error: &Value) -> Value {
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("ai.managed.accounting-unavailable");
+    let availability = match code {
+        "ai.managed.connection-required" | "ai.oauth.refresh-required" => "connectionRequired",
+        "ai.managed.premium-required" => "premiumRequired",
+        "ai.managed.quota-exhausted" => "quotaExhausted",
+        "ai.managed.search-quota-exhausted" => "searchQuotaExhausted",
+        "ai.managed.rate-limited" => "rateLimited",
+        _ => "temporaryServerError",
+    };
+    json!({
+        "schema": "fluxora.ai.quota.v1",
+        "availability": availability,
+        "available": false,
+        "eligibility": false,
+        "reason": code,
+        "periodStart": null,
+        "resetAt": null,
+        "rollover": false,
+        "limit": 0,
+        "used": 0,
+        "reserved": 0,
+        "remaining": 0,
+        "remainingInputTokenEquivalent": 0,
+        "search": { "limit": 0, "used": 0, "reserved": 0, "remaining": 0 },
+        "model": "gemini-3.1-flash-lite",
+        "priceVersion": null
+    })
+}
+
 async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value {
     let operation_id = operation_id(Some(&request), "ai_status");
     let state = ai_host_state(app);
@@ -3137,7 +3646,10 @@ async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value 
                 "processId": health.get("processId").cloned().unwrap_or(Value::Null),
                 "providers": providers,
                 "models": models,
-                "capabilities": health.get("capabilities").cloned().unwrap_or_else(|| json!({}))
+                "capabilities": health.get("capabilities").cloned().unwrap_or_else(|| json!({})),
+                "quota": health.get("quota").cloned().unwrap_or_else(|| ai_quota_from_error(&json!({
+                    "code": "ai.managed.accounting-unavailable"
+                })))
             })
         }
         Err(error) => {
@@ -3164,6 +3676,7 @@ async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value 
                 "providers": [],
                 "models": [],
                 "capabilities": {},
+                "quota": ai_quota_from_error(&typed_error),
                 "error": typed_error,
                 "message": user_message
             })
@@ -3859,9 +4372,9 @@ fn ai_tool_terminal_error_classification(reason: &str) -> (&'static str, &'stati
         "outside-scope" | "path-escape" | "protected" | "permission-denied" => {
             ("safety", "native-guard")
         }
-        "no-new-evidence"
-        | "no-progress-repetition"
-        | "request-input-evidence-required" => ("tool-loop", "tool-loop"),
+        "no-new-evidence" | "no-progress-repetition" | "request-input-evidence-required" => {
+            ("tool-loop", "tool-loop")
+        }
         _ => ("tool-loop", "verification"),
     }
 }
@@ -4682,7 +5195,10 @@ fn ai_metadata_allows_managed_override(metadata: &Value) -> bool {
 }
 
 fn ai_metadata_allows_parent_create(metadata: &Value) -> bool {
-    metadata.get("managedOverrideEligible").and_then(Value::as_bool) == Some(true)
+    metadata
+        .get("managedOverrideEligible")
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 #[cfg(test)]
@@ -6843,8 +7359,7 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                 .and_then(Value::as_str)
                 .map(str::to_string);
             if data.get("status").and_then(Value::as_str) == Some("needs-input")
-                && data.pointer("/execution/state").and_then(Value::as_str)
-                    == Some("needs-input")
+                && data.pointer("/execution/state").and_then(Value::as_str) == Some("needs-input")
             {
                 staged_needs_input = data
                     .pointer("/execution/pendingQuestion")
@@ -7078,6 +7593,20 @@ impl BridgeLane {
     }
 }
 
+impl Default for BridgeState {
+    fn default() -> Self {
+        Self {
+            process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Main)),
+            plugin_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Plugin)),
+            interactive_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Interactive)),
+            background_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Background)),
+            connection_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Connection)),
+            download_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Download)),
+            install_process: Mutex::new(BridgeProcess::for_lane(BridgeLane::Install)),
+        }
+    }
+}
+
 impl BridgeState {
     fn process(&self, lane: BridgeLane) -> &Mutex<BridgeProcess> {
         match lane {
@@ -7095,9 +7624,7 @@ impl BridgeState {
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
         "plugins.list" | "plugins.listPersisted" => BridgeLane::Plugin,
-        "mods.checkUpdates"
-        | "apiLimits.list"
-        | "executables.completeManagedLaunch" => BridgeLane::Background,
+        "mods.checkUpdates" | "apiLimits.list" => BridgeLane::Background,
         "connections.listStatus"
         | "connections.restoreAll"
         | "connections.connect"
@@ -7106,7 +7633,14 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "nexus.connect"
         | "nexus.connectWithApiKey"
         | "nexus.disconnect" => BridgeLane::Connection,
-        "nxm.captureLinks"
+        "connections.beginConnect"
+        | "connections.completeConnect"
+        | "connections.cancelPendingConnect"
+        | "moddingflow.getManagedAiAccessToken"
+        | "moddingflow.lookupArtifactPreview"
+        | "moddingflow.previewActivationPlan"
+        | "downloads.queueModdingFlowArtifact"
+        | "nxm.captureLinks"
         | "nxm.importInboundDownloads"
         | "downloads.cancel"
         | "downloads.delete"
@@ -7321,6 +7855,15 @@ fn bridge_queue_performance_message(method: &str, queue_wait_us: u128, lane: Bri
     )
 }
 
+fn validate_public_bridge_method(method: &str) -> Result<(), &'static str> {
+    if method == PRIVATE_NEXUS_API_AUTH_HEADER_METHOD
+        || PRIVATE_MODDINGFLOW_NATIVE_METHODS.contains(&method)
+    {
+        return Err("Unsupported bridge method.");
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn fluxora_bridge_request(
     app: AppHandle,
@@ -7329,13 +7872,50 @@ async fn fluxora_bridge_request(
     request: Option<OperationRequest>,
     timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
-    if method == PRIVATE_NEXUS_API_AUTH_HEADER_METHOD {
-        return Err("Unsupported bridge method.".to_string());
-    }
+    validate_public_bridge_method(&method).map_err(str::to_string)?;
 
     let request = request.unwrap_or(OperationRequest {
         operation_id: Some(operation_id(None, &method)),
     });
+    execute_bridge_request(
+        app,
+        method,
+        params,
+        request,
+        timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS),
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn trusted_moddingflow_bridge_request(
+    app: &AppHandle,
+    method: &str,
+    params: Value,
+    operation_id: &str,
+    timeout_ms: u64,
+) -> Result<Value, String> {
+    execute_bridge_request(
+        app.clone(),
+        method.to_string(),
+        params,
+        OperationRequest {
+            operation_id: Some(operation_id.to_string()),
+        },
+        timeout_ms,
+        Some(BridgeLane::Download),
+    )
+    .await
+}
+
+async fn execute_bridge_request(
+    app: AppHandle,
+    method: String,
+    params: Value,
+    request: OperationRequest,
+    timeout_ms: u64,
+    lane_override: Option<BridgeLane>,
+) -> Result<Value, String> {
     if method == "operations.cancel" {
         let target_operation_id = params
             .get("operationId")
@@ -7354,9 +7934,8 @@ async fn fluxora_bridge_request(
     let operation_id = operation_id(Some(&request), &method);
     clear_operation_cancel_marker(&app, &operation_id).await;
     let state = bridge_state(&app);
-    let lane = bridge_lane_for_method(&method);
+    let lane = lane_override.unwrap_or_else(|| bridge_lane_for_method(&method));
     let queue_started_at = Instant::now();
-    let timeout_ms = timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS);
     let mut bridge = state.process(lane).lock().await;
     let queue_wait_us = queue_started_at.elapsed().as_micros();
     let result = bridge
@@ -8603,6 +9182,23 @@ async fn fluxora_dialog_save_file(
     let dialog = app.dialog().file().set_title(request.title);
     let dialog = apply_save_default_path(dialog, optional_non_empty(&request.default_path));
     dialog_path_result(add_dialog_filters(dialog, request.filters).blocking_save_file())
+}
+
+#[tauri::command]
+fn fluxora_open_manager_default_app_settings() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg("ms-settings:defaultapps?registeredAppUser=Fluxora")
+            .spawn()
+            .map_err(|_| {
+                "Windows Default Apps settings could not be opened for Fluxora.".to_string()
+            })?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    Err("Manager protocol selection is available only on Windows.".to_string())
 }
 
 #[tauri::command]
@@ -10119,9 +10715,7 @@ pub fn run_native_ai_integration_fixture(
         .map_err(|error| error.to_string())?;
         std::fs::write(&weak_match_path, b"{\"note\":\"weak discovery match\"}\r\n")
             .map_err(|error| error.to_string())?;
-        let audio_virtual_path = PathBuf::from("SKSE")
-            .join("Plugins")
-            .join("AudioMixer.ini");
+        let audio_virtual_path = PathBuf::from("SKSE").join("Plugins").join("AudioMixer.ini");
         let audio_source_path = PathBuf::from(&project_directory)
             .join("mods")
             .join("Cabbage CS Preset")
@@ -10141,9 +10735,7 @@ pub fn run_native_ai_integration_fixture(
             b"; unrelated documentation fixture\r\n[Audio]\r\nBattleMusicVolume=0.8\r\n",
         )
         .map_err(|error| error.to_string())?;
-        let dual_audio_virtual_path = PathBuf::from("SKSE")
-            .join("Plugins")
-            .join("DualAudio.ini");
+        let dual_audio_virtual_path = PathBuf::from("SKSE").join("Plugins").join("DualAudio.ini");
         let dual_audio_source_path = PathBuf::from(&project_directory)
             .join("mods")
             .join("Cabbage CS Preset")
@@ -10164,7 +10756,7 @@ pub fn run_native_ai_integration_fixture(
             &unsupported_source_path,
             [0_u8, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8],
         )
-            .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?;
         let ngio_virtual_path = PathBuf::from("SKSE")
             .join("Plugins")
             .join("GrassControl.ini");
@@ -10476,13 +11068,17 @@ pub fn run_native_ai_integration_fixture(
         let ambiguity_goal_id = ambiguity_response
             .pointer("/execution/goalId")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("Ambiguity fixture did not return a goalId: {ambiguity_response}"))?
+            .ok_or_else(|| {
+                format!("Ambiguity fixture did not return a goalId: {ambiguity_response}")
+            })?
             .to_string();
         let ambiguity_question = ambiguity_response
             .pointer("/execution/pendingQuestion")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                format!("Ambiguity fixture did not return one pending question: {ambiguity_response}")
+                format!(
+                    "Ambiguity fixture did not return one pending question: {ambiguity_response}"
+                )
             })?
             .to_string();
         let ambiguity_active_goal = json!({
@@ -10672,42 +11268,43 @@ pub fn run_native_ai_integration_fixture(
             }),
         )
         .await?;
-        let ngio_batch_bridge_methods =
-            native_ai_fixture_bridge_methods("op_native_ai_ngio_batch");
+        let ngio_batch_bridge_methods = native_ai_fixture_bridge_methods("op_native_ai_ngio_batch");
         let ngio_batch_events = native_ai_fixture_events("op_native_ai_ngio_batch");
-        let ngio_batch_source_content = std::fs::read_to_string(&ngio_source_path)
-            .map_err(|error| error.to_string())?;
-        let ngio_batch_managed_content = std::fs::read_to_string(&ngio_managed_path)
-            .map_err(|error| error.to_string())?;
-        let ngio_batch_overwrite_content = std::fs::read_to_string(&ngio_overwrite_path)
-            .map_err(|error| error.to_string())?;
+        let ngio_batch_source_content =
+            std::fs::read_to_string(&ngio_source_path).map_err(|error| error.to_string())?;
+        let ngio_batch_managed_content =
+            std::fs::read_to_string(&ngio_managed_path).map_err(|error| error.to_string())?;
+        let ngio_batch_overwrite_content =
+            std::fs::read_to_string(&ngio_overwrite_path).map_err(|error| error.to_string())?;
         let ngio_batch_rollback =
             if ngio_batch_response.get("status").and_then(Value::as_str) == Some("done") {
-            let state = bridge_state(&handle);
-            let mut bridge = state.process.lock().await;
-            Some(bridge
-                .request(
-                    &handle,
-                    "buildFiles.rollbackRun",
-                    json!({
-                        "chatId": "chat-native-ai-ngio-batch",
-                        "runId": "run-native-ai-ngio-batch"
-                    }),
-                    OperationRequest {
-                        operation_id: Some("op_native_ai_ngio_batch_rollback".to_string()),
-                    },
-                    BRIDGE_TIMEOUT_MS,
+                let state = bridge_state(&handle);
+                let mut bridge = state.process.lock().await;
+                Some(
+                    bridge
+                        .request(
+                            &handle,
+                            "buildFiles.rollbackRun",
+                            json!({
+                                "chatId": "chat-native-ai-ngio-batch",
+                                "runId": "run-native-ai-ngio-batch"
+                            }),
+                            OperationRequest {
+                                operation_id: Some("op_native_ai_ngio_batch_rollback".to_string()),
+                            },
+                            BRIDGE_TIMEOUT_MS,
+                        )
+                        .await?,
                 )
-                .await?)
-        } else {
-            None
-        };
-        let ngio_batch_source_after_rollback = std::fs::read_to_string(&ngio_source_path)
-            .map_err(|error| error.to_string())?;
-        let ngio_batch_managed_after_rollback = std::fs::read_to_string(&ngio_managed_path)
-            .map_err(|error| error.to_string())?;
-        let ngio_batch_overwrite_after_rollback = std::fs::read_to_string(&ngio_overwrite_path)
-            .map_err(|error| error.to_string())?;
+            } else {
+                None
+            };
+        let ngio_batch_source_after_rollback =
+            std::fs::read_to_string(&ngio_source_path).map_err(|error| error.to_string())?;
+        let ngio_batch_managed_after_rollback =
+            std::fs::read_to_string(&ngio_managed_path).map_err(|error| error.to_string())?;
+        let ngio_batch_overwrite_after_rollback =
+            std::fs::read_to_string(&ngio_overwrite_path).map_err(|error| error.to_string())?;
 
         {
             let state = ai_host_state(&handle);
@@ -10790,8 +11387,13 @@ pub fn run() {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            handle_nxm_activation_args(app.clone(), argv, "second-instance");
+            handle_runtime_activation_args(
+                app.clone(),
+                argv,
+                FluxoraActivationSource::SecondInstance,
+            );
         }));
+        builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
     builder
@@ -10805,13 +11407,41 @@ pub fn run() {
         .manage(DownloadsFolderWatchState::default())
         .manage(BuildContentWatchState::default())
         .manage(NifPreviewSessionState::default())
+        .manage(ModdingFlowActivationRuntimeState::default())
+        .manage(ModdingFlowConnectionRuntimeState::default())
+        .manage(UpdateRuntimeState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app = app.handle().clone();
             configure_main_webview(&app);
-            handle_nxm_activation_args(app.clone(), std::env::args().collect(), "startup");
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+
+                let event_app = app.clone();
+                app.deep_link().on_open_url(move |event| {
+                    handle_runtime_activation_args(
+                        event_app.clone(),
+                        event.urls().iter().map(ToString::to_string).collect(),
+                        FluxoraActivationSource::DeepLink,
+                    );
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    handle_runtime_activation_args(
+                        app.clone(),
+                        urls.iter().map(ToString::to_string).collect(),
+                        FluxoraActivationSource::Startup,
+                    );
+                }
+            }
+            handle_runtime_activation_args(
+                app.clone(),
+                std::env::args().collect(),
+                FluxoraActivationSource::Startup,
+            );
+            update_service::start_startup_update_check(app.clone());
             let cleanup_app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let mut interval =
@@ -10876,6 +11506,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             fluxora_app_info,
+            fluxora_updates_get_status,
+            fluxora_updates_check,
+            fluxora_updates_download_and_install,
+            fluxora_updates_cancel,
+            fluxora_updates_renderer_ready,
             fluxora_runtime_paths,
             fluxora_current_executable,
             fluxora_security_state,
@@ -10906,6 +11541,16 @@ pub fn run() {
             fluxora_ai_file_get_rollback_states,
             fluxora_ai_file_reset_rollback_checkpoints,
             fluxora_bridge_request,
+            fluxora_moddingflow_connection_status,
+            fluxora_moddingflow_restore_connection,
+            fluxora_moddingflow_connect,
+            fluxora_moddingflow_cancel_connect,
+            fluxora_moddingflow_disconnect,
+            fluxora_moddingflow_consume_activations,
+            fluxora_moddingflow_preview_activation,
+            fluxora_moddingflow_preview_activation_plan,
+            fluxora_moddingflow_accept_activation,
+            fluxora_moddingflow_dismiss_activation,
             fluxora_start_nif_preview,
             fluxora_prepare_nif_preview_variant,
             fluxora_prepare_nif_preview_textures,
@@ -10921,6 +11566,7 @@ pub fn run() {
             fluxora_dialog_pick_file,
             fluxora_dialog_pick_folder,
             fluxora_dialog_save_file,
+            fluxora_open_manager_default_app_settings,
             fluxora_open_external,
             fluxora_shell_open_path,
             fluxora_shell_show_item_in_folder,
@@ -11082,6 +11728,56 @@ mod tests {
         assert!(message.contains("Bearer [redacted-secret]"));
         assert!(message.contains("api_key=[redacted-secret]"));
         assert!(message.contains("token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn sanitize_log_redacts_oauth_and_signed_transport_fields() {
+        let message = sanitize_log(
+            "callback=http://127.0.0.1:49152/oauth/fluxora/callback?code=oauth-code-42&state=oauth-state-42 \
+             access_token=access-token-42 refresh_token:refresh-token-42 \
+             code_verifier=verifier-42 signed=https://objects.example/file?X-Amz-Signature=signature-42&X-Amz-Security-Token=session-token-42 \
+             email=user42@example.test user_id=01234567-89ab-4cde-8fab-0123456789ab",
+        );
+
+        for forbidden in [
+            "oauth-code-42",
+            "oauth-state-42",
+            "access-token-42",
+            "refresh-token-42",
+            "verifier-42",
+            "signature-42",
+            "session-token-42",
+            "user42@example.test",
+            "01234567-89ab-4cde-8fab-0123456789ab",
+        ] {
+            assert!(
+                !message.contains(forbidden),
+                "sanitized log leaked forbidden OAuth material: {forbidden}"
+            );
+        }
+        assert!(message.contains("code=[redacted-secret]"));
+        assert!(message.contains("state=[redacted-secret]"));
+        assert!(message.contains("access_token=[redacted-secret]"));
+        assert!(message.contains("refresh_token=[redacted-secret]"));
+        assert!(message.contains("code_verifier=[redacted-secret]"));
+        assert!(message.contains("x-amz-signature=[redacted-secret]"));
+        assert!(message.contains("x-amz-security-token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn operation_log_ids_preserve_safe_correlation_and_reject_personal_identifiers() {
+        assert_eq!(
+            sanitize_log_operation_id("01234567-89ab-4cde-8fab-0123456789ab"),
+            "01234567-89ab-4cde-8fab-0123456789ab"
+        );
+        assert_eq!(
+            sanitize_log_operation_id("user42@example.test"),
+            "[invalid-operation-id]"
+        );
+        assert_eq!(
+            sanitize_log_operation_id("op_safe\r\nforged"),
+            "[invalid-operation-id]"
+        );
     }
 
     #[test]
@@ -11315,6 +12011,7 @@ mod tests {
             "Fluxora.exe",
             "\"nxm://skyrimspecialedition/mods/3863/files/123?key=abc&expires=999\"",
             "https://www.nexusmods.com/skyrimspecialedition/mods/3863",
+            "fluxora://moddingflow/download?v=1&artifact_id=01234567-89ab-4cde-8fab-0123456789ab",
             "NXM://skyrimspecialedition/mods/3863/files/123?key=abc&expires=999",
             "nxm://fallout4/mods/10/files/20?key=def&expires=1000",
         ]);
@@ -11336,6 +12033,27 @@ mod tests {
                 ActivationFocusPolicy::Preserve
             ));
         }
+    }
+
+    #[test]
+    fn moddingflow_activation_log_contains_only_bounded_counts_and_source() {
+        let message = moddingflow_activation_report_message(
+            "second-instance",
+            moddingflow_activation_runtime::ActivationRouteReport {
+                disabled: false,
+                queued: 1,
+                duplicates: 2,
+                rejected: 3,
+                full: 4,
+                delivered: 5,
+            },
+        );
+        assert_eq!(
+            message,
+            "Activation routing completed. source=second-instance queued=1 duplicates=2 rejected=3 full=4 delivered=5"
+        );
+        assert!(!message.contains("artifact"));
+        assert!(!message.contains("fluxora://"));
     }
 
     #[test]
@@ -11765,6 +12483,50 @@ mod tests {
     }
 
     #[test]
+    fn public_bridge_blocks_private_native_methods_and_preserves_connection_routes() {
+        for method in [
+            PRIVATE_NEXUS_API_AUTH_HEADER_METHOD,
+            "connections.beginConnect",
+            "connections.completeConnect",
+            "connections.cancelPendingConnect",
+            "moddingflow.getManagedAiAccessToken",
+            "moddingflow.lookupArtifactPreview",
+            "moddingflow.previewActivationPlan",
+        ] {
+            assert_eq!(
+                validate_public_bridge_method(method),
+                Err("Unsupported bridge method."),
+                "private auth method reached generic bridge dispatch: {method}"
+            );
+        }
+
+        for method in [
+            "connections.listStatus",
+            "connections.connect",
+            "connections.disconnect",
+        ] {
+            assert_eq!(validate_public_bridge_method(method), Ok(()));
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Connection);
+        }
+    }
+
+    #[test]
+    fn managed_ai_oauth_refresh_is_allowed_exactly_once() {
+        let error = serde_json::to_string(&json!({
+            "code": "ai.oauth.refresh-required",
+            "userMessage": "refresh"
+        }))
+        .expect("error payload");
+
+        assert!(should_retry_managed_ai_oauth(&error, 0));
+        assert!(!should_retry_managed_ai_oauth(&error, 1));
+        assert!(!should_retry_managed_ai_oauth(
+            r#"{"code":"ai.managed.quota-exhausted"}"#,
+            0
+        ));
+    }
+
+    #[test]
     fn operation_progress_payload_keeps_payload_operation_id() {
         let envelope = json!({
             "jsonrpc": "2.0",
@@ -11890,7 +12652,7 @@ mod tests {
             ("executables.list", BridgeLane::Main),
             ("executables.save", BridgeLane::Main),
             ("executables.launch", BridgeLane::Main),
-            ("executables.completeManagedLaunch", BridgeLane::Background),
+            ("executables.completeManagedLaunch", BridgeLane::Main),
             ("executables.getIcon", BridgeLane::Main),
             ("mods.listInstalled", BridgeLane::Main),
             ("mods.getWorkspace", BridgeLane::Main),
@@ -11936,6 +12698,13 @@ mod tests {
             ("connections.restoreAll", BridgeLane::Connection),
             ("connections.connect", BridgeLane::Connection),
             ("connections.disconnect", BridgeLane::Connection),
+            ("connections.beginConnect", BridgeLane::Download),
+            ("connections.completeConnect", BridgeLane::Download),
+            ("connections.cancelPendingConnect", BridgeLane::Download),
+            ("moddingflow.getManagedAiAccessToken", BridgeLane::Download),
+            ("moddingflow.lookupArtifactPreview", BridgeLane::Download),
+            ("moddingflow.previewActivationPlan", BridgeLane::Download),
+            ("downloads.queueModdingFlowArtifact", BridgeLane::Download),
             ("nexus.getAuthStatus", BridgeLane::Connection),
             ("nexus.getApiAuthHeader", BridgeLane::Main),
             ("apiLimits.list", BridgeLane::Background),
@@ -12026,6 +12795,13 @@ mod tests {
     }
 
     #[test]
+    fn private_moddingflow_calls_use_the_single_download_bridge_owner() {
+        for method in PRIVATE_MODDINGFLOW_NATIVE_METHODS {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Download);
+        }
+    }
+
+    #[test]
     fn update_and_api_limit_calls_stay_on_the_background_bridge_lane() {
         assert_eq!(
             bridge_lane_for_method("mods.checkUpdates"),
@@ -12034,6 +12810,18 @@ mod tests {
         assert_eq!(
             bridge_lane_for_method("apiLimits.list"),
             BridgeLane::Background
+        );
+    }
+
+    #[test]
+    fn managed_launch_completion_uses_the_launch_bridge_host() {
+        assert_eq!(
+            bridge_lane_for_method("executables.launch"),
+            BridgeLane::Main
+        );
+        assert_eq!(
+            bridge_lane_for_method("executables.completeManagedLaunch"),
+            BridgeLane::Main
         );
     }
 
@@ -12487,8 +13275,7 @@ mod tests {
             Some("unproven-file-ref")
         );
         assert!(
-            ai_file_mutation_authorization_blocker("exact-search-ref", &refs, &blockers)
-                .is_none()
+            ai_file_mutation_authorization_blocker("exact-search-ref", &refs, &blockers).is_none()
         );
     }
 
@@ -12641,7 +13428,10 @@ mod tests {
         .expect("read-only stale filename search should restart once");
         assert_eq!(retry.get("revision").and_then(Value::as_str), Some(""));
         assert_eq!(retry.get("cursor").and_then(Value::as_str), Some(""));
-        assert_eq!(retry.get("query").and_then(Value::as_str), Some("GrassControl.ini"));
+        assert_eq!(
+            retry.get("query").and_then(Value::as_str),
+            Some("GrassControl.ini")
+        );
         assert!(stale_ai_index_retry_params(
             "buildFiles.apply",
             &json!({ "revision": "old", "cursor": "old|20" }),
@@ -12771,12 +13561,21 @@ mod tests {
     }
 
     #[test]
+    fn bridge_processes_keep_the_lane_identity_exported_to_the_native_host() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            for lane in BridgeLane::ALL {
+                assert_eq!(state.process(lane).lock().await.lane, lane);
+            }
+        });
+    }
+
+    #[test]
     fn plugin_bridge_lane_does_not_wait_for_the_main_lane_lock() {
         tauri::async_runtime::block_on(async {
             let state = BridgeState::default();
             let _main_lane = state.process.lock().await;
-            let plugin_lane =
-                timeout(Duration::from_millis(50), state.plugin_process.lock()).await;
+            let plugin_lane = timeout(Duration::from_millis(50), state.plugin_process.lock()).await;
 
             assert!(plugin_lane.is_ok());
         });

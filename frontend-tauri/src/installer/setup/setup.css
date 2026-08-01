@@ -1,0 +1,611 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--installer-background);
+  color: var(--installer-text);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--installer-focus);
+  outline-offset: 2px;
+}
+
+.setup-shell {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  grid-template-rows: 38px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: var(--installer-surface);
+}
+
+.setup-shell > .installer-titlebar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.setup-rail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  grid-column: 1;
+  grid-row: 2;
+  border-right: 1px solid var(--installer-border);
+  background: var(--installer-background);
+}
+
+.setup-rail__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 104px;
+  padding: 0 var(--space-6);
+  color: var(--installer-text-strong);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+}
+
+.setup-rail__identity [data-icon] {
+  width: 28px;
+  height: 28px;
+  color: var(--installer-accent);
+}
+
+.setup-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-5);
+  list-style: none;
+}
+
+.setup-steps li {
+  position: relative;
+  min-width: 0;
+  min-height: 54px;
+  color: var(--installer-muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  transition: color var(--motion-fast);
+}
+
+.setup-step-row {
+  display: flex;
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.setup-step-button {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-step-button:hover {
+  color: var(--installer-text-strong);
+}
+
+.setup-step-button:focus-visible {
+  outline: 2px solid var(--installer-focus);
+  outline-offset: 2px;
+}
+
+.setup-steps li:not(:last-child)::after {
+  position: absolute;
+  top: 37px;
+  bottom: -1px;
+  left: 10px;
+  width: 1px;
+  background: var(--installer-border);
+  content: "";
+}
+
+.setup-step-index {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--installer-border);
+  border-radius: 50%;
+  background: var(--installer-background);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  transition:
+    border-color var(--motion-fast),
+    background-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.setup-steps li[data-current="true"] {
+  color: var(--installer-text-strong);
+}
+
+.setup-steps li[data-current="true"] .setup-step-index {
+  border-color: var(--installer-accent);
+  background: var(--installer-accent);
+  color: var(--installer-on-accent);
+}
+
+.setup-steps li[data-complete="true"] {
+  color: var(--installer-muted);
+}
+
+.setup-steps li[data-complete="true"] .setup-step-index {
+  border-color: var(--installer-accent);
+  color: var(--installer-accent);
+}
+
+.setup-rail__meta {
+  margin: auto 0 0;
+  padding: var(--space-5) var(--space-6);
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.setup-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-column: 2;
+  grid-row: 2;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: var(--installer-surface);
+}
+
+.setup-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.setup-loading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--installer-muted);
+  font-size: var(--fs-sm);
+}
+
+.setup-step {
+  width: min(100%, 820px);
+  height: 100%;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-10);
+  animation: setup-step-enter var(--dur-slow) cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes setup-step-enter {
+  from {
+    opacity: 0.72;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.setup-step__heading {
+  margin-bottom: var(--space-5);
+}
+
+.setup-step h1,
+.setup-step__heading h1 {
+  max-width: 24ch;
+  margin: 0 0 var(--space-2);
+  color: var(--installer-text-strong);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.025em;
+  line-height: var(--lh-tight);
+  text-wrap: balance;
+}
+
+.setup-step p,
+.setup-step__heading p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--installer-muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  text-wrap: pretty;
+}
+
+.setup-step--language {
+  display: flex;
+  max-width: 680px;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: var(--space-12);
+}
+
+.setup-language-options {
+  width: min(100%, 520px);
+  border-block: 1px solid var(--installer-border);
+}
+
+.setup-language-option {
+  display: grid;
+  width: 100%;
+  min-height: 68px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--installer-border);
+  background: transparent;
+  color: var(--installer-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.setup-language-option:last-child {
+  border-bottom: 0;
+}
+
+.setup-language-option:hover {
+  background: var(--installer-accent-hover);
+  color: var(--installer-text-strong);
+}
+
+.setup-language-option[data-selected="true"] {
+  background: var(--installer-accent-selected);
+  color: var(--installer-text-strong);
+}
+
+.setup-language-option__flag {
+  display: block;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.setup-language-option__name {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.setup-step--legal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+}
+
+.setup-legal-viewer {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--installer-border);
+  border-radius: var(--radius-sm);
+  background: var(--installer-surface-muted);
+}
+
+.setup-legal-checks {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.setup-step--location {
+  display: flex;
+  max-width: 700px;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-12);
+}
+
+.setup-mode-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--installer-border);
+  color: var(--installer-text);
+  font-size: var(--fs-sm);
+}
+
+.setup-mode-line span {
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+}
+
+.setup-field {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--installer-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.setup-path-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.setup-location-status {
+  display: flex;
+  min-height: 22px;
+  justify-content: space-between;
+  gap: var(--space-4);
+  color: var(--installer-muted);
+  font-size: var(--fs-sm);
+}
+
+.setup-location-notice {
+  margin: 0;
+  color: var(--installer-muted);
+  font-size: var(--fs-ui);
+}
+
+.setup-location-status[data-status="valid"] {
+  color: var(--installer-success);
+}
+
+.setup-location-status[data-status="insufficient-space"],
+.setup-location-status[data-status="foreign-install"],
+.setup-location-status[data-status="invalid-path"] {
+  color: var(--installer-error);
+}
+
+.setup-disk-space {
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+}
+
+.setup-step--installation,
+.setup-step--update {
+  display: flex;
+  max-width: 660px;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-5);
+  padding-bottom: var(--space-12);
+}
+
+.setup-step--update {
+  align-items: flex-start;
+}
+
+.setup-progress-copy {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.setup-progress-copy strong {
+  color: var(--installer-text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.setup-progress-copy code {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-commit-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--installer-text) !important;
+}
+
+.setup-commit-notice [data-icon] {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+}
+
+.setup-step--result {
+  display: flex;
+  max-width: 680px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-12);
+}
+
+.setup-result-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.setup-result-icon[data-tone="success"] {
+  color: var(--installer-success);
+}
+
+.setup-result-icon[data-tone="error"] {
+  color: var(--installer-error);
+}
+
+.setup-result-path {
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border: 1px solid var(--installer-border);
+  border-radius: var(--radius-xs);
+  color: var(--installer-text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.setup-result-actions [data-icon],
+.flx-button__icon [data-icon] {
+  width: 15px;
+  height: 15px;
+}
+
+.setup-error-code {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.setup-error-code span {
+  color: var(--installer-muted);
+  font-size: var(--fs-ui);
+}
+
+.setup-error-code code {
+  color: var(--installer-error);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.setup-actions {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-10);
+  border-top: 1px solid var(--installer-border);
+  background: var(--installer-surface);
+}
+
+.setup-actions .flx-button:disabled {
+  border-color: var(--installer-border);
+  background: var(--installer-surface-raised);
+  color: var(--installer-muted);
+  cursor: default;
+  opacity: 0.72;
+}
+
+@media (max-width: 800px), (max-height: 590px) {
+  .setup-shell {
+    grid-template-columns: 184px minmax(0, 1fr);
+  }
+
+  .setup-rail__identity {
+    height: 78px;
+    padding-inline: var(--space-4);
+  }
+
+  .setup-steps {
+    padding-inline: var(--space-4);
+  }
+
+  .setup-step-row {
+    min-height: 48px;
+  }
+
+  .setup-steps li {
+    font-size: var(--fs-ui);
+  }
+
+  .setup-steps li:not(:last-child)::after {
+    top: 34px;
+  }
+
+  .setup-step {
+    padding: var(--space-6) var(--space-8);
+  }
+
+  .setup-step--language,
+  .setup-step--location,
+  .setup-step--installation,
+  .setup-step--update,
+  .setup-step--result {
+    padding-bottom: var(--space-8);
+  }
+
+  .setup-actions {
+    min-height: 56px;
+    padding: var(--space-2) var(--space-8);
+  }
+
+  .setup-rail__meta {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .setup-shell {
+    grid-template-columns: 164px minmax(0, 1fr);
+  }
+
+  .setup-rail__identity span {
+    font-size: var(--fs-md);
+  }
+
+  .setup-step,
+  .setup-actions {
+    padding-inline: var(--space-5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .setup-rail,
+  .setup-stage,
+  .setup-actions,
+  .setup-language-option,
+  .setup-step-index {
+    background: Canvas;
+  }
+
+  .setup-language-option[data-selected="true"],
+  .setup-steps li[data-current="true"] .setup-step-index {
+    forced-color-adjust: auto;
+  }
+}

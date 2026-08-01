@@ -61,8 +61,9 @@ describe('redesign app chrome titlebar', () => {
     expect(markup).not.toContain('aria-label="Minimize"');
     expect(markup).not.toContain('aria-label="Maximize"');
     expect(markup).toContain('titlebar__caption-button--custom-close');
-    expect(markup).toContain('<svg');
-    expect(markup).toContain('M18 6 6 18');
+    expect(markup).toContain('data-icon="window-close"');
+    expect(markup).toContain('mask-image:');
+    expect(markup).not.toContain('<svg');
   });
 
   it('keeps chrome styling aligned with the compact UI-kit titlebar', () => {

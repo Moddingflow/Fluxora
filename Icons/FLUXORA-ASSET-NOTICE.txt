@@ -1,0 +1,9 @@
+Fluxora product artwork notice
+
+Fluxora.svg, Fluxora.png, and Fluxora.ico are project-owned Fluxora product
+identity assets. They are not third-party open-source icon assets and are not
+offered under the third-party icon licences stored in this directory.
+
+Use, modification, and redistribution are reserved to the Fluxora project
+owner except where applicable law or a separate written permission provides
+otherwise.

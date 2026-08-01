@@ -225,7 +225,7 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
-  it('uses one three-second shell envelope for generic startup restore', async () => {
+  it('restores the generic connection lane before the dedicated ModdingFlow owner lane', async () => {
     const request: OperationRequest = { operationId: 'op_connections_restore' };
     const snapshot = {
       providers: [],
@@ -235,7 +235,15 @@ describe('Tauri bridge request timeouts', () => {
       timedOut: false,
       operationId: request.operationId
     };
-    invokeMock.mockResolvedValue(snapshot);
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'fluxora_bridge_request') {
+        return snapshot;
+      }
+      if (command === 'fluxora_moddingflow_restore_connection') {
+        return null;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
 
     const api = createTauriFluxoraApi();
     await expect(api.connections.restoreAll(2, request)).resolves.toEqual(snapshot);
@@ -246,6 +254,165 @@ describe('Tauri bridge request timeouts', () => {
       request,
       timeoutMs: 3_000
     });
+    expect(invokeMock).toHaveBeenCalledWith(
+      'fluxora_moddingflow_restore_connection',
+      { attempt: 2, request }
+    );
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps ModdingFlow hidden while the core feature gate advertises no provider', async () => {
+    const request: OperationRequest = { operationId: 'op_connections_default_off' };
+    const snapshot = {
+      providers: [{
+        providerId: 'nexus',
+        label: 'Nexus Mods',
+        state: 'notLinked',
+        accountName: '',
+        hasStoredSession: false,
+        retryable: false,
+        requiresUserAction: false,
+        message: 'Not linked.',
+        checkedAtUtc: '',
+        operationId: request.operationId
+      }],
+      requestedAtUtc: '',
+      completedAtUtc: '',
+      durationMs: 1,
+      timedOut: false,
+      operationId: request.operationId
+    };
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'fluxora_bridge_request') {
+        return snapshot;
+      }
+      if (command === 'fluxora_moddingflow_connection_status') {
+        return null;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.connections.listStatus(request)).resolves.toEqual(snapshot);
+
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledWith(
+      'fluxora_moddingflow_connection_status',
+      { request }
+    );
+  });
+
+  it('isolates a failed ModdingFlow owner lane from the generic provider snapshot', async () => {
+    const request: OperationRequest = { operationId: 'op_connections_isolated_failure' };
+    const snapshot = {
+      providers: [{
+        providerId: 'nexus',
+        label: 'Nexus Mods',
+        state: 'ready',
+        accountName: 'Nexus user',
+        hasStoredSession: true,
+        retryable: false,
+        requiresUserAction: false,
+        message: 'Ready.',
+        checkedAtUtc: '',
+        operationId: request.operationId
+      }],
+      requestedAtUtc: '',
+      completedAtUtc: '',
+      durationMs: 1,
+      timedOut: false,
+      operationId: request.operationId
+    };
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'fluxora_bridge_request') {
+        return snapshot;
+      }
+      if (command === 'fluxora_moddingflow_connection_status') {
+        throw new Error('download lane unavailable');
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.connections.listStatus(request)).resolves.toEqual(snapshot);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('appends the safe ModdingFlow status owned by the download lane', async () => {
+    const request: OperationRequest = { operationId: 'op_connections_gated' };
+    const gatedStatus = {
+      providerId: 'moddingflow',
+      label: 'ModdingFlow',
+      state: 'notLinked',
+      accountName: '',
+      hasStoredSession: false,
+      retryable: false,
+      requiresUserAction: false,
+      message: '',
+      checkedAtUtc: '',
+      operationId: request.operationId
+    };
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'fluxora_bridge_request') {
+        return {
+          providers: [],
+          requestedAtUtc: '',
+          completedAtUtc: '',
+          durationMs: 1,
+          timedOut: false,
+          operationId: request.operationId
+        };
+      }
+      if (command === 'fluxora_moddingflow_connection_status') {
+        return gatedStatus;
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.connections.listStatus(request)).resolves.toMatchObject({
+      providers: [gatedStatus]
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      'fluxora_moddingflow_connection_status',
+      { request }
+    );
+  });
+
+  it('routes ModdingFlow mutations only through dedicated fail-closed Tauri commands', async () => {
+    const request: OperationRequest = { operationId: 'op_moddingflow_action' };
+    const unavailableStatus = {
+      providerId: 'moddingflow',
+      label: 'ModdingFlow',
+      state: 'notConfigured',
+      accountName: '',
+      hasStoredSession: false,
+      retryable: false,
+      requiresUserAction: false,
+      message: 'ModdingFlow connection is not available in this build.',
+      checkedAtUtc: '',
+      operationId: request.operationId
+    };
+    invokeMock.mockResolvedValue(unavailableStatus);
+
+    const api = createTauriFluxoraApi();
+    await expect(api.connections.connect('moddingflow', request)).resolves.toEqual(unavailableStatus);
+    await expect(api.connections.cancelConnect('moddingflow', request)).resolves.toEqual(
+      unavailableStatus
+    );
+    await expect(api.connections.disconnect('moddingflow', request)).resolves.toEqual(
+      unavailableStatus
+    );
+
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      'fluxora_moddingflow_connect',
+      'fluxora_moddingflow_cancel_connect',
+      'fluxora_moddingflow_disconnect'
+    ]);
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      'fluxora_bridge_request',
+      expect.anything()
+    );
   });
 
   it('keeps generic connection login on the OAuth envelope', async () => {

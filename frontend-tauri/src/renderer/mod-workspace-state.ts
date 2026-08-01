@@ -448,7 +448,9 @@ export const modConflictMarkerStatesForHighlight = (
 };
 
 const comparableModVersion = (value: string): string | null => {
-  const match = /^v?(\d+(?:\.\d+)*)([-+][0-9A-Za-z][0-9A-Za-z._-]*)?$/i.exec(value.trim());
+  const match = /^v?(\d+(?:\.\d+)*)([A-Za-z][0-9A-Za-z._-]*|[-+][0-9A-Za-z][0-9A-Za-z._-]*)?$/i.exec(
+    value.trim()
+  );
   if (!match) {
     return null;
   }

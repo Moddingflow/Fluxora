@@ -8,7 +8,7 @@ import {
   Save,
   Search,
   X
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 import {
   lazy,
   Suspense,

@@ -1,5 +1,6 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/ModOrganizerExecutableImportService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
@@ -101,6 +102,41 @@ namespace fluxora::tests
         EXPECT_EQ(
             normalized(analysis.targetProjectDirectory.parent_path()),
             normalized(expectedRoot));
+    }
+
+    TEST(ModOrganizerImportServiceTests, ExecutableImportDecodesQtEscapedArguments)
+    {
+        TempDirectory temp;
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path tool =
+            source / L"tools" / L"DynDOLOD" / L"TexGenx64.exe";
+        writeTextFile(tool, "MZ executable stub");
+
+        ModOrganizerExecutableImportContext context;
+        context.sourceDirectory = source;
+        context.modsDirectory = source / L"mods";
+        context.profilesDirectory = source / L"profiles";
+        context.downloadsDirectory = source / L"downloads";
+        context.overwriteDirectory = source / L"overwrite";
+        context.gamePath = source / L"GameRoot";
+        context.targetProjectDirectory = temp.path() / L"Imported";
+        context.templateId = L"skyrimse";
+
+        const std::map<std::wstring, std::wstring> organizerIni{
+            {L"customexecutables.1\\title", L"TexGen"},
+            {L"customexecutables.1\\binary", tool.wstring()},
+            {L"customexecutables.1\\arguments",
+             LR"args(-D:\"E:\\\\Foundation Edition\\\\Stock Game\\\\Data\\\" -sse\n)args"},
+            {L"customexecutables.1\\workingdirectory", L""}};
+
+        const ModOrganizerExecutableImportPlan plan =
+            ModOrganizerExecutableImportService::createPlan(organizerIni, context);
+
+        ASSERT_EQ(plan.executables.size(), 1U);
+        const std::wstring expectedArguments =
+            LR"args(-D:"E:\\Foundation Edition\\Stock Game\\Data\" -sse)args";
+        EXPECT_EQ(plan.executables.front().arguments, expectedArguments);
+        EXPECT_EQ(plan.executables.front().executablePath.find(L'\t'), std::wstring::npos);
     }
 
     TEST(ModOrganizerImportServiceTests, AnalyzeUsesSelectedProfileAndCountsSeparators)

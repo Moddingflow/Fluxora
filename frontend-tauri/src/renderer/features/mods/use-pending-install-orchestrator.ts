@@ -83,7 +83,9 @@ const stableOrderAnchors = (
   return {
     beforeOrderId: before?.orderId,
     afterOrderId: after?.orderId,
-    fallbackTargetIndex: session.desiredTargetIndex
+    fallbackTargetIndex: session.desiredTargetIndex,
+    expectedRevision: session.revision,
+    applyIfCompleted: session.hasUserRebased
   };
 };
 
@@ -166,36 +168,65 @@ export const usePendingInstallOrchestrator = (
     if (existing) {
       return existing;
     }
-    const current = sessionsRef.current.get(operationId);
-    const projectDirectory = projectDirectoriesRef.current.get(operationId) ?? '';
-    if (!current || !projectDirectory) {
-      return null;
-    }
 
-    const requestedTargetIndex = current.desiredTargetIndex;
-    const inFlight = window.fluxora.mods.rebasePendingInstall(
-      projectDirectory,
-      operationId,
-      stableOrderAnchors(current, itemsRef.current)
-    ).then((snapshot) => {
-      applySnapshot(snapshot);
-      return snapshot;
-    }).catch((error: unknown) => {
-      const active = sessionsRef.current.get(operationId);
-      if (active?.state === 'preparing') {
-        return null;
+    const cycle = (async (): Promise<FluxoraInstallConflictSnapshot | null> => {
+      let latestSnapshot: FluxoraInstallConflictSnapshot | null = null;
+      let completedRetryTargetIndex: number | null = null;
+      while (true) {
+        const current = sessionsRef.current.get(operationId);
+        const projectDirectory = projectDirectoriesRef.current.get(operationId) ?? '';
+        if (!current || !projectDirectory) {
+          return latestSnapshot;
+        }
+
+        const requestedTargetIndex = current.desiredTargetIndex;
+        let snapshot: FluxoraInstallConflictSnapshot;
+        try {
+          snapshot = await window.fluxora.mods.rebasePendingInstall(
+            projectDirectory,
+            operationId,
+            stableOrderAnchors(current, itemsRef.current)
+          );
+        } catch (error) {
+          const active = sessionsRef.current.get(operationId);
+          if (active?.state === 'preparing') {
+            return latestSnapshot;
+          }
+          throw error;
+        }
+
+        latestSnapshot = snapshot;
+        applySnapshot(snapshot);
+        const latest = sessionsRef.current.get(operationId);
+        const completedUserMoveStillPending = Boolean(
+          latest?.hasUserRebased &&
+          snapshot.state === 'completed' &&
+          latest.desiredTargetIndex !== snapshot.targetIndex
+        );
+        if (
+          completedUserMoveStillPending &&
+          latest?.desiredTargetIndex === requestedTargetIndex
+        ) {
+          if (completedRetryTargetIndex === requestedTargetIndex) {
+            return latestSnapshot;
+          }
+          completedRetryTargetIndex = requestedTargetIndex;
+        } else if (latest?.desiredTargetIndex !== requestedTargetIndex) {
+          completedRetryTargetIndex = null;
+        }
+        if (
+          !latest ||
+          (latest.desiredTargetIndex === requestedTargetIndex &&
+            !completedUserMoveStillPending)
+        ) {
+          return latestSnapshot;
+        }
       }
-      throw error;
-    }).finally(() => {
+    })().finally(() => {
       rebaseInFlightRef.current.delete(operationId);
     });
-    rebaseInFlightRef.current.set(operationId, inFlight);
-    const snapshot = await inFlight;
-    const latest = sessionsRef.current.get(operationId);
-    if (latest && latest.desiredTargetIndex !== requestedTargetIndex) {
-      return flushOperationRebase(operationId);
-    }
-    return snapshot;
+    rebaseInFlightRef.current.set(operationId, cycle);
+    return cycle;
   }, [applySnapshot]);
 
   const flushRebase = useCallback(async () => {
@@ -367,10 +398,24 @@ export const usePendingInstallOrchestrator = (
       if (operation.state === 'completed') {
         const installed = installedSummaryFromOperation(operation);
         if (installed) {
-          if (operation.workspaceDelta) {
-            finalizeForWorkspaceDelta(operation.operationId);
+          const finalizeCompletedSession = () => {
+            if (!sessionsRef.current.has(operation.operationId)) {
+              return;
+            }
+            if (operation.workspaceDelta) {
+              finalizeForWorkspaceDelta(operation.operationId);
+            } else {
+              complete(installed);
+            }
+          };
+          if (session.hasUserRebased) {
+            void flushOperationRebase(operation.operationId)
+              .catch((error) =>
+                optionsRef.current.onRebaseError?.(error, operation.operationId)
+              )
+              .finally(finalizeCompletedSession);
           } else {
-            complete(installed);
+            finalizeCompletedSession();
           }
         } else {
           rollback(operation.operationId);
@@ -380,7 +425,7 @@ export const usePendingInstallOrchestrator = (
       }
     }
     optionsRef.current.onOperationProgress?.(operation);
-  }), [complete, finalizeForWorkspaceDelta, progressStore, rollback]);
+  }), [complete, finalizeForWorkspaceDelta, flushOperationRebase, progressStore, rollback]);
 
   const latestSession = [...sessions.values()].at(-1) ?? null;
   return {

@@ -17,6 +17,8 @@
 #include "FluxoraCore/Services/HookService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
+#include "FluxoraCore/Services/ModdingFlowConnectionCapability.hpp"
+#include "FluxoraCore/Services/ModdingFlowDownloadQueueService.hpp"
 #include "FluxoraCore/Services/ModUpdateService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
@@ -27,6 +29,8 @@
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
 #include "FluxoraCore/Services/WorkspaceRevisionJournal.hpp"
+
+#include <chrono>
 
 namespace fluxora
 {
@@ -81,6 +85,27 @@ namespace fluxora
     {
         externalConnections_->registerProvider(
             createNexusExternalConnectionProvider(*nexusModsAuth_));
+        if (shouldEnableModdingFlowCapabilityForCurrentBridgeLane())
+        {
+            moddingFlowConnectionCapability_ =
+                createProductionModdingFlowConnectionCapability(*logger_);
+        }
+        if (moddingFlowConnectionCapability_)
+        {
+            externalConnections_->registerProvider(
+                moddingFlowConnectionCapability_->provider());
+#ifdef FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+            IModdingFlowPublicApiClient* publicApi =
+                moddingFlowConnectionCapability_->publicApiClient();
+            if (publicApi != nullptr)
+            {
+                moddingFlowDownloadQueue_ = createProductionModdingFlowDownloadQueueService(
+                    *logger_, *buildPathSettings_, *downloadTransferLimiter_, *publicApi);
+                downloads_->configureModdingFlowDownloadQueue(
+                    moddingFlowDownloadQueue_.get());
+            }
+#endif
+        }
     }
 
     Core::~Core()
@@ -105,7 +130,25 @@ namespace fluxora
         profileOrder_->initialize();
         profiles_->initialize();
         nexusModsAuth_->initialize();
+        if (moddingFlowConnectionCapability_)
+        {
+            moddingFlowConnectionCapability_->initialize();
+        }
         externalConnections_->initialize();
+        try
+        {
+            (void)externalConnections_->restoreAll(
+                L"startup-connection-restore",
+                std::chrono::milliseconds(2500),
+                1);
+        }
+        catch (...)
+        {
+            logger_->writeOperation(
+                LogLevel::Warning,
+                "Connections",
+                "Bounded startup connection restore failed; core initialization continues.");
+        }
         downloads_->initialize();
         installs_->initialize();
         effectiveFileTree_->initialize();
@@ -145,6 +188,10 @@ namespace fluxora
         installs_->shutdown();
         downloads_->shutdown();
         externalConnections_->shutdown();
+        if (moddingFlowConnectionCapability_)
+        {
+            moddingFlowConnectionCapability_->shutdown();
+        }
         nexusModsAuth_->shutdown();
         profiles_->shutdown();
         profileOrder_->shutdown();
@@ -263,6 +310,11 @@ namespace fluxora
     ExternalConnectionService& Core::externalConnections() noexcept
     {
         return *externalConnections_;
+    }
+
+    IModdingFlowConnectionCapability* Core::moddingFlowConnectionCapability() noexcept
+    {
+        return moddingFlowConnectionCapability_.get();
     }
 
     NexusUpdateApi& Core::nexusUpdateApi() noexcept

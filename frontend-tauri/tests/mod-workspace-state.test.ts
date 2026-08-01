@@ -890,6 +890,7 @@ describe('mod workspace state', () => {
     ['11.0.0.0', '11', '11'],
     ['1.0.0.0', '1.0.0', '1.0.0'],
     ['v02.03.0.0', '2.3', '2.3'],
+    ['5.8.0.0a', '5.8a', '5.8a'],
     ['1.2.0-beta', '1.2-beta', '1.2-beta'],
     ['0.0.0.0', '0', '0']
   ])('normalizes equivalent numeric versions %s and %s to %s', (version, latestVersion, expected) => {

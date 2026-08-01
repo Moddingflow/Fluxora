@@ -8,8 +8,11 @@ default-run = "fluxora_tauri"
 
 [features]
 default = []
+custom-protocol = ["tauri/custom-protocol"]
 native-ai-integration-fixture = []
 speech-vulkan = ["whisper-rs/vulkan"]
+installer-native = []
+setup-production-assets = []
 
 [lib]
 name = "fluxora_tauri_lib"
@@ -27,6 +30,16 @@ path = "src/bin/fluxora_speech_host.rs"
 name = "fluxora_speech_host_vulkan"
 path = "src/bin/fluxora_speech_host_vulkan.rs"
 
+[[bin]]
+name = "FluxoraSetup"
+path = "src/bin/fluxora_setup.rs"
+required-features = ["installer-native"]
+
+[[bin]]
+name = "FluxoraUpdater"
+path = "src/bin/fluxora_updater.rs"
+required-features = ["installer-native"]
+
 [[test]]
 name = "ai_task_native_integration"
 path = "tests/ai_task_native_integration.rs"
@@ -40,25 +53,42 @@ required-features = ["native-ai-integration-fixture"]
 harness = false
 
 [build-dependencies]
+embed-resource = "3.0.9"
 tauri-build = { version = "2", features = [] }
+sha2 = "0.10"
 
 [dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 keyring = "4.1.2"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 regex = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 notify-debouncer-full = "0.8.0-rc.2"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
-tauri-plugin-single-instance = "2"
-tokio = { version = "1", features = ["fs", "io-util", "process", "sync", "time"] }
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "process", "sync", "time"] }
 whisper-rs = { version = "=0.16.0", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"
-windows = "0.61.3"
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_WinTrust",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_Controls",
+  "Win32_UI_WindowsAndMessaging"
+] }

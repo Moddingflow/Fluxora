@@ -1,0 +1,82 @@
+.installer-progress-panel {
+  display: flex;
+  width: 100%;
+  max-width: 660px;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.installer-progress-panel__heading {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.installer-progress-panel__heading h1 {
+  margin: 0;
+  color: var(--installer-text-strong);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.025em;
+  line-height: var(--lh-tight);
+  text-wrap: balance;
+}
+
+.installer-progress-panel__versions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--installer-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.installer-progress-panel__versions span:last-child {
+  color: var(--installer-text-strong);
+}
+
+.installer-progress-panel__status {
+  display: flex;
+  min-height: 24px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.installer-progress-panel__status strong {
+  color: var(--installer-text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.installer-progress-panel__status span,
+.installer-progress-panel__phase {
+  color: var(--installer-muted);
+  font-size: var(--fs-ui);
+}
+
+.installer-progress-panel__status span {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+}
+
+.installer-progress-panel__phase {
+  min-height: 20px;
+  margin: 0;
+  line-height: var(--lh-normal);
+}
+
+.installer-progress-panel .flx-progress__track {
+  border-color: var(--installer-border);
+  background: var(--installer-surface-muted);
+}
+
+.installer-progress-panel .flx-progress__bar {
+  background: var(--installer-progress);
+}
+
+@media (max-width: 800px), (max-height: 590px) {
+  .installer-progress-panel {
+    gap: var(--space-4);
+  }
+}

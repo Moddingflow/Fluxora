@@ -301,6 +301,16 @@ const installMockProductRuntime = async (page: Page) => {
         operationId: operationIdOf(operation, 'build_content_watch_stop')
       });
       api.ai.getStatus = async (request?: Record<string, unknown>) => ({
+        ...(window.localStorage.getItem('fluxora.e2e.ai-account-required') === 'yes' ? {
+          quota: {
+            schema: 'fluxora.ai.quota.v1', availability: 'connectionRequired', available: false,
+            eligibility: false, reason: 'ai_oauth_invalid', periodStart: null, resetAt: null,
+            rollover: false, limit: 0, used: 0, reserved: 0, remaining: 0,
+            remainingInputTokenEquivalent: 0,
+            search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+            model: 'gemini-3.1-flash-lite', priceVersion: null
+          }
+        } : {}),
         ready: window.localStorage.getItem('fluxora.e2e.ai-diagnostic') !== 'yes',
         operationId: operationIdOf(request, 'ai_status'),
         health: window.localStorage.getItem('fluxora.e2e.ai-diagnostic') === 'yes' ? 'unavailable' : 'ready',
@@ -319,6 +329,15 @@ const installMockProductRuntime = async (page: Page) => {
           limitSource: 'provider-metadata', supportsTools: true, supportsWeb: true,
           supportsStreaming: true, supportsBackground: false
         }],
+        ...(window.localStorage.getItem('fluxora.e2e.ai-account-required') !== 'yes' ? { quota: {
+          schema: 'fluxora.ai.quota.v1', availability: 'available', available: true,
+          eligibility: true, reason: 'available', periodStart: '2030-01-01T00:00:00.000Z',
+          resetAt: '2030-02-01T00:00:00.000Z', rollover: false, limit: 1_996_000,
+          used: 420_000, reserved: 0, remaining: 1_576_000,
+          remainingInputTokenEquivalent: 3_152_000,
+          search: { limit: 24, used: 3, reserved: 0, remaining: 21 },
+          model: 'gemini-3.1-flash-lite', priceVersion: 'e2e-v3'
+        } } : {}),
         capabilities: { singleAgent: { state: 'available' } },
         ...(window.localStorage.getItem('fluxora.e2e.ai-diagnostic') === 'yes' ? {
           error: {
@@ -482,6 +501,22 @@ const installMockProductRuntime = async (page: Page) => {
         calls.push('ai.resetFileRollbackCheckpoints');
         window.localStorage.removeItem(rollbackStorageKey);
       };
+      api.connections.connect = async (providerId: string, request?: Record<string, unknown>) => {
+        calls.push(`connections.connect:${providerId}`);
+        window.localStorage.removeItem('fluxora.e2e.ai-account-required');
+        return {
+          providerId,
+          label: 'ModdingFlow',
+          state: 'ready',
+          accountName: '',
+          hasStoredSession: true,
+          retryable: false,
+          requiresUserAction: false,
+          message: 'Connected.',
+          checkedAtUtc: new Date().toISOString(),
+          operationId: operationIdOf(request, 'connection_connect')
+        };
+      };
       api.links.openExternal = async (url: string) => {
         calls.push(`links.openExternal:${url}`);
         return { ok: true };
@@ -544,9 +579,36 @@ test.beforeEach(async ({ page }) => {
   await installMockProductRuntime(page);
 });
 
+test('requires ModdingFlow OAuth before exposing the managed agent workspace', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.e2e.ai-account-required', 'yes');
+  });
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+
+  await expect(page.getByRole('heading', { name: 'Sign in to ModdingFlow' })).toBeVisible();
+  await expect(page.getByLabel('Message Fluxora AI')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('links.openExternal:https://moddingflow.com/register/');
+
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('connections.connect:moddingflow');
+  await expect(page.getByText('Ask about this build')).toBeVisible();
+});
+
 test('keeps AI out of Home and runs one persisted Gemini chat inside the selected build', async ({ page }) => {
   await page.goto(baseUrl);
   await openSelectedBuildAi(page);
+
+  const quota = page.getByRole('region', { name: 'Agent usage limits' });
+  await expect(quota.getByRole('progressbar', { name: 'Agent limit, 79% remaining' })).toHaveAttribute(
+    'aria-valuenow',
+    '79'
+  );
+  await expect(quota).toContainText('Search 21 / 24');
 
   const messageInput = page.getByLabel('Message Fluxora AI');
   await messageInput.fill('Проверь Community Shaders');

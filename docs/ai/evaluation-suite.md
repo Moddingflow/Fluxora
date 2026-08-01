@@ -8,7 +8,7 @@ The gate verifies the shipped Fluxora AI contract: one Gemini model, isolated
 build-scoped tabs, an authoritative goal/evidence coordinator, risk-filtered
 typed capabilities, safe complete file discovery, native verified reversible actions,
 real context accounting, typed failures, grounding citations, and the managed
-gateway v2. It contains no subagent, autonomous-job, cost planner, direct-web
+Website gateway v3. It contains no subagent, autonomous-job, cost planner, direct-web
 fetch, or offline product-provider scenarios.
 
 Run the focused gate with:
@@ -253,15 +253,16 @@ Exact text patches and file creation in Overwrite remain rejected.
 
 ### Gateway
 
-The source contract test verifies protocol v1/v2 compatibility, the v2 single
-model and three-method allowlists, raw request-body forwarding, 64 MiB bound,
-120-second timeout, and streamed upstream responses/errors. A release check
-also makes authenticated live v2 `status` and `getModel` calls with the current
-publishable client key; the expected model limits are 1,048,576 input and
+The source contract test verifies the fixed Website v3 endpoint, OAuth-only
+transport, explicit Search mode, stable idempotency, private native token
+boundary, and exactly-one refresh policy. A separately authorized release check
+makes live v3 `status` and `getModel` calls with eligible
+`desktop_mod_manager` OAuth and `agent:run`; the expected model limits are 1,048,576 input and
 65,536 output tokens.
 
-JWT verification remains deployment configuration and must be confirmed on the
-deployed function, not inferred only from TypeScript source.
+OAuth signature/currentness, client, scope, Premium, reservation, and provider
+non-dispatch on denial must be confirmed against the deployed Website route,
+not inferred only from source.
 
 ### Component and E2E
 

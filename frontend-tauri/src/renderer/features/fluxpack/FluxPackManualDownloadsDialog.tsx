@@ -1,4 +1,9 @@
-import { Check, Download, FileArchive, X } from 'lucide-react';
+import {
+  Check,
+  Download,
+  FileArchive,
+  X
+} from '../../design-system/icons/lucide-compat';
 import { useEffect } from 'react';
 
 import type { FluxoraFluxPackSourceInstallPlan } from '../../../shared/fluxora-api';

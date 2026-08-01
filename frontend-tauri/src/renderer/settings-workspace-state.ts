@@ -13,7 +13,13 @@ import type {
   NativeBridgeStatus
 } from '../shared/fluxora-api';
 
-export type SettingsSectionId = 'connections' | 'language' | 'privacy' | 'transfer' | 'developers';
+export type SettingsSectionId =
+  | 'connections'
+  | 'language'
+  | 'privacy'
+  | 'legal'
+  | 'transfer'
+  | 'developers';
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -36,6 +42,11 @@ export const settingsSections: SettingsSection[] = [
     id: 'privacy',
     label: 'Privacy',
     hint: 'Microphone'
+  },
+  {
+    id: 'legal',
+    label: 'Legal documents',
+    hint: 'Offline'
   },
   {
     id: 'transfer',

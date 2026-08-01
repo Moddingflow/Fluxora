@@ -11,7 +11,7 @@ import {
   RefreshCw,
   UploadCloud,
   XCircle
-} from 'lucide-react';
+} from './design-system/icons/lucide-compat';
 
 import { FacetSpinner, ProgressBar } from './design-system';
 import { fluxoraLogo, modOrganizerIcon } from './design-system/assets';

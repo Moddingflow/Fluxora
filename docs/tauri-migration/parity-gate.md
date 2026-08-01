@@ -139,7 +139,7 @@ Removal evidence:
 
 - `Build.ps1` is Tauri-only and no longer accepts `-Frontend LegacyWpf`.
 - `frontend/` and `frontend.Tests/` are removed from the active repository structure.
-- Installer UI helper assets/classes are owned by `installer/Fluxora.Installer/`, not linked from the removed frontend.
+- Setup and Updater UI are isolated renderer targets under `frontend-tauri/`; installation, update and recovery behavior is owned by the static C++ installer core.
 - Installer core resolves the installed app through `Fluxora.exe` only.
 - README, AGENTS and project rules state that new product UI belongs in `frontend-tauri/`.
 

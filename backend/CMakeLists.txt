@@ -1,9 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(FluxoraCore VERSION 0.1.0 LANGUAGES CXX)
+set(FLUXORA_PRODUCT_VERSION "0.0.0" CACHE STRING
+    "Fluxora product version supplied by the packaging pipeline")
+if(NOT FLUXORA_PRODUCT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR
+        "FLUXORA_PRODUCT_VERSION must be a three-part numeric release version.")
+endif()
+
+project(FluxoraCore VERSION "${FLUXORA_PRODUCT_VERSION}" LANGUAGES CXX)
 
 include(CTest)
 include(FetchContent)
+
+option(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES
+    "Allow operator-supplied CMake dependencies instead of the release-pinned sources"
+    OFF)
 
 # The user-mode virtual file system (the MO2/usvfs-style "mods appear in the game
 # folder without being copied" feature) needs an inline-hooking engine. We use
@@ -11,8 +22,27 @@ include(FetchContent)
 # off (-DFLUXORA_ENABLE_VFS=OFF) to build the core without it; launching then
 # behaves like a plain run.
 option(FLUXORA_ENABLE_VFS "Build the user-mode virtual file system (requires Microsoft Detours)" ON)
+option(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER
+    "Compile the private ModdingFlow OAuth connection capability (Windows only)"
+    OFF)
+option(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER
+    "Compile the managed ModdingFlow remote download provider (Windows only)"
+    OFF)
+if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER AND NOT WIN32)
+    message(FATAL_ERROR "The ModdingFlow OAuth connection capability currently requires Windows.")
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER AND NOT WIN32)
+    message(FATAL_ERROR "The ModdingFlow managed download provider currently requires Windows.")
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER AND
+   NOT FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    message(FATAL_ERROR
+        "The ModdingFlow managed download provider requires FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER=ON.")
+endif()
 
-find_package(spdlog CONFIG QUIET)
+if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
+    find_package(spdlog CONFIG QUIET)
+endif()
 if(NOT TARGET spdlog::spdlog_header_only)
     FetchContent_Declare(
         spdlog
@@ -23,7 +53,9 @@ if(NOT TARGET spdlog::spdlog_header_only)
     FetchContent_MakeAvailable(spdlog)
 endif()
 
-find_package(ZLIB QUIET)
+if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
+    find_package(ZLIB QUIET)
+endif()
 if(TARGET ZLIB::ZLIB)
     set(FLUXORA_ZLIB_TARGET ZLIB::ZLIB)
 else()
@@ -43,7 +75,9 @@ else()
     endif()
 endif()
 
-find_package(zstd CONFIG QUIET)
+if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
+    find_package(zstd CONFIG QUIET)
+endif()
 if(TARGET zstd::libzstd_static)
     set(FLUXORA_ZSTD_TARGET zstd::libzstd_static)
 else()
@@ -129,7 +163,7 @@ if(NOT FLUXORA_EMBEDDED_GAME_DEFINITIONS_COPY_RESULT EQUAL 0)
 endif()
 
 # --------------------------------------------------------------------------
-# FluxoraCore: the C++ core / business logic exposed to the C# UI over a C ABI.
+# FluxoraCore: the C++ core / business logic exposed to native hosts over a C ABI.
 # --------------------------------------------------------------------------
 add_library(FluxoraCore SHARED
     src/Services/AiRollbackCheckpointStore.cpp
@@ -144,6 +178,7 @@ add_library(FluxoraCore SHARED
     src/Services/BuildFileWorkspaceService.cpp
     src/Services/BulkFileCopyService.cpp
     src/GameSupport/DefinitionBackedGameSupport.cpp
+    src/GameSupport/GameDefinition.cpp
     src/GameSupport/GameDefinitionLoader.cpp
     src/GameSupport/GameDetectionService.cpp
     src/GameSupport/GameHealthCheckService.cpp
@@ -160,6 +195,13 @@ add_library(FluxoraCore SHARED
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
     src/Services/DownloadTransferLimiter.cpp
+    src/Services/RemoteDownloadContracts.cpp
+    src/Services/RemoteDownloadCoordinator.cpp
+    src/Services/RemoteDownloadFileStore.cpp
+    src/Services/RemoteDownloadProviderRegistry.cpp
+    src/Services/RemoteDownloadSidecarStore.cpp
+    src/Services/RemoteDownloadTransferService.cpp
+    src/Services/SignedRemoteDownloadTransport.cpp
     src/Services/EffectiveFileTreeService.cpp
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp
@@ -172,9 +214,24 @@ add_library(FluxoraCore SHARED
     src/Services/GrassCacheProcessRunner.cpp
     src/Services/GrassCacheService.cpp
     src/Services/ManagedAiOverrideService.cpp
+    src/Services/LogRedaction.cpp
     src/Services/Logger.cpp
     src/Services/LodGeneratorIntegrationService.cpp
     src/Services/ModService.cpp
+    src/Services/ModdingFlowConfiguration.cpp
+    src/Services/ModdingFlowConnectionCapability.cpp
+    src/Services/ModdingFlowExternalConnectionProvider.cpp
+    src/Services/ModdingFlowApiResponse.cpp
+    src/Services/ModdingFlowArtifactLookupService.cpp
+    src/Services/ModdingFlowDownloadQueueService.cpp
+    src/Services/ModdingFlowAuthService.cpp
+    src/Services/ModdingFlowHttpTransport.cpp
+    src/Services/ModdingFlowJwksIdTokenVerifier.cpp
+    src/Services/ModdingFlowOAuthHttpClient.cpp
+    src/Services/ModdingFlowPublicApiClient.cpp
+    src/Services/ModdingFlowProviderCatalog.cpp
+    src/Services/ModdingFlowInstallPlanService.cpp
+    src/Services/ModdingFlowRemoteDownloadResolver.cpp
     src/Services/ModUpdateService.cpp
     src/Services/NexusDownloadDuplicateResolver.cpp
     src/Services/NexusFileLineageResolver.cpp
@@ -197,6 +254,7 @@ add_library(FluxoraCore SHARED
     src/Services/TemplateService.cpp
     src/Services/VfsMountPlan.cpp
     src/Services/WorkspaceRevisionJournal.cpp
+    src/Services/WindowsSecureCredentialStore.cpp
     src/Services/VirtualFileSystemService.cpp
     src/Support/LaunchDescriptorStore.cpp
     src/Storage/AtomicFileStore.cpp
@@ -215,7 +273,16 @@ target_include_directories(FluxoraCore
 )
 
 target_compile_features(FluxoraCore PUBLIC cxx_std_20)
-target_compile_definitions(FluxoraCore PRIVATE FLUXORA_CORE_EXPORTS)
+target_compile_definitions(FluxoraCore PRIVATE
+    FLUXORA_CORE_EXPORTS
+    FLUXORA_PRODUCT_VERSION="${FLUXORA_PRODUCT_VERSION}"
+)
+if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    target_compile_definitions(FluxoraCore PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+    target_compile_definitions(FluxoraCore PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+endif()
 target_link_libraries(
     FluxoraCore
     PRIVATE
@@ -249,7 +316,16 @@ target_include_directories(FluxoraBridgeHost
 )
 
 target_compile_features(FluxoraBridgeHost PRIVATE cxx_std_20)
+target_compile_definitions(FluxoraBridgeHost PRIVATE
+    FLUXORA_PRODUCT_VERSION="${FLUXORA_PRODUCT_VERSION}"
+)
 target_link_libraries(FluxoraBridgeHost PRIVATE FluxoraCore)
+if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+    target_compile_definitions(FluxoraBridgeHost PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+endif()
+if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+    target_compile_definitions(FluxoraBridgeHost PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+endif()
 
 if(MSVC)
     target_compile_options(FluxoraBridgeHost PRIVATE /W4 /permissive- /utf-8)
@@ -258,11 +334,23 @@ else()
 endif()
 
 # --------------------------------------------------------------------------
-# FluxoraInstallerCore: native installer logic used by the WPF setup UI.
+# FluxoraInstallerCore: shared C++ static core for Tauri Setup and Updater.
 # --------------------------------------------------------------------------
 if(WIN32)
-    add_library(FluxoraInstallerCore SHARED
+    add_library(FluxoraInstallerCore STATIC
+        src/Installer/ApplicationLaunchService.cpp
         src/Installer/FluxoraInstallerApi.cpp
+        src/Installer/HealthAcknowledgementService.cpp
+        src/Installer/InstallerLogService.cpp
+        src/Installer/ParentProcessWaiter.cpp
+        src/Installer/RecoveryServices.cpp
+        src/Installer/SetupBootstrapService.cpp
+        src/Installer/SignedInstallReceipt.cpp
+        src/Installer/UpdateEngine.cpp
+        src/Installer/UpdateProcessLock.cpp
+        src/Installer/UpdateWorkflowService.cpp
+        src/Installer/UpdateWorkflowRequest.cpp
+        src/Installer/WindowsIntegration.cpp
     )
 
     target_include_directories(FluxoraInstallerCore
@@ -271,8 +359,19 @@ if(WIN32)
     )
 
     target_compile_features(FluxoraInstallerCore PUBLIC cxx_std_20)
-    target_compile_definitions(FluxoraInstallerCore PRIVATE FLUXORA_INSTALLER_EXPORTS)
-    target_link_libraries(FluxoraInstallerCore PRIVATE bcrypt ole32 shell32 spdlog::spdlog_header_only)
+    target_compile_definitions(FluxoraInstallerCore PUBLIC FLUXORA_INSTALLER_STATIC)
+    set_property(
+        TARGET FluxoraInstallerCore
+        PROPERTY MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_libraries(FluxoraInstallerCore PRIVATE
+        advapi32
+        bcrypt
+        crypt32
+        ole32
+        shell32
+        spdlog::spdlog_header_only)
+    target_link_libraries(FluxoraInstallerCore PRIVATE version)
 
     if(MSVC)
         target_compile_options(FluxoraInstallerCore PRIVATE /W4 /permissive- /utf-8)
@@ -287,7 +386,7 @@ endif()
 if(FLUXORA_ENABLE_VFS AND WIN32)
     # Obtain Detours. Prefer a local copy when offline (-DDETOURS_SOURCE_DIR=...),
     # otherwise fetch the pinned release.
-    if(DEFINED DETOURS_SOURCE_DIR)
+    if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES AND DEFINED DETOURS_SOURCE_DIR)
         set(detours_root "${DETOURS_SOURCE_DIR}")
     else()
         include(FetchContent)
@@ -366,8 +465,115 @@ if(FLUXORA_ENABLE_VFS AND WIN32)
     endif()
 endif()
 
+if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
+    set(FLUXORA_CMAKE_DEPENDENCY_SOURCE "system-or-operator-supplied")
+    set(FLUXORA_CMAKE_DEPENDENCY_ALLOW_SYSTEM "true")
+else()
+    set(FLUXORA_CMAKE_DEPENDENCY_SOURCE "release-pinned FetchContent source")
+    set(FLUXORA_CMAKE_DEPENDENCY_ALLOW_SYSTEM "false")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/fluxora-cmake-dependencies.json"
+"{
+  \"schemaVersion\": 1,
+  \"allowSystemDependencies\": ${FLUXORA_CMAKE_DEPENDENCY_ALLOW_SYSTEM},
+  \"dependencies\": [
+    {\"name\":\"spdlog\",\"version\":\"1.17.0\",\"source\":\"${FLUXORA_CMAKE_DEPENDENCY_SOURCE}: https://github.com/gabime/spdlog.git@v1.17.0\",\"scope\":\"runtime-distributed\"},
+    {\"name\":\"zlib\",\"version\":\"1.3.1\",\"source\":\"${FLUXORA_CMAKE_DEPENDENCY_SOURCE}: https://github.com/madler/zlib.git@v1.3.1\",\"scope\":\"runtime-distributed\"},
+    {\"name\":\"zstd\",\"version\":\"1.5.7\",\"source\":\"${FLUXORA_CMAKE_DEPENDENCY_SOURCE}: https://github.com/facebook/zstd.git@v1.5.7\",\"scope\":\"runtime-distributed\"},
+    {\"name\":\"Microsoft Detours\",\"version\":\"4.0.1\",\"source\":\"${FLUXORA_CMAKE_DEPENDENCY_SOURCE}: https://github.com/microsoft/Detours.git@4.0.1\",\"scope\":\"runtime-distributed\"},
+    {\"name\":\"GoogleTest\",\"version\":\"1.17.0\",\"source\":\"${FLUXORA_CMAKE_DEPENDENCY_SOURCE}: https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip\",\"scope\":\"build-test-only\"}
+  ]
+}
+")
+
 option(FLUXORA_BUILD_TESTS "Build Fluxora C++ unit tests" ${BUILD_TESTING})
 if(FLUXORA_BUILD_TESTS)
+    if(WIN32)
+        # Protocol tests must never initialize the shipping core because startup
+        # session discovery can legitimately mutate Windows Credential Manager.
+        # Build a non-shipping core/host pair with a compile-time in-memory store.
+        get_target_property(
+            FLUXORA_BRIDGE_PROTOCOL_CORE_SOURCES
+            FluxoraCore
+            SOURCES)
+        add_library(FluxoraBridgeProtocolCore SHARED
+            ${FLUXORA_BRIDGE_PROTOCOL_CORE_SOURCES})
+        target_include_directories(FluxoraBridgeProtocolCore
+            PUBLIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+            PRIVATE
+                ${FLUXORA_GENERATED_INCLUDE_DIR}
+                ${CMAKE_CURRENT_SOURCE_DIR}/vfs/include)
+        target_compile_features(FluxoraBridgeProtocolCore PUBLIC cxx_std_20)
+        target_compile_definitions(FluxoraBridgeProtocolCore PRIVATE
+            FLUXORA_CORE_EXPORTS
+            FLUXORA_BRIDGE_PROTOCOL_HARNESS
+            FLUXORA_PRODUCT_VERSION="${FLUXORA_PRODUCT_VERSION}")
+        if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+            target_compile_definitions(
+                FluxoraBridgeProtocolCore
+                PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+        endif()
+        if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+            target_compile_definitions(
+                FluxoraBridgeProtocolCore
+                PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+        endif()
+        target_link_libraries(FluxoraBridgeProtocolCore PRIVATE
+            spdlog::spdlog_header_only
+            ${FLUXORA_ZLIB_TARGET}
+            ${FLUXORA_ZSTD_TARGET}
+            advapi32
+            bcrypt
+            crypt32
+            gdiplus
+            normaliz
+            rstrtmgr
+            shell32
+            version
+            winhttp
+            ws2_32)
+        if(MSVC)
+            target_compile_options(
+                FluxoraBridgeProtocolCore
+                PRIVATE /W4 /permissive- /utf-8)
+        else()
+            target_compile_options(
+                FluxoraBridgeProtocolCore
+                PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+
+        add_executable(FluxoraBridgeHostProtocolHarness
+            src/BridgeHost/FluxoraBridgeHost.cpp)
+        target_include_directories(FluxoraBridgeHostProtocolHarness
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_features(FluxoraBridgeHostProtocolHarness PRIVATE cxx_std_20)
+        target_compile_definitions(FluxoraBridgeHostProtocolHarness PRIVATE
+            FLUXORA_PRODUCT_VERSION="${FLUXORA_PRODUCT_VERSION}")
+        if(FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+            target_compile_definitions(
+                FluxoraBridgeHostProtocolHarness
+                PRIVATE FLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER)
+        endif()
+        if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+            target_compile_definitions(
+                FluxoraBridgeHostProtocolHarness
+                PRIVATE FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
+        endif()
+        target_link_libraries(
+            FluxoraBridgeHostProtocolHarness
+            PRIVATE FluxoraBridgeProtocolCore)
+        if(MSVC)
+            target_compile_options(
+                FluxoraBridgeHostProtocolHarness
+                PRIVATE /W4 /permissive- /utf-8)
+        else()
+            target_compile_options(
+                FluxoraBridgeHostProtocolHarness
+                PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endif()
+
     add_subdirectory(tests)
 endif()
 

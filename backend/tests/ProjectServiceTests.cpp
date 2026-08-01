@@ -176,6 +176,10 @@ namespace fluxora::tests
         EXPECT_NE(manifest.find("\"executablePath\":\"SkyrimSE.exe\""), std::string::npos);
         EXPECT_NE(manifest.find("\"gameId\":\"skyrimse\""), std::string::npos);
         EXPECT_NE(manifest.find("\"gameDisplayName\":\"Skyrim Special Edition\""), std::string::npos);
+        EXPECT_NE(
+            manifest.find(
+                "\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]}"),
+            std::string::npos);
         EXPECT_NE(manifest.find("\"projectFingerprint\""), std::string::npos);
         EXPECT_NE(manifest.find("\"detectionSource\":\"manual-path\""), std::string::npos);
         EXPECT_NE(manifest.find("\"detectionConfidence\":\"explicit\""), std::string::npos);
@@ -187,6 +191,24 @@ namespace fluxora::tests
         EXPECT_EQ(opened.project.fingerprint->gameId, L"skyrimse");
         EXPECT_EQ(opened.project.fingerprint->gameDisplayName, L"Skyrim Special Edition");
         EXPECT_EQ(opened.project.fingerprint->selectedExecutable, std::filesystem::path(L"SkyrimSE.exe"));
+        ASSERT_EQ(opened.resolvedTemplate.externalProviderGameSlugs.size(), 1U);
+        EXPECT_EQ(
+            opened.resolvedTemplate.externalProviderGameSlugs.at(L"moddingflow"),
+            (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
+
+        std::string invalidManifest = manifest;
+        constexpr std::string_view providerMarker =
+            "\"externalProviderGameSlugs\":{\"moddingflow\"";
+        const std::size_t providerOffset = invalidManifest.find(providerMarker);
+        ASSERT_NE(providerOffset, std::string::npos);
+        invalidManifest.replace(
+            providerOffset,
+            providerMarker.size(),
+            "\"externalProviderGameSlugs\":{\"ModdingFlow\"");
+        writeTextFile(project.configPath, invalidManifest);
+        EXPECT_THROW(
+            static_cast<void>(projects.openProjectConfig(project.configPath)),
+            std::invalid_argument);
 #endif
     }
 

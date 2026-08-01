@@ -59,6 +59,54 @@ export const aiProviderDiagnostic = (
     };
   }
 
+  switch (status.quota.availability) {
+    case 'connectionRequired':
+      return {
+        level: 'error',
+        title: 'Reconnect ModdingFlow',
+        message: 'Reconnect once to grant the new agent:run permission for managed Fluxora AI.'
+      };
+    case 'premiumRequired':
+      return {
+        level: 'error',
+        title: 'Premium required',
+        message: 'Managed Fluxora AI is available only with an active Premium subscription.'
+      };
+    case 'quotaExhausted':
+      return {
+        level: 'error',
+        title: 'Managed AI quota exhausted',
+        message: 'The managed-cost allowance is exhausted until the displayed reset date.'
+      };
+    case 'searchQuotaExhausted':
+      return {
+        level: 'error',
+        title: 'Search quota exhausted',
+        message: 'The managed Google Search allowance is exhausted until the displayed reset date.'
+      };
+    case 'rateLimited':
+      return {
+        level: 'error',
+        title: 'Managed AI rate limited',
+        message: 'Wait briefly before starting another managed request.'
+      };
+    case 'temporaryServerError':
+      return {
+        level: 'error',
+        title: 'Managed AI temporarily unavailable',
+        message: 'The Website gateway or accounting service is temporarily unavailable.'
+      };
+    case 'disabled':
+      return {
+        level: 'error',
+        title: 'Managed AI is not enabled',
+        message: 'Managed Fluxora AI is not enabled for this account or rollout stage.'
+      };
+    case 'available':
+    case 'byok':
+      break;
+  }
+
   const provider = status.providers.find((candidate) => candidate.id === FLUXORA_AI_PROVIDER_ID);
   const model = status.models.find((candidate) => candidate.id === FLUXORA_AI_MODEL_ID);
   if (!provider || !model) {

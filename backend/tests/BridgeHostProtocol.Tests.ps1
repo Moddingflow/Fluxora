@@ -8,13 +8,19 @@ param(
     [ValidateRange(50, 60000)]
     [int]$ExitTimeoutMilliseconds = 5000,
 
-    [switch]$RunTimeoutProbe
+    [switch]$RunTimeoutProbe,
+
+    [switch]$ExpectPrivateModdingFlowCapability,
+
+    [switch]$ExpectInMemoryModdingFlowCredentialStore,
+
+    [switch]$ExpectManagedModdingFlowDownloadCapability
 )
 
 $ErrorActionPreference = 'Stop'
 
 if (-not $RunTimeoutProbe -and [string]::IsNullOrWhiteSpace($HostPath)) {
-    $HostPath = Join-Path $PSScriptRoot '..\..\build\backend\Release\FluxoraBridgeHost.exe'
+    $HostPath = Join-Path $PSScriptRoot '..\..\build\backend\Release\FluxoraBridgeHostProtocolHarness.exe'
 }
 
 function Wait-TextTask {
@@ -455,6 +461,158 @@ foreach ($removedPreviewMethod in @('mods.listPreviewVariants', 'mods.readPrevie
     }
 }
 
+foreach ($privateModdingFlowMethod in @(
+    'connections.beginConnect',
+    'connections.completeConnect',
+    'connections.cancelPendingConnect',
+    'moddingflow.lookupArtifactPreview',
+    'moddingflow.previewActivationPlan'
+)) {
+    $privateModdingFlowResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = ($privateModdingFlowMethod -replace '\.', '_')
+        method = $privateModdingFlowMethod
+        params = @{}
+        meta = $requestMeta
+    }
+    $expectedPrivateCode = if ($ExpectPrivateModdingFlowCapability) {
+        'bridge.invalidRequest'
+    } else {
+        'bridge.methodNotFound'
+    }
+    if ($privateModdingFlowResponse.error.code -ne $expectedPrivateCode) {
+        throw "Expected private route $privateModdingFlowMethod to return $expectedPrivateCode, received: $($privateModdingFlowResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+}
+
+$managedDownloadQueueResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'downloads_queue_moddingflow_artifact_route'
+    method = 'downloads.queueModdingFlowArtifact'
+    params = @{}
+    meta = $requestMeta
+}
+$expectedManagedDownloadCode = if ($ExpectManagedModdingFlowDownloadCapability) {
+    'bridge.invalidRequest'
+} else {
+    'bridge.methodNotFound'
+}
+if ($managedDownloadQueueResponse.error.code -ne $expectedManagedDownloadCode) {
+    throw "Expected managed ModdingFlow download route to return $expectedManagedDownloadCode, received: $($managedDownloadQueueResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+if ($ExpectManagedModdingFlowDownloadCapability) {
+    $managedDownloadUnknownParamResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'downloads_queue_moddingflow_artifact_unknown_param'
+        method = 'downloads.queueModdingFlowArtifact'
+        params = @{
+            projectDirectory = 'C:\trusted-project'
+            artifactId = '44444444-4444-4444-8444-444444444444'
+            modId = '55555555-5555-4555-8555-555555555555'
+            versionId = '66666666-6666-4666-8666-666666666666'
+            jobId = '77777777-7777-4777-8777-777777777777'
+            signedUrl = 'https://storage.invalid/queue-secret-must-not-reflect'
+        }
+        meta = $requestMeta
+    }
+    $managedDownloadUnknownParamJson =
+        $managedDownloadUnknownParamResponse | ConvertTo-Json -Depth 10 -Compress
+    if ($managedDownloadUnknownParamResponse.error.code -ne 'bridge.invalidRequest' -or
+        $managedDownloadUnknownParamJson.Contains('queue-secret-must-not-reflect')) {
+        throw "Managed ModdingFlow queue accepted or reflected an unknown param: $managedDownloadUnknownParamJson"
+    }
+}
+
+if ($ExpectPrivateModdingFlowCapability) {
+    $invalidPrivateLookupResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'moddingflow_lookup_artifact_preview_invalid_auth'
+        method = 'moddingflow.lookupArtifactPreview'
+        params = @{
+            artifactId = '44444444-4444-4444-8444-444444444444'
+            authMode = 'Bearer token-secret-must-not-reflect'
+        }
+        meta = $requestMeta
+    }
+    $invalidPrivateLookupJson = $invalidPrivateLookupResponse | ConvertTo-Json -Depth 10 -Compress
+    if ($invalidPrivateLookupResponse.error.code -ne 'bridge.invalidRequest' -or
+        $invalidPrivateLookupJson.Contains('token-secret-must-not-reflect')) {
+        throw "Private artifact lookup did not reject and redact invalid auth: $invalidPrivateLookupJson"
+    }
+
+    $unknownPrivateLookupParamResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'moddingflow_lookup_artifact_preview_unknown_param'
+        method = 'moddingflow.lookupArtifactPreview'
+        params = @{
+            artifactId = '44444444-4444-4444-8444-444444444444'
+            authMode = 'anonymous'
+            signedUrl = 'https://storage.invalid/signed-secret-must-not-reflect'
+        }
+        meta = $requestMeta
+    }
+    $unknownPrivateLookupParamJson = $unknownPrivateLookupParamResponse | ConvertTo-Json -Depth 10 -Compress
+    if ($unknownPrivateLookupParamResponse.error.code -ne 'bridge.invalidRequest' -or
+        $unknownPrivateLookupParamJson.Contains('signed-secret-must-not-reflect')) {
+        throw "Private artifact lookup accepted or reflected an unknown param: $unknownPrivateLookupParamJson"
+    }
+
+    $invalidArtifactLookupResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'moddingflow_lookup_artifact_preview_invalid_id'
+        method = 'moddingflow.lookupArtifactPreview'
+        params = @{
+            artifactId = '44444444-4444-4444-8444-44444444444A'
+            authMode = 'anonymous'
+        }
+        meta = $requestMeta
+    }
+    $invalidArtifactLookupJson = $invalidArtifactLookupResponse | ConvertTo-Json -Depth 10 -Compress
+    if ($invalidArtifactLookupResponse.error.code -ne 'moddingflow.invalidRequest' -or
+        $invalidArtifactLookupResponse.meta.operationId -ne 'op_bridge_protocol_test' -or
+        $invalidArtifactLookupJson.Contains('44444444-4444-4444-8444-44444444444A')) {
+        throw "Private artifact lookup lost typed invalid-request redaction: $invalidArtifactLookupJson"
+    }
+
+    $optionalPlanResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'moddingflow_activation_plan_optional_rejected'
+        method = 'moddingflow.previewActivationPlan'
+        params = @{
+            artifactId = '44444444-4444-4444-8444-444444444444'
+            gameSlug = 'skyrim-se'
+            gameVersion = '1.6.1170'
+            includeOptional = $true
+            idempotencyKey = 'activation-plan-safe-key'
+        }
+        meta = $requestMeta
+    }
+    if ($optionalPlanResponse.error.code -ne 'bridge.invalidRequest') {
+        throw "Private activation plan accepted optional dependencies: $($optionalPlanResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
+    $unknownPlanParamResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = 'moddingflow_activation_plan_unknown_param'
+        method = 'moddingflow.previewActivationPlan'
+        params = @{
+            artifactId = '44444444-4444-4444-8444-444444444444'
+            gameSlug = 'skyrim-se'
+            gameVersion = '1.6.1170'
+            includeOptional = $false
+            idempotencyKey = 'activation-plan-safe-key'
+            signedUrl = 'https://storage.invalid/plan-secret-must-not-reflect'
+        }
+        meta = $requestMeta
+    }
+    $unknownPlanParamJson = $unknownPlanParamResponse | ConvertTo-Json -Depth 10 -Compress
+    if ($unknownPlanParamResponse.error.code -ne 'bridge.invalidRequest' -or
+        $unknownPlanParamJson.Contains('plan-secret-must-not-reflect')) {
+        throw "Private activation plan accepted or reflected an unknown param: $unknownPlanParamJson"
+    }
+}
+
 $profileAwareFomodAnalyzeResponse = Invoke-BridgeHostRequest -Request @{
     jsonrpc = '2.0'
     id = 'downloads_analyze_fomod_profile_contract'
@@ -514,6 +672,10 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $gameDataDirectory 'Skyrim.esm'), 'master')
 
     $fixtureEnvironment = @{ APPDATA = $appDataDirectory }
+    $credentialAuditPath = Join-Path $persistedPluginsFixtureRoot 'credential-store-audit.log'
+    if ($ExpectInMemoryModdingFlowCredentialStore) {
+        $fixtureEnvironment['FLUXORA_BRIDGE_PROTOCOL_CREDENTIAL_AUDIT'] = $credentialAuditPath
+    }
 
     $connectionsStatusResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
         jsonrpc = '2.0'
@@ -525,11 +687,32 @@ try {
     if ($connectionsStatusResponse.result.ok -ne $true) {
         throw "Expected connections.listStatus success, received: $($connectionsStatusResponse | ConvertTo-Json -Depth 10 -Compress)"
     }
+    if ($ExpectInMemoryModdingFlowCredentialStore) {
+        $expectedCredentialAudit =
+            'in-memory:read:Fluxora/OAuth/production/moddingflow/desktop_mod_manager/refresh-token'
+        $credentialAudit = if (Test-Path -LiteralPath $credentialAuditPath -PathType Leaf) {
+            @(Get-Content -LiteralPath $credentialAuditPath)
+        } else {
+            @()
+        }
+        if ($expectedCredentialAudit -notin $credentialAudit) {
+            throw "Protocol harness did not prove use of its in-memory OAuth credential store."
+        }
+    }
     $connectionProviders = @($connectionsStatusResponse.result.data.providers)
-    if ($connectionProviders.Count -ne 1 -or
-        $connectionProviders[0].providerId -ne 'nexus' -or
-        $connectionProviders[0].state -notin @('notConfigured', 'notLinked') -or
-        $connectionProviders[0].operationId -ne 'op_bridge_protocol_test') {
+    $expectedProviderIds = if ($ExpectPrivateModdingFlowCapability) {
+        @('nexus', 'moddingflow')
+    } else {
+        @('nexus')
+    }
+    $invalidConnectionProvider = $connectionProviders | Where-Object {
+        $_.providerId -notin $expectedProviderIds -or
+        $_.state -notin @('notConfigured', 'notLinked') -or
+        $_.operationId -ne 'op_bridge_protocol_test'
+    }
+    if ($connectionProviders.Count -ne $expectedProviderIds.Count -or
+        @($invalidConnectionProvider).Count -ne 0 -or
+        @($expectedProviderIds | Where-Object { $_ -notin $connectionProviders.providerId }).Count -ne 0) {
         throw "connections.listStatus returned an invalid provider snapshot: $($connectionsStatusResponse | ConvertTo-Json -Depth 10 -Compress)"
     }
 
@@ -677,6 +860,13 @@ $compatibleResponse = Invoke-BridgeHostRequest -Request @{
 
 if ($compatibleResponse.result.ok -ne $true -or $compatibleResponse.result.data.protocolVersion -ne '1.0') {
     throw "Expected a compatible 1.0 handshake, received: $($compatibleResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+if ($ExpectPrivateModdingFlowCapability) {
+    if ($null -eq $compatibleResponse.result.data.capabilities.features.moddingFlowAuth) {
+        throw "Enabled build did not advertise the private ModdingFlow auth capability: $($compatibleResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+} elseif ($null -ne $compatibleResponse.result.data.capabilities.features.moddingFlowAuth) {
+    throw "Default build unexpectedly advertised the private ModdingFlow auth capability: $($compatibleResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
 Write-Output 'FluxoraBridgeHost protocol negotiation tests passed.'

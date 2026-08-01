@@ -97,10 +97,35 @@ Create the Windows release payload and approved installer from the repository ro
 ./Build.ps1 -Configuration Release -Runtime win-x64
 ```
 
+The command above uses the current synchronized product version. To set a new
+stable SemVer and build every artifact with it, pass `-Version`:
+
+```powershell
+./Build.ps1 -Mode Local -Configuration Release -Runtime win-x64 -Version 0.1.0
+```
+
+`-Version` atomically updates the Tauri app, Setup, updater, package and Cargo
+version metadata before the build. The same number is embedded in the C++ bridge
+metadata and is shown as `Версия Fluxora` under Settings > Для разработчиков.
+
+Production mode offers cancel/current, Small (patch), Minor and Major choices
+before remote checks. It accepts short versions such as `0.1` as `0.1.0` and can
+checkpoint/publish current repository changes only after an exact preview and
+explicit confirmation. Fluxora does not require a paid Authenticode certificate
+or `signtool`; Windows builds can therefore show an unknown-publisher warning,
+while automatic update manifests and inventories remain detached-signature
+verified.
+
 The build pipeline creates:
 
 - `output/` as local staging for the Tauri app payload and native resources.
+- `build/installer-cache/FluxoraPayload.flxpkg.gz` as an internal compressed
+  payload embedded into Setup.
 - `output-installer/FluxoraSetup.exe` as the approved Windows release artifact.
+
+The Windows order is native backend/static installer core, isolated Tauri
+updater, main Tauri payload, compressed payload, then isolated Tauri Setup.
+There is no `dotnet`, WPF or installer-core DLL build/runtime dependency.
 
 Do not publish `output/`, loose Tauri bundler files, portable folders or ad-hoc archives. Public distribution goes through the installer/package pipeline.
 

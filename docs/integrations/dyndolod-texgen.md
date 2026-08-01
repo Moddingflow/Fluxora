@@ -8,17 +8,32 @@ tool and does not classify generic xEdit executables as TexGen or DynDOLOD.
 
 ## Automatic setup
 
-Before either tool starts, the C++ core:
+Before a managed tool starts, the C++ core:
 
-- creates or adopts the exact generated mods `TexGen Output` and
-  `DynDOLOD Output`;
-- registers them with the providers `generated-texgen` and
-  `generated-dyndolod`;
-- enables them in every known profile and places them last, with TexGen Output
-  immediately before DynDOLOD Output;
-- removes any existing xEdit game-mode and `-o` arguments from the configured
-  command line, preserves unrelated arguments, and supplies `-sse` plus one
-  managed `-o:"..."` path.
+- creates, adopts, and registers only that tool's `<BuildName> - TexGen Output`
+  or `<BuildName> - DynDOLOD Output` with its matching generated provider;
+- safely renames only that tool's older managed output folder to the
+  build-prefixed name without changing its UUID or generated files;
+- never creates `DynDOLOD Output` during a TexGen launch or a placeholder
+  `TexGen Output` during a DynDOLOD launch;
+- requires an existing managed TexGen Output before DynDOLOD can start, because
+  DynDOLOD consumes it as input;
+- enables the outputs that actually exist in every known profile and places
+  them last, with TexGen Output immediately before DynDOLOD Output when both
+  exist;
+- decodes Qt/QSettings-escaped executable arguments imported from Mod Organizer;
+- removes any existing xEdit game-mode, `-d` Data-path, and `-o` output-path
+  arguments from the configured command line, preserves unrelated arguments,
+  and supplies exactly one `-sse`, one `-d:"<current build>\Data\"`, and one
+  managed `-o:"...\"` path with directory separators/trailing slashes shaped
+  for xEdit;
+- atomically updates only the matching `[TexGen]` or `[DynDOLOD]`
+  `OutputPath` keys under the tool's `Edit Scripts` tree before launch, so a
+  preset copied from MO2 cannot replace the managed output after the process
+  starts; all other preset options are preserved, and a multi-file failure is
+  rolled back before launch;
+- derives `-d` from the current resolved build on every launch, so copied,
+  transferred, or renamed builds cannot keep using an obsolete absolute path.
 
 TexGen launches without either generated output in its input profile.
 DynDOLOD launches with TexGen Output enabled as an input and without its own
@@ -29,7 +44,7 @@ without asking the user to edit profile order or executable arguments.
 
 The tool sees a drive-root virtual output path shaped like:
 
-`C:\Fluxora Tool Output\<build-hash>\<Tool Output>`
+`C:\Fluxora Tool Output\<build-hash>\<BuildName - Tool Output>`
 
 This keeps the configured `-o` outside the physical game, Steam library,
 Fluxora build, and mod-manager directories as recommended by the DynDOLOD
@@ -39,7 +54,8 @@ stage under:
 `<mods>\.fluxora-lod-output\<tool>\sessions\<session>\output`
 
 The hidden staging tree is excluded from the installed-mod inventory. The real
-`TexGen Output` or `DynDOLOD Output` remains untouched while the tool runs.
+build-prefixed `TexGen Output` or `DynDOLOD Output` remains untouched while the
+tool runs.
 After the last tracked VFS process exits successfully, Fluxora atomically
 replaces the previous output with the staged result, refreshes its fingerprint,
 and invalidates native mod/VFS caches. A failed, cancelled, watcher-error, or
@@ -51,8 +67,9 @@ Each tool has a per-build native lease under
 `.flow/tools/lod-generators/<tool>/`. A live tool process, or the live Fluxora
 manager before process binding finishes, blocks a concurrent launch of the same
 tool. The renderer always calls `executables.completeManagedLaunch` after
-process/VFS-holder tracking. Completion is idempotent and executes on the
-background bridge lane.
+process/VFS-holder tracking. Completion is idempotent and executes on the same
+main bridge host that prepared and owns the managed session; independent bridge
+lanes cannot lose its in-memory session registry before publication.
 
 If Fluxora exits unexpectedly, the next launch checks the stored process ids.
 A live process retains its lease. A dead session has only its owned hidden
@@ -72,4 +89,4 @@ recovered automatically.
   data inventory.
 
 The argument and workflow behavior follows the official
-[DynDOLOD documentation](https://dyndolod.info/).
+[DynDOLOD command-line documentation](https://dyndolod.info/Help/Command-Line-Argument).

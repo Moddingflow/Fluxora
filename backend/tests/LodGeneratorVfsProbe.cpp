@@ -31,9 +31,11 @@ namespace
 int wmain(int argc, wchar_t** argv)
 {
     std::filesystem::path gameData;
+    std::filesystem::path expectedGameData;
     std::filesystem::path output;
     std::filesystem::path status;
     bool skyrimSpecialEdition = false;
+    int dataPathArguments = 0;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -47,13 +49,18 @@ int wmain(int argc, wchar_t** argv)
         {
             output = argument.substr(3);
         }
+        else if (normalized.starts_with(L"-d:"))
+        {
+            ++dataPathArguments;
+            gameData = argument.substr(3);
+        }
         else if (normalized == L"--fluxora-probe-status" && index + 1 < argc)
         {
             status = argv[++index];
         }
-        else if (normalized == L"--fluxora-game-data" && index + 1 < argc)
+        else if (normalized == L"--fluxora-expected-game-data" && index + 1 < argc)
         {
-            gameData = argv[++index];
+            expectedGameData = argv[++index];
         }
         else if (normalized == L"-tes5")
         {
@@ -65,9 +72,16 @@ int wmain(int argc, wchar_t** argv)
         }
     }
 
-    if (!skyrimSpecialEdition || output.empty() || status.empty() || gameData.empty())
+    if (!skyrimSpecialEdition || output.empty() || status.empty() || gameData.empty() ||
+        expectedGameData.empty() || dataPathArguments != 1)
     {
         return finish(status, 12, "managed-arguments-missing");
+    }
+    std::error_code equivalentError;
+    if (!std::filesystem::equivalent(gameData, expectedGameData, equivalentError) ||
+        equivalentError)
+    {
+        return finish(status, 15, "managed-data-path-mismatch");
     }
 
     std::ifstream source(gameData / L"textures" / L"active-source.dds", std::ios::binary);

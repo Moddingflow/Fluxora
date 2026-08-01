@@ -1,0 +1,46 @@
+:root,
+:root[data-theme="default"] {
+  color-scheme: dark;
+  --installer-background: var(--flx-bg-0);
+  --installer-surface: var(--surface-app);
+  --installer-surface-muted: var(--surface-inset);
+  --installer-surface-raised: var(--surface-raised);
+  --installer-text: var(--text-body);
+  --installer-text-strong: var(--text-strong);
+  --installer-muted: var(--text-muted);
+  --installer-border: var(--border-default);
+  --installer-accent: var(--accent);
+  --installer-on-accent: var(--on-accent);
+  --installer-success: #6fcf97;
+  --installer-error: #ff8a8a;
+  --installer-focus: var(--focus-ring);
+  --installer-progress: var(--flx-fill-accent);
+  --installer-accent-hover: rgba(var(--flx-accent-rgb), 0.045);
+  --installer-accent-selected: rgba(var(--flx-accent-rgb), 0.07);
+  --installer-critical-hover: #b4232f;
+  --installer-on-critical: #fff;
+}
+
+@media (forced-colors: active) {
+  :root,
+  :root[data-theme="default"] {
+    --installer-background: Canvas;
+    --installer-surface: Canvas;
+    --installer-surface-muted: Canvas;
+    --installer-surface-raised: Canvas;
+    --installer-text: CanvasText;
+    --installer-text-strong: CanvasText;
+    --installer-muted: GrayText;
+    --installer-border: CanvasText;
+    --installer-accent: Highlight;
+    --installer-on-accent: HighlightText;
+    --installer-success: CanvasText;
+    --installer-error: CanvasText;
+    --installer-focus: Highlight;
+    --installer-progress: Highlight;
+    --installer-accent-hover: Canvas;
+    --installer-accent-selected: Canvas;
+    --installer-critical-hover: Highlight;
+    --installer-on-critical: HighlightText;
+  }
+}

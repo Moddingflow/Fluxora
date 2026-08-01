@@ -219,6 +219,7 @@ describe('settings workspace state', () => {
       'connections',
       'language',
       'privacy',
+      'legal',
       'transfer',
       'developers'
     ]);
@@ -226,6 +227,7 @@ describe('settings workspace state', () => {
       { id: 'connections', label: 'Connections', hint: '' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
       { id: 'privacy', label: 'Privacy', hint: 'Microphone' },
+      { id: 'legal', label: 'Legal documents', hint: 'Offline' },
       { id: 'transfer', label: 'Transfer', hint: 'MO2 import' },
       { id: 'developers', label: 'Для разработчиков', hint: 'Debug' }
     ]);

@@ -595,6 +595,23 @@ namespace fluxora
                 orderItemId,
                 targetIndex,
                 pathSettings_.modsDirectory(projectDirectory));
+        const auto moved = std::find_if(
+            records.begin(),
+            records.end(),
+            [orderItemId](const ProfileOrderItemRecord& record)
+            {
+                return record.id == orderItemId;
+            });
+        logger_.writeOperation(
+            LogLevel::Info,
+            "ModOrder",
+            "moveModOrderItem requestedVisibleIndex=" + std::to_string(targetIndex) +
+                ", resolvedVisibleIndex=" +
+                std::to_string(
+                    moved == records.end()
+                        ? -1
+                        : static_cast<int>(std::distance(records.begin(), moved))) +
+                ", visibleCount=" + std::to_string(records.size()) + ".");
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
         return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
     }

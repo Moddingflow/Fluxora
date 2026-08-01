@@ -19,6 +19,7 @@ namespace fluxora
     {
         NotConfigured,
         NotLinked,
+        Connecting,
         Restoring,
         Ready,
         TemporarilyUnavailable,
@@ -84,6 +85,11 @@ namespace fluxora
         void registerProvider(std::shared_ptr<IExternalConnectionProvider> provider);
         [[nodiscard]] ExternalConnectionSnapshot listStatus(std::wstring_view operationId) const;
         [[nodiscard]] ExternalConnectionSnapshot restoreAll(
+            std::wstring_view operationId,
+            std::chrono::milliseconds deadline = std::chrono::milliseconds(2500),
+            std::size_t attempt = 1);
+        [[nodiscard]] ExternalConnectionStatus restoreProvider(
+            std::wstring_view providerId,
             std::wstring_view operationId,
             std::chrono::milliseconds deadline = std::chrono::milliseconds(2500),
             std::size_t attempt = 1);

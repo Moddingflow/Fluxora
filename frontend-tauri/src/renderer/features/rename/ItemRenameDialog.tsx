@@ -1,4 +1,8 @@
-import { AlertTriangle, Pencil, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Pencil,
+  X
+} from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type FormEvent } from 'react';
 
 import { INSTALL_MOD_NAME_MAX_LENGTH } from '../../install-workspace-state';

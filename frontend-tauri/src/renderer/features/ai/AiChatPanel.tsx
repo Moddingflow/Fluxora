@@ -12,13 +12,14 @@ import {
   Send,
   Square,
   X
-} from 'lucide-react';
+} from '../../design-system/icons/lucide-compat';
 
 import type {
   FluxoraAiCitation,
   FluxoraAiExecution,
   FluxoraAiFileChange,
-  FluxoraAiFileChangeSet
+  FluxoraAiFileChangeSet,
+  FluxoraAiQuotaSnapshot
 } from '../../../shared/fluxora-api';
 import aiMicIcon from '../../../../../icons/ai-mic.svg';
 import type { AiProviderDiagnostic } from './ai-chat-settings';
@@ -28,12 +29,15 @@ import { buildVoiceContextHints } from './ai-voice-context';
 import { useAiVoiceInput } from './use-ai-voice-input';
 import { AiMicrophonePermissionDialog } from './AiMicrophonePermissionDialog';
 import { AiFileDiffPreviewDialog } from './AiFileDiffPreviewDialog';
+import { AiAccountGate } from './AiAccountGate';
+import { AiQuotaIndicator } from './AiQuotaIndicator';
 import { AiVoiceProcessingIndicator } from './AiVoiceProcessingIndicator';
 
 export interface AiChatPanelProps {
   hostReady: boolean;
   language?: string;
   providerDiagnostic?: AiProviderDiagnostic | null;
+  quota?: FluxoraAiQuotaSnapshot | null;
   showCheckedSites?: boolean;
   showDeveloperDiagnostics?: boolean;
   state: AiChatState;
@@ -41,6 +45,8 @@ export interface AiChatPanelProps {
   onCancel: () => void;
   onClose: () => void;
   onCloseChat: (chatId: string) => void;
+  onConnectAccount: () => void | Promise<void>;
+  onCreateAccount: () => void | Promise<void>;
   onCreateChat: () => void;
   onDraftChange: (value: string) => void;
   onOpenSource: (url: string) => void;
@@ -217,12 +223,15 @@ export function AiChatPanel({
   hostReady,
   language = 'en-us',
   providerDiagnostic,
+  quota,
   showDeveloperDiagnostics = false,
   state,
   voiceContextTerms = [],
   onCancel,
   onClose,
   onCloseChat,
+  onConnectAccount,
+  onCreateAccount,
   onCreateChat,
   onDraftChange,
   onOpenSource,
@@ -299,6 +308,7 @@ export function AiChatPanel({
 
   const canSend = Boolean(state.draft.trim()) && hostReady && !providerDiagnostic && !state.isRunning;
   const voiceCaptureActive = ['preparing', 'recording', 'transcribing'].includes(voice.state.phase);
+  const accountRequired = quota?.availability === 'connectionRequired';
   return (
     <aside className="ai-chat-panel" aria-label="Fluxora AI">
       {previewedFile ? (
@@ -356,7 +366,15 @@ export function AiChatPanel({
         </div>
       </header>
 
-      <div className="ai-chat-panel__body">
+      <div className={`ai-chat-panel__body${accountRequired ? ' ai-chat-panel__body--account-gate' : ''}`}>
+        {accountRequired ? (
+          <AiAccountGate
+            language={language}
+            onConnect={onConnectAccount}
+            onCreateAccount={onCreateAccount}
+          />
+        ) : (
+          <>
         <div className="ai-chat-tabs" role="tablist" aria-label="Build AI chats">
           <div className="ai-chat-tabs__list">
             {state.chats.map((chat) => (
@@ -379,6 +397,7 @@ export function AiChatPanel({
         </div>
 
         <ContextUsage state={state} />
+        <AiQuotaIndicator language={language} quota={quota} />
 
         {providerDiagnostic ? (
           <div className="ai-chat-diagnostic" data-level={providerDiagnostic.level} role="alert">
@@ -550,6 +569,8 @@ export function AiChatPanel({
             )}
           </div>
         </footer>
+          </>
+        )}
       </div>
     </aside>
   );

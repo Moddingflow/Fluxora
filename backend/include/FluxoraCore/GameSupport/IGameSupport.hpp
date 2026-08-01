@@ -21,6 +21,7 @@ namespace fluxora
         UiTemplateId uiTemplateId;
         std::vector<std::wstring> aliases;
         std::vector<std::wstring> domains;
+        ExternalProviderGameSlugMap externalProviderGameSlugs;
         std::vector<std::wstring> installFolderAliases;
     };
 

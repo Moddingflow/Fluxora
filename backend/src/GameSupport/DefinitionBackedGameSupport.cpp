@@ -107,6 +107,7 @@ namespace fluxora
                 definition.uiTemplateId,
                 definition.aliases,
                 definition.domains,
+                definition.externalProviderGameSlugs,
                 definition.installFolderAliases
             };
             rules.capabilities = definition.capabilities;

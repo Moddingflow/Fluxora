@@ -151,8 +151,12 @@ fn main() {
         .pointer("/ngioEvidenceFirst/bridgeMethods")
         .and_then(Value::as_array)
         .expect("live NGIO bridge trace");
-    assert!(bridge_methods.iter().any(|method| method == "buildFiles.search"));
-    assert!(bridge_methods.iter().any(|method| method == "buildFiles.readText"));
+    assert!(bridge_methods
+        .iter()
+        .any(|method| method == "buildFiles.search"));
+    assert!(bridge_methods
+        .iter()
+        .any(|method| method == "buildFiles.readText"));
     if ngio_status == "done" {
         assert!(
             ngio_response

@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type CSSProperties, type FormEvent } from 'react';
 
 import layersIcon from '../../../../../Icons/layers.svg';

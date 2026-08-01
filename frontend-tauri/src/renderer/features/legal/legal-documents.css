@@ -1,0 +1,110 @@
+.legal-documents {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.legal-documents__tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.legal-documents__tab {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.legal-documents__tab:hover {
+  color: var(--text-body);
+}
+
+.legal-documents__tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text-strong);
+}
+
+.legal-document {
+  min-height: 0;
+  padding: var(--space-4) var(--space-3) var(--space-5);
+  overflow: auto;
+  color: var(--text-body);
+  scrollbar-gutter: stable;
+}
+
+.legal-document h2,
+.legal-document h3,
+.legal-document h4 {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.legal-document h2 {
+  margin-top: 0;
+  font-size: var(--fs-lg);
+}
+
+.legal-document h3 {
+  font-size: var(--fs-md);
+}
+
+.legal-document h4 {
+  font-size: var(--fs-base);
+}
+
+.legal-document p {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-sm);
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.legal-document__list-item {
+  position: relative;
+  padding-left: var(--space-4);
+}
+
+.legal-document__list-item::before {
+  position: absolute;
+  left: var(--space-1);
+  color: var(--accent);
+  content: "—";
+}
+
+.legal-document__space {
+  display: block;
+  height: var(--space-2);
+}
+
+.legal-documents__effective-date {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-default);
+  color: var(--text-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.legal-documents[data-compact="true"] .legal-document {
+  padding-inline: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .legal-documents *,
+  .legal-documents *::before,
+  .legal-documents *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

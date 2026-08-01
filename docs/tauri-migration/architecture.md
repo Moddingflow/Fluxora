@@ -1,6 +1,6 @@
 # Fluxora Tauri + C++ bridge architecture
 
-Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16
+Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16; automatic application update contract: 2026-07-30
 
 Статус: Phase 14 Bridge/API surface and cross-platform capability model implemented on top of the Phase 1 decision. This document is the bridge/source-of-truth companion to `docs/tauri-migration/wpf-ui-inventory.md` and `docs/tauri-migration/cross-platform-support.md`.
 
@@ -125,7 +125,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - SQLite schema 12 stores resumable operations in `install_operations` and permits multiple `pending_install_sessions`. Both records retain stable `beforeOrderId` / `afterOrderId` anchors and `enqueueSequence`; `targetPosition` is migration fallback only. Operation payloads include the archive fingerprint, identity plan, FOMOD selection/manual decisions/context, placement overrides, target, progress, typed error and result.
 - Operation states are `queued`, `validating`, `extracting`, `configuringFomod`, `buildingStaging`, `projectingConflicts`, `waitingTarget`, `committing`, `finalizing`, `recovering`, `needsReview`, `completed`, `failed` and `cancelled`. `installs.progress` carries the complete `installOperation`; `installs.list/get` remain authoritative after a missed event or restart.
 - Renderer keeps pending sessions in a map keyed by `operationId`, inserts the optimistic row before awaiting `installs.submit`, animates it only on first insertion and preserves the existing row for Replace/Merge. A `needsReview` status reopens the installer with persisted session decisions; terminal failure removes a new row or restores the original Replace/Merge fields.
-- `mods.rebasePendingInstall` accepts stable neighbor anchors plus a fallback index. One missing neighbor uses the other; Replace/Merge retain the original mod UUID and profile-order row id, and metadata finalization aborts if either identity changes.
+- `mods.rebasePendingInstall` accepts stable neighbor anchors, the observed session revision, an explicit user-intent flag and a fallback index. One missing neighbor uses the other. A completed session accepts the move only when it is the same revision the renderer observed and the request carries confirmed user intent; stale or non-user replays are read-only. Replace/Merge retain the original mod UUID and profile-order row id, and metadata finalization aborts if either identity changes. Anchor resolution uses the visible order and compensates for removal of the moving row, so cached deleted/missing rows and separator boundaries cannot offset the final placement.
 - Regular and FOMOD Merge build a complete replacement staging directory while holding the target lock. Directory publication and SQLite finalization share a cross-process project gate with inventory/order mutations. The fixed acquisition order is target lock, project gate, then SQLite storage lock.
 - `.flow/install-transactions/<operationId>.json` records prepared, target-backed-up, promoted and committed stages. Restore removes only journal-confirmed staging, rolls back a confirmed backup/promotion when needed, preserves committed targets, and returns unknown or unsafe paths as `needsReview` without deleting them.
 - Atomic target publication retries transient Windows access/sharing/lock failures with bounded backoff. If the target remains busy, the original mod and persisted installer decisions remain intact and the durable operation becomes `needsReview` with `install.targetBusy`, so the same session can be retried instead of ending as a generic failure.
@@ -162,7 +162,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and executable launch configuration:
 
 - Native host routes `profiles.list`, `profiles.create`, `profiles.clone`, `profiles.rename`, `profiles.delete`, `executables.list`, `executables.save`, `executables.getIcon`, `executables.launch` and `executables.completeManagedLaunch` to existing C++ C ABI functions backed by `ProfileService`, `ExecutableService`, `BodySlideIntegrationService` and `LodGeneratorIntegrationService`.
-- Managed BodySlide, TexGen and DynDOLOD launches route `executables.completeManagedLaunch` to the background bridge lane. BodySlide owns its config overlay and single generated output; see [BodySlide integration](../integrations/bodyslide.md). TexGen/DynDOLOD automatically create and order `TexGen Output` before `DynDOLOD Output`, enforce `-sse` and a safe virtual `-o`, stage writes through VFS, and atomically publish only a successful non-empty run; see [TexGen and DynDOLOD integration](../integrations/dyndolod-texgen.md).
+- Managed BodySlide, TexGen and DynDOLOD launches route `executables.completeManagedLaunch` to the same main bridge host that prepared the session, so the host-local session registry remains available through atomic publication. BodySlide owns its config overlay and single generated output; see [BodySlide integration](../integrations/bodyslide.md). TexGen and DynDOLOD each create only their own output, order the outputs that exist, enforce `-sse` and a safe virtual `-o`, stage writes through VFS, and atomically publish only a successful non-empty run; DynDOLOD requires the existing managed TexGen Output as input. See [TexGen and DynDOLOD integration](../integrations/dyndolod-texgen.md).
 - Tauri Rust shell/facade expose typed `window.fluxora.profiles.*` and `window.fluxora.executables.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
 - Tauri Rust shell owns `window.fluxora.processes.waitForLaunchReady` and `waitForExit`. On Windows, process exit uses the signaled process handle as the primary path (`WaitForSingleObject` with an infinite wait on a dedicated native-wait thread); a 250 ms process-presence poll is retained only when the native wait cannot be established. After each exit, the shell enumerates live processes with `FluxoraVfs.dll` loaded and returns the next holder as `trackedKind: "vfsHolder"`, so the renderer keeps the launch splash attached to the process that still owns the active VFS session.
 - Renderer owns profile/executable search, selected-row state, in-app edit controls, two-step destructive confirmation state, icon/launch status display and capability explanations only.
@@ -175,18 +175,21 @@ Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and execut
 Phase 11 extends `fluxora.bridge.v1` to WPF-parity settings and MO2 transfer:
 
 - Native host routes `settings.getTheme`, `settings.setTheme`, generic `connections.listStatus`, `connections.restoreAll`, `connections.connect`, `connections.disconnect`, the compatible `nexus.*` surface, `transfer.analyzeMo2` and `transfer.importMo2` to C++ C ABI functions backed by `AppSettingsService`, `ExternalConnectionService`, `NexusModsAuthService` and `ModOrganizerImportService`; the Tauri shell handles `operations.cancel` for MO2 transfer by writing an operation cancel marker outside the bridge request mutex. The theme contract currently normalizes every value to the single supported dark theme.
-- `ExternalConnectionService` is the core-owned provider registry. Its renderer-safe snapshot uses `notConfigured | notLinked | restoring | ready | temporarilyUnavailable | reauthRequired`, restores linked providers in parallel under one native `2.5 s` deadline and returns non-linked providers from local state without network work. Nexus is the first adapter; future providers register another adapter instead of adding renderer-specific connection logic.
+- `ExternalConnectionService` is the core-owned provider registry. Its renderer-safe snapshot uses `notConfigured | notLinked | connecting | restoring | ready | temporarilyUnavailable | reauthRequired`, restores linked providers in parallel under one native `2.5 s` deadline and returns non-linked providers from local state without network work. Nexus is the first adapter; future providers register another adapter instead of adding renderer-specific connection logic.
 - The main renderer publishes `connections.listStatus` before network restoration, gates only catalog/workspace loading on `connections.restoreAll` under the shell `3 s` timeout, and retries retryable providers after `2/5/15/30/60 s` and then every five minutes. Online, focus and visible-window events request one deduplicated immediate retry. Secondary windows do not run this startup coordinator and restoration never opens OAuth consent automatically.
 - `NexusModsAuthService` uses the public OAuth client id `fluxora` by default, but trusted runs may override the OAuth client id through `FLUXORA_NEXUS_CLIENT_ID`, `NEXUS_CLIENT_ID`, `NEXUS_OAUTH_CLIENT_ID` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_ID` / `NEXUS_OAUTH_CLIENT_ID`.
 - When Nexus requires a confidential `client_secret` during token exchange, the C++ service resolves it from `FLUXORA_NEXUS_CLIENT_SECRET`, `NEXUS_CLIENT_SECRET`, `NEXUS_OAUTH_CLIENT_SECRET` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_SECRET` / `NEXUS_OAUTH_CLIENT_SECRET`; the secret is never exposed through the Tauri renderer facade or bridge DTOs.
 - Nexus OAuth uses the registered loopback callback `http://127.0.0.1:8089/callback` by default. `FLUXORA_NEXUS_REDIRECT_URI`, `NEXUS_REDIRECT_URI`, `NEXUS_OAUTH_REDIRECT_URI` or matching Fluxora Supabase credential entries may override it for a different registered client, but the authorize and token exchange requests must use the exact same redirect URI.
 - Nexus downloads use the linked account automatically after OAuth login. `DownloadService` obtains its request credential through `NexusModsAuthService` immediately before Nexus API/transfer calls, so expired OAuth access tokens are refreshed instead of being copied directly from persisted settings; refresh-token rotation is serialized across concurrent native requests. C++ protects OAuth tokens locally and can still accept a legacy `apikey` credential through `nexus.connectWithApiKey` for compatibility, but the renderer must not require users to paste a Personal API Key during the normal connection flow.
 - Tauri routes generic connection calls and compatible Nexus status/connect/disconnect calls through the dedicated connection bridge lane. Interactive OAuth connect keeps a 180-second request envelope around the native 120-second loopback-listener deadline plus token exchange, so it neither inherits the normal 10-second bridge timeout nor blocks main, background, download, install or safe-read work. `apiLimits.list` remains background work and does not determine whether a provider is `ready`.
+- ModdingFlow account connection remains hidden while the core feature gate does not advertise a `moddingflow` provider. The renderer facade never synthesizes a default-off row. A core-advertised gated row is resolved through dedicated Tauri status/connect/cancel/disconnect commands; until their trusted native adapter is registered they return a typed `notConfigured` result with the caller's `operationId`. The public generic bridge rejects the private begin/complete/cancel OAuth methods, and the facade allowlists connection DTO fields so authorization URLs, callback query values and tokens cannot enter renderer state.
+- ModdingFlow app activation is enabled as a separate runtime capability. The Tauri shell strictly accepts the neutral `moddingflow://download?v=1&artifact_id=<canonical-lowercase-uuid>` contract and the exact read-only compatibility alias `fluxora://moddingflow/download?v=1&artifact_id=<canonical-lowercase-uuid>`. Startup arguments, current/opened deep links and the single-instance callback all enter the same bounded, deduplicated inbox; the renderer receives only `{ v, artifactId }`, and capture never starts a transfer. Tauri declares both schemes and initializes single-instance routing before the deep-link plugin. The custom installer registers only Fluxora's per-user ProgID/capability, never replaces the user's default handler, and exposes ownership-checked repair/unregister maintenance commands. Wiring the unregister command into a real distributed uninstaller and completing the Windows install/upgrade/repair/uninstall lifecycle smoke remain release gates.
+- The ModdingFlow activation confirmation host is enabled. Its typed facade exposes only artifact/mod/version/game/file display metadata plus eligibility, state and `operationId`; URLs, headers, tokens and account identity are not members of the DTO. The renderer can proceed only after selecting a locally known instance and one of that instance's profiles, then explicitly requesting a second native preview. That preview returns only `planId`, required/optional counts, required disk size, conflict count and correlation fields; it omits step/dependency identities, hashes and local paths. Final accept carries the confirmed `planId`, revalidates the project mapping, stored game-version fingerprint and profile, resolves the plan again anonymous-first with one scoped bearer fallback, and rejects a changed plan, malformed/root-mismatched data and every conflict before any queue mutation. Optional dependencies remain disabled; required hash-bound steps are queued in provider order with stable per-artifact job ids, so a retry safely reuses already queued identities after a partial multi-item submission. The private `moddingflow.lookupArtifactPreview` and `moddingflow.previewActivationPlan` routes use exact params and `meta.operationId`, are blocked from generic renderer dispatch and route only through the download lane. Safe failures do not return provider details, and the renderer never receives plan hashes, signed URLs or credentials.
 - OAuth refresh outcomes are typed. Offline, timeout, DNS and 5xx failures produce retryable `temporarilyUnavailable` while preserving stored credentials; missing refresh credentials, `invalid_grant`, a rejected API key and a repeated `401` after successful refresh persist `reauthRequired` and stop automatic retries. Logs contain provider id, state, duration, attempt and `operationId`, never tokens, API keys or account payloads.
 - Settings API limit display uses generic `apiLimits.list` provider/window DTOs. The first provider is backed by `NexusModsAuthService`, which performs a small authenticated quota-bearing Nexus API request and reports only the quota headers returned by Nexus (`X-RL-*`, standard `X-RateLimit-*` / `RateLimit-*`, `Retry-After`), never hardcoded quota values or renderer-visible credentials. Future API providers should append another provider entry to the same snapshot instead of creating provider-specific settings UI.
 - AI Nexus research also uses the linked account automatically, but only through a trusted native-only path: Tauri main asks `FluxoraBridgeHost` for a transient Nexus API auth header, injects it into the AI host request as private `nativeNexusApiCredential`, and removes any renderer-supplied value before dispatch. The generic renderer bridge command rejects `nexus.getApiAuthHeader`, so API keys and OAuth tokens are never exposed through `window.fluxora` or stored in renderer state. If no Nexus account is linked, Nexus API research remains unavailable and the AI report must show that as missing credential evidence instead of pretending it searched.
 - Native host emits `operations.progress` JSON-RPC events during MO2 import. Tauri main subscribes through the bridge client and broadcasts them on the allowlisted `fluxora:operations:progress` channel.
-- Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.connections.*`, compatible `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access. Nexus API-key compatibility and NXM protocol handling remain provider-specific and outside the generic connection DTO.
+- Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.connections.*` (including provider-neutral `cancelConnect`), compatible `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access. Nexus API-key compatibility and NXM protocol handling remain provider-specific and outside the generic connection DTO.
 - Renderer owns settings section state, language controls, single-theme mirroring into CSS, generic provider snapshot display, MO2 source/destination form state, analysis display, transfer progress display and route/close guard while transfer is running. Connection readiness, API limits and mod-update results are separate state machines. Theme customization controls are deferred until more supported themes are added.
 - C++ core remains the owner of persisted app settings, Nexus OAuth status/connect/disconnect behavior, MO2 analysis/import rules, disk-space checks, project creation/replacement, transfer cancellation checks and filesystem cleanup.
 - MO2 transfer cancellation is scoped to the transfer operation: the renderer enables `Отменить и очистить` for a running transfer, Tauri writes a marker keyed by `operationId`, and C++ stops before activation or during copy/database work and removes staging files through the existing import failure cleanup path.
@@ -545,6 +548,266 @@ C++ core owns:
 - Core, bridge, operation and crash logs.
 - Platform-specific implementation details and capability truth.
 
+### Isolated Setup and updater targets
+
+`FluxoraSetup.exe` and `FluxoraUpdater.exe` are separate Tauri binaries with
+their own configuration, capability allowlists and renderer entrypoints. They do
+not mount the product `App.tsx`, start the product bridge host or inherit product
+commands. Their renderers reuse only focused design-system primitives and own
+presentation state; request validation, installation/update transactions,
+Windows process lifecycle, recovery, protocol registration and shortcuts remain
+in the C++ installer core.
+
+The MSVC `FluxoraInstallerCore.lib` is statically linked into both binaries. Its
+narrow C ABI uses caller-owned buffers and callbacks; exceptions, STL objects
+and allocator ownership never cross into Rust. Each mutation accepts one
+validated `operationId`, and that identifier is propagated unchanged through
+renderer state, Rust commands, C++ services, transaction/recovery paths and
+separate installer/updater/operation logs.
+
+The renderer facades are intentionally narrow:
+
+- `window.fluxora.setup` exposes bootstrap state, the native folder picker,
+  path validation, start, cancel-before-commit, launch, open-folder and
+  reveal-log operations. After a successful install, repair or update it also
+  exposes `startPostInstallUpdate`, `cancelPostInstallUpdate` and a typed
+  progress subscription. Those commands accept only the original root
+  `operationId`; install directory, application path, installed version,
+  selected language, fixed discovery endpoints and signing trust are retained
+  by the native Setup session and never accepted from the renderer.
+- `window.fluxora.updater` exposes a sanitized request summary, start, progress
+  subscription, renderer-ready acknowledgement and final result.
+- Progress DTOs contain `operationId`, a stable phase and status key,
+  bytes/percent, `canCancel` and a stable error code. They never expose raw
+  filesystem handles, shell access, arbitrary URLs, Node.js or raw Tauri
+  invocation.
+
+Setup checks WebView2 before creating a webview. When it is missing, a native
+TaskDialog explains the Microsoft network request and ordinary connection
+metadata, asks for confirmation, verifies the embedded official Evergreen
+bootstrapper by pinned SHA-256 and Microsoft Authenticode identity, and then
+launches it. Offline setup is supported when WebView2 is already installed.
+Updater watchdog and RunOnce recovery modes are headless and do not create a
+webview.
+
+After every successful Setup mode, the same root operation continues through a
+post-install stable-channel check. Setup and the main application share the
+signed-manifest discovery/cache, bounded resumable downloader, package
+verification and out-of-tree updater staging services. Product-only lifecycle
+drain, queue polling and BridgeHost/AI/speech shutdown remain in the main
+application wrapper; Setup neither starts nor emulates those services. A Setup
+installation has no signed installed receipt, so this path selects the signed
+full package only and rejects downgrades. No-update and pre-handoff
+check/download failures launch the successfully installed bundled application;
+only a launch failure exposes the existing fallback launch action.
+
+The interactive updater CLI accepts either the legacy compact
+`--request <absolute-path>` invocation or the strictly ordered Setup handoff
+`--request <absolute-path> --presentation setup-handoff --language en|de|ru`.
+Presentation and language remain Rust-shell/UI concerns and are not added to the
+C++ workflow request. The Setup handoff copies the trusted
+`resources/native/FluxoraUpdater.exe` from the owned installed payload into the
+stable out-of-tree update runtime, passes Setup PID plus process start time, and
+closes Setup only after process creation succeeds. The updater window is hidden
+until its size, position and renderer-ready state are established. Once native
+apply begins, close and cancellation stay blocked until the existing health ACK
+finalizes or rolls back the transaction.
+
+## Automatic application update boundary
+
+Application updates are a separate lifecycle capability and do not turn the
+renderer into a network, process or filesystem authority.
+
+- On every application launch, the Tauri Rust shell starts an asynchronous
+  stable-channel check after the primary window can become usable. Startup does
+  not wait for GitHub. A transient failure is retried silently after 5 seconds
+  and once more after 30 seconds. While the primary renderer remains open it
+  also checks every 15 minutes and when focus returns at least 5 minutes after
+  the previous attempt. A GitHub `404 Not Found` remains retryable so a running
+  first-install session can discover the first published Release. Automatic
+  success, `304 Not Modified`, offline, timeout and invalid-response outcomes do
+  not open a dialog or notification. Settings exposes a manual check/retry
+  action with explicit result text.
+  The renderer receives only typed update state and shows the green vector
+  download action when a newer, fully authenticated Windows release is
+  available.
+- The fixed discovery endpoints are
+  `https://github.com/Moddingflow/Fluxora/releases/latest/download/fluxora-update-manifest.json`
+  and the adjacent `fluxora-update-manifest.sig`. Conditional requests use
+  the last `ETag` and `Last-Modified` values from the per-user update cache.
+  Request deadlines, response-size limits, HTTPS-only redirects and an explicit
+  GitHub release/download host allowlist apply before any response is accepted.
+  A cached manifest is usable only while its detached signature and target still
+  validate; a network or validation failure never converts stale metadata into
+  a newly available update.
+- Verified runtime state is rooted under Fluxora's existing stable per-user
+  data root at `%APPDATA%\Fluxora\updates` (resolved by `fluxora_data_dir`, not
+  by an install path or a mutable Tauri identifier).
+  `cache/verified-manifest-v1-<sha256(raw-manifest)>.json` keeps the raw
+  manifest, Base64 signature and conditional response metadata, retaining only
+  the newest two verified entries. Hash-addressed partial/resume/completed
+  packages live under `downloads/<target-version>/`; exact transaction
+  manifests under `manifests/<manifest-sha256>.json` plus `.sig`; and the
+  out-of-tree updater copy under
+  `updater-runtime/operation-<first32-sha256(operationId)>/`; renderer input is
+  therefore never used as a path segment. A relaunched version creates
+  `health/<handoff-nonce>.ack` atomically only after the main renderer reports
+  ready and a fresh BridgeHost `system.handshake` succeeds. The external updater
+  validates the nonce, application version, PID and process start time against
+  the exact child process it launched. Only then does it finalize the retained
+  backup and atomically write `installed-manifest.json` plus
+  `installed-manifest.sig`. Tauri verifies that receipt and hashes the actual
+  current installation against its signed file inventory at activation, after a
+  delta download and again after drain immediately before handoff. Eligibility
+  is an exact-tree comparison: any missing, changed or unexpected application
+  entry, escaping path, reparse point/symlink, Windows case collision or
+  unsupported entry type selects the signed full fallback instead. Only the
+  root `Downloads` and install-local `logs` mutable trees are excluded. An
+  installation that came directly from
+  `FluxoraSetup.exe` and has no verified receipt deliberately takes the full
+  fallback once; after that successful automatic update, subsequent
+  exact-version releases can use file-delta packages.
+- The shell owns checking, cache metadata, bounded downloads, lifecycle drain
+  and launching the updater. The typed `window.fluxora.updates` facade owns only
+  renderer-safe state, check/start/cancel/renderer-ready commands and
+  subscriptions. The renderer owns the icon, keyboard cancellation/retry,
+  polite progress and assertive user-action error announcements. Silent startup
+  failures remain silent. It never receives a release URL, signing key, local
+  update path, raw Tauri command or process handle.
+- Every user-started download/install attempt has one `operationId`. Before
+  exit, one atomic `Open -> Draining -> Sealed` lifecycle gate rejects new
+  bridge, AI and speech work, waits for in-flight requests, and then permits
+  only updater-owned final probes. In the sealed phase it reads the complete
+  project catalog through `projects.listConfigs` and verifies every
+  authoritative download/install queue is terminal before any host shutdown.
+  All bridge lanes, AI and speech hosts are then shut down cleanly. A shutdown
+  failure reopens the gate and eagerly recovers already stopped hosts.
+  Fluxora remains open if work cannot finish safely or the external updater
+  cannot be started; it does not terminate a mod install, download commit or
+  other native mutation to make an update proceed. The user may cancel while
+  downloading, hashing, draining or preparing handoff; an atomic decision gives
+  cancellation or updater-spawn commit exactly one winner.
+- The native directory swap is not treated as application health. The updater
+  holds a deterministic per-install `Local\\FluxoraUpdate-<sha256>` single-writer
+  mutex on a dedicated owner thread across recovery, apply, health probation and
+  finalize/rollback; a concurrent updater returns busy before touching recovery
+  state. The updater
+  retains its transaction marker and backup for a bounded 30-second launch
+  probation. Launch failure, early child exit, timeout or an invalid health ACK
+  causes termination of the entire suspended-launch-owned Windows Job Object,
+  native rollback and relaunch of the previous executable. Only the exact main
+  webview can acknowledge readiness. The renderer attempts at 0, 250, 500,
+  1000 and 2000 milliseconds with a 2000-millisecond native timeout per attempt;
+  the proven 13.75-second worst case and absolute 20-second renderer deadline
+  both finish within the updater probation. An out-of-tree watchdog recovers an updater-process
+  crash, while a strictly quoted `!` HKCU RunOnce entry covers reboot/power-loss
+  recovery. Recovery without a valid ACK prefers rollback. `Downloads` and
+  install-local `logs` are protected mutable trees whose before/after source and
+  destination SHA-256 snapshots must agree across commit and rollback.
+
+### Signed manifest and package contract
+
+`fluxora-update-manifest.json` is UTF-8 JSON and is authenticated before its
+contents are trusted. Its detached `.sig` contains Base64 of the exact 64-byte
+IEEE-P1363 `r || s` ECDSA P-256/SHA-256 signature over the raw manifest bytes;
+DER signatures and reserialized JSON are rejected. The corresponding public key
+or trust set is embedded in the shipped app and updater. The private release key
+is never shipped, stored in the repository, included in a release, or written to
+logs.
+
+The strict v1 document has this shape; unknown schema versions, missing fields,
+unknown asset kinds, duplicate paths or assets, non-canonical hashes and invalid
+version/target values fail closed:
+
+```json
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "1.2.3",
+  "target": "win-x64",
+  "applicationExecutable": "Fluxora.exe",
+  "files": [
+    { "path": "Fluxora.exe", "size": 123, "sha256": "64 lowercase hexadecimal characters" }
+  ],
+  "fileManifestSha256": "64 lowercase hexadecimal characters",
+  "assets": [
+    {
+      "kind": "full",
+      "fromVersion": null,
+      "url": "https://github.com/Moddingflow/Fluxora/releases/download/v1.2.3/fluxora-1.2.3-win-x64-full.flxupd",
+      "size": 456,
+      "sha256": "64 lowercase hexadecimal characters",
+      "targetFileManifestSha256": "64 lowercase hexadecimal characters",
+      "baseFileManifestSha256": null
+    },
+    {
+      "kind": "delta",
+      "fromVersion": "1.2.2",
+      "url": "https://github.com/Moddingflow/Fluxora/releases/download/v1.2.3/fluxora-1.2.3-win-x64-from-1.2.2.flxupd",
+      "size": 234,
+      "sha256": "64 lowercase hexadecimal characters",
+      "targetFileManifestSha256": "64 lowercase hexadecimal characters",
+      "baseFileManifestSha256": "64 lowercase hexadecimal characters"
+    }
+  ]
+}
+```
+
+`files` is sorted by ordinal UTF-8 path and contains no duplicate or
+case-colliding Windows path. Its canonical digest is SHA-256 of, for every file
+in order, `UTF8(path) + NUL + ASCII(decimal size) + NUL + ASCII(lowercase
+sha256) + LF`. Exactly one full asset is required; delta assets have unique,
+non-null `fromVersion` values. All asset URLs are immutable URLs for the same
+repository and tagged version, and every asset repeats the signed target
+file-manifest digest. Update payloads use the `.flxupd` extension and can carry
+arbitrary binary or text files and Unicode relative paths.
+
+A delta is file-incremental: it contains only added/replaced file bytes and an
+explicit delete list; unchanged files are copied from a live tree whose base
+digest matches `baseFileManifestSha256`. It is not described as block-level
+binary patching. If an exact delta is unavailable, its base does not match, or
+delta download/verification fails before mutation, the shell uses the signed
+full asset. The package header, signed manifest, requested versions and all
+asset/file hashes must agree. Path traversal, rooted/reserved paths, duplicate
+or case-colliding entries, reparse points and the protected `Downloads` tree are
+rejected. The complete staged target tree is verified against `files` before it
+can become live.
+
+### External updater transaction
+
+After a package is downloaded and verified in per-user staging, the shell copies
+the self-contained `FluxoraUpdater.exe` outside the installation tree, starts it
+with a verified bounded request and exits only after successful process
+creation. Normal mode displays the isolated Tauri progress window; watchdog and
+RunOnce recovery modes remain headless. The updater waits for the exact parent
+process identity to exit, calls its statically linked native core to re-verify
+the detached signature, package and current base, and performs the durable
+stage/live/backup transaction. The new application is created suspended,
+assigned to a kill-on-failure Job Object and only then resumed, so descendants
+cannot escape health probation. `Downloads` and `logs` are preserved mutable
+data and are never sourced from an update package.
+
+Publication uses an atomic directory swap with a durable transaction marker,
+backup, pre-swap staging validation and post-rename validation of the actual
+live signed tree. A pre-commit error leaves the live install untouched; a
+post-commit mismatch restores the backup. Watchdog/RunOnce recovery rolls back
+an interrupted unconfirmed transaction even when the live directory is absent.
+On valid health ACK the backup and staging state are cleaned and the already
+running new `Fluxora.exe` continues automatically. On failure the updater keeps
+or restores the last verified installation and reopens that version only when
+rollback is proven; a distinct rollback-failed state retains recovery material
+and never claims success.
+
+Update discovery, download, drain, updater process and recovery records use
+dedicated update logs while keeping the same `operationId` through the full
+user-triggered flow. Logs may record version, target, byte counts, stage,
+duration, validation result and reason code. They must not contain manifest or
+asset query strings, credentials, signatures, file contents, project/mod data or
+the user's public IP address. Tauri's update log is
+`fluxora-tauri-update-current.log`, resolved through the existing log-root
+candidate policy; native installer-core and external-updater records remain
+separate. There is no telemetry or automatic log upload.
+
 ## Tauri security baseline
 
 Every production Tauri webview window must use:
@@ -836,7 +1099,7 @@ Rules:
       "state": "available",
       "nativeLibraryName": "FluxoraCore.dll",
       "bridgeHostName": "FluxoraBridgeHost.exe",
-      "packageFormats": ["FluxoraSetup.exe", "Tauri NSIS smoke under src-tauri/target"],
+      "packageFormats": ["FluxoraSetup.exe"],
       "protocolState": "available",
       "protocolNotes": "NXM uses Tauri activation plus Windows registry verification.",
       "shellOpenState": "tauri-main",
@@ -1030,12 +1293,15 @@ status immediately, then performs only a silent Downloads reread. Exact plugin
 and conflict reconciliation remains owned by the single build-content watcher,
 not a completion-triggered whole-workspace refresh.
 `mods.rebasePendingInstall` accepts `{ projectDirectory, operationId,
-beforeOrderId?, afterOrderId?, fallbackTargetIndex }` and returns the latest
-aggregate `FluxoraInstallConflictSnapshot`.
-Once a pending install session is `completed`, rebase is a read-only replay of
-its final snapshot: anchors, target index, revision and persisted order cannot
-change. The renderer removes the terminal session before accepting later
-snapshots; subsequent user moves use `mods.moveOrderItem`.
+beforeOrderId?, afterOrderId?, fallbackTargetIndex, expectedRevision,
+applyIfCompleted }` and returns the latest aggregate
+`FluxoraInstallConflictSnapshot`.
+Once a pending install session is `completed`, rebase remains read-only unless
+`applyIfCompleted` records a real renderer drag and `expectedRevision` matches
+the current native revision. A racing user drag is then applied once to the
+stable final order row; a stale response is retried against the returned
+revision. The renderer waits for that convergence cycle before retiring the
+terminal session. Later independent user moves use `mods.moveOrderItem`.
 
 ### Operations
 

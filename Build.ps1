@@ -1,5 +1,8 @@
 [CmdletBinding()]
 param(
+    [ValidateSet('Local', 'Production')]
+    [string]$Mode,
+
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Configuration = 'Release',
 
@@ -10,16 +13,107 @@ param(
 
     [switch]$IncludeSymbols,
 
-    [switch]$NoClean
+    [switch]$NoClean,
+
+    [Alias('ProductionVersion')]
+    [string]$Version,
+
+    [switch]$PublishCurrentChanges
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$BuildSigningSecretName = 'FLUXORA_UPDATE_SIGNING_KEY_PKCS8_BASE64'
+[byte[]]$BuildCapturedSigningKeyBytes = $null
+$buildSigningKeyBase64 = [Environment]::GetEnvironmentVariable($BuildSigningSecretName, 'Process')
+[Environment]::SetEnvironmentVariable($BuildSigningSecretName, $null, 'Process')
+try {
+    if (-not [string]::IsNullOrWhiteSpace($buildSigningKeyBase64)) {
+        try {
+            $BuildCapturedSigningKeyBytes = [Convert]::FromBase64String($buildSigningKeyBase64.Trim())
+        }
+        catch {
+            throw "$BuildSigningSecretName is not valid base64."
+        }
+    }
+}
+finally {
+    $buildSigningKeyBase64 = $null
+}
+trap {
+    if ($null -ne $BuildCapturedSigningKeyBytes) {
+        [Security.Cryptography.CryptographicOperations]::ZeroMemory($BuildCapturedSigningKeyBytes)
+    }
+    throw $_
+}
+
 $ProjectRoot = $PSScriptRoot
+$ReleaseModulePath = Join-Path $ProjectRoot 'scripts\release\Fluxora.Release.psm1'
+$NativeArtifactValidationModulePath = Join-Path $ProjectRoot 'scripts\release\Fluxora.NativeArtifactValidation.psm1'
+$ProductionReleaseScript = Join-Path $ProjectRoot 'scripts\release\Invoke-FluxoraProductionRelease.ps1'
+Import-Module $ReleaseModulePath -Force
+Import-Module $NativeArtifactValidationModulePath -Force
+
+$hasExplicitBuildArguments = @(
+    $PSBoundParameters.Keys | Where-Object { $_ -notin @('Mode') }
+).Count -gt 0
+$resolvedBuildMode = Resolve-FluxoraBuildMode `
+    -Mode $Mode `
+    -HasExplicitBuildArguments $hasExplicitBuildArguments
+
+if ($resolvedBuildMode -eq 'Production') {
+    if ($PSVersionTable.PSVersion.Major -lt 7) {
+        throw 'Production releases require PowerShell 7 (pwsh) for cryptographic and UTF-8 guarantees.'
+    }
+    if ($NoClean) {
+        throw 'Production releases cannot use -NoClean.'
+    }
+    if ($Configuration -ne 'Release' -or $Runtime -ne 'win-x64' -or $Target -ne 'Release') {
+        throw 'Production releases require -Configuration Release -Runtime win-x64 -Target Release.'
+    }
+    $releaseArguments = @{
+        Configuration = 'Release'
+        Runtime = 'win-x64'
+        Target = 'Release'
+        IncludeSymbols = $IncludeSymbols
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $releaseArguments['Version'] = $Version
+    }
+    if ($PublishCurrentChanges) {
+        $releaseArguments['PublishCurrentChanges'] = $true
+    }
+    if ($null -ne $BuildCapturedSigningKeyBytes) {
+        $releaseArguments['SigningKeyPkcs8Bytes'] = $BuildCapturedSigningKeyBytes
+    }
+    try {
+        & $ProductionReleaseScript @releaseArguments
+    }
+    finally {
+        if ($null -ne $BuildCapturedSigningKeyBytes) {
+            [Security.Cryptography.CryptographicOperations]::ZeroMemory($BuildCapturedSigningKeyBytes)
+            $BuildCapturedSigningKeyBytes = $null
+        }
+    }
+    return
+}
+
+if ($null -ne $BuildCapturedSigningKeyBytes) {
+    [Security.Cryptography.CryptographicOperations]::ZeroMemory($BuildCapturedSigningKeyBytes)
+    $BuildCapturedSigningKeyBytes = $null
+}
 $BackendSource = Join-Path $ProjectRoot 'backend'
 $BackendBuild = Join-Path $ProjectRoot 'build\backend'
 $TauriProject = Join-Path $ProjectRoot 'frontend-tauri'
+$TauriUpdaterConfigPath = Join-Path $TauriProject 'src-tauri\updater\tauri.conf.json'
+$TauriSetupConfigPath = Join-Path $TauriProject 'src-tauri\setup\tauri.conf.json'
+$TauriCargoManifestPath = Join-Path $TauriProject 'src-tauri\Cargo.toml'
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    Set-FluxoraProductVersion -ProjectRoot $ProjectRoot -Version $Version
+}
+$FluxoraProductVersion = Get-FluxoraProductVersion -ProjectRoot $ProjectRoot
+Write-Host "Build mode: Local (product version: $FluxoraProductVersion)."
 $TauriUsesPnpm = Test-Path -LiteralPath (Join-Path $TauriProject 'pnpm-lock.yaml')
 $TauriPackageManager = if ($TauriUsesPnpm) { 'pnpm' } else { 'npm' }
 $TauriInstallArguments = if ($TauriUsesPnpm) {
@@ -32,18 +126,27 @@ $TauriNativeResourcesRoot = Join-Path $ProjectRoot 'build\tauri-native'
 $TauriNativeResourcesDir = Join-Path $TauriProject 'src-tauri\resources\native'
 $TauriSpeechResourcesDir = Join-Path $TauriProject 'src-tauri\resources\speech'
 $TauriExecutableName = 'Fluxora.exe'
+$TauriUpdaterExecutableName = 'FluxoraUpdater.exe'
+$TauriSetupExecutableName = 'FluxoraSetup.exe'
+$TauriCargoProfileName = if ($Configuration -eq 'Debug') { 'debug' } else { 'release' }
+$TauriCargoProfileArguments = if ($Configuration -eq 'Debug') { @() } else { @('--release') }
+$TauriCargoOutputDir = Join-Path $TauriProject (Join-Path 'src-tauri\target' $TauriCargoProfileName)
+$UpdaterExecutablePath = Join-Path $TauriCargoOutputDir $TauriUpdaterExecutableName
+$SetupExecutablePath = Join-Path $TauriCargoOutputDir $TauriSetupExecutableName
 $FluxoraSkillsSourceDir = Join-Path $ProjectRoot 'FLUXORASKILLS\skills'
 $FluxoraAiDirectoryName = 'Fluxora AI'
 $FluxoraAiSkillsRelativeDir = Join-Path $FluxoraAiDirectoryName 'Skills'
-$InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.Installer.csproj'
 $OutputDir = Join-Path $ProjectRoot 'output'
 $OutputDownloadsDir = Join-Path $OutputDir 'Downloads'
 $FluxoraAiSkillsOutputDir = Join-Path $OutputDir $FluxoraAiSkillsRelativeDir
 $SymbolsOutputDir = Join-Path $ProjectRoot 'output-symbols'
 $InstallerOutputDir = Join-Path $ProjectRoot 'output-installer'
-$InstallerPayloadDir = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Resources\Payload'
-$InstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg.gz'
 $BuildCacheDir = Join-Path $ProjectRoot 'build\installer-cache'
+$InstallerPayloadPath = Join-Path $BuildCacheDir 'FluxoraPayload.flxpkg.gz'
+$WebView2BootstrapperPath = Join-Path $ProjectRoot 'third_party\webview2\MicrosoftEdgeWebview2Setup.exe'
+$WebView2BootstrapperMetadataPath = Join-Path $ProjectRoot 'third_party\webview2\source.json'
+$DesktopComplianceScriptPath = Join-Path $ProjectRoot 'scripts\release\Test-DesktopLegalAndAssetCompliance.ps1'
+$CMakeDependencyEvidencePath = Join-Path $BackendBuild 'fluxora-cmake-dependencies.json'
 $PreservedDownloadsStagingDir = Join-Path $BuildCacheDir 'preserved-output-downloads'
 $PayloadManifestPath = Join-Path $BuildCacheDir 'payload.manifest.json'
 $InstallerManifestPath = Join-Path $BuildCacheDir 'installer.manifest.json'
@@ -59,6 +162,51 @@ function Assert-Command {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Command '$Name' was not found. Install it and make sure it is available in PATH."
     }
+}
+
+function Assert-FluxoraWebView2Bootstrapper {
+    if (-not (Test-Path -LiteralPath $WebView2BootstrapperPath -PathType Leaf)) {
+        throw "The pinned Microsoft WebView2 Evergreen bootstrapper is missing: '$WebView2BootstrapperPath'."
+    }
+    if (-not (Test-Path -LiteralPath $WebView2BootstrapperMetadataPath -PathType Leaf)) {
+        throw "The WebView2 bootstrapper provenance metadata is missing: '$WebView2BootstrapperMetadataPath'."
+    }
+
+    $metadata = Get-Content -LiteralPath $WebView2BootstrapperMetadataPath -Raw | ConvertFrom-Json
+    if ([int]$metadata.schemaVersion -ne 1 -or
+        [string]$metadata.fileName -cne 'MicrosoftEdgeWebview2Setup.exe' -or
+        [string]::IsNullOrWhiteSpace([string]$metadata.sha256) -or
+        [string]::IsNullOrWhiteSpace([string]$metadata.authenticodeSignerThumbprint)) {
+        throw 'The WebView2 bootstrapper provenance metadata is incomplete or unsupported.'
+    }
+
+    $file = Get-Item -LiteralPath $WebView2BootstrapperPath
+    if ([uint64]$file.Length -ne [uint64]$metadata.size) {
+        throw "The WebView2 bootstrapper size does not match pinned provenance metadata."
+    }
+    $actualHash = Get-FileSha256Hex -Path $WebView2BootstrapperPath
+    if (-not [string]::Equals(
+        $actualHash,
+        [string]$metadata.sha256,
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The WebView2 bootstrapper SHA-256 does not match pinned provenance metadata.'
+    }
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $WebView2BootstrapperPath
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or
+        -not [string]::Equals(
+            [string]$signature.SignerCertificate.Thumbprint,
+            [string]$metadata.authenticodeSignerThumbprint,
+            [System.StringComparison]::OrdinalIgnoreCase) -or
+        [string]$signature.SignerCertificate.Subject -notmatch '(^|,\s*)CN=Microsoft Corporation(,|$)') {
+        throw 'The WebView2 bootstrapper does not have the pinned valid Microsoft Authenticode identity.'
+    }
+
+    Assert-FluxoraNativePeImage `
+        -Path $WebView2BootstrapperPath `
+        -AllowedMachineTypes @([uint16]0x014c)
+    return $metadata
 }
 
 function Invoke-BuildStep {
@@ -217,7 +365,7 @@ function Build-TauriAiHost {
     Push-Location $tauriRustRoot
     try {
         Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
-            'build', '--release',
+            'build', '--release', '--locked',
             '--bin', 'fluxora_ai_host'
         )
         $previousCargoTarget = $env:CARGO_TARGET_DIR
@@ -228,7 +376,7 @@ function Build-TauriAiHost {
             $env:CMAKE_C_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG'
             $env:CMAKE_CXX_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG /utf-8'
             Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
-                'build', '--release',
+                'build', '--release', '--locked',
                 '--bin', 'fluxora_speech_host'
             )
         }
@@ -247,7 +395,7 @@ function Build-TauriAiHost {
             $env:CMAKE_C_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG'
             $env:CMAKE_CXX_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG /utf-8'
             Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
-                'build', '--release',
+                'build', '--release', '--locked',
                 '--features', 'speech-vulkan',
                 '--bin', 'fluxora_speech_host_vulkan'
             )
@@ -302,13 +450,12 @@ function Get-TauriPackageTarget {
 }
 
 function Get-TauriBuiltExecutablePath {
-    $releaseDir = Join-Path $TauriProject 'src-tauri\target\release'
-    $knownExePath = Join-Path $releaseDir $TauriExecutableName
+    $knownExePath = Join-Path $TauriCargoOutputDir $TauriExecutableName
     if (Test-Path -LiteralPath $knownExePath -PathType Leaf) {
         return $knownExePath
     }
 
-    $latestExe = Get-ChildItem -LiteralPath $releaseDir -Recurse -Filter $TauriExecutableName -ErrorAction SilentlyContinue |
+    $latestExe = Get-ChildItem -LiteralPath $TauriCargoOutputDir -Recurse -Filter $TauriExecutableName -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
 
@@ -316,7 +463,7 @@ function Get-TauriBuiltExecutablePath {
         return $latestExe.FullName
     }
 
-    throw "Tauri build output containing '$TauriExecutableName' was not found under '$releaseDir'."
+    throw "Tauri build output containing '$TauriExecutableName' was not found under '$TauriCargoOutputDir'."
 }
 
 function Copy-DirectoryContents {
@@ -339,27 +486,27 @@ function Copy-DirectoryContents {
         }
 }
 
-function Get-NativeInstallerCorePath {
+function Get-NativeInstallerCoreLibraryPath {
     $knownPaths = @(
-        (Join-Path $BackendBuild "$Configuration\FluxoraInstallerCore.dll"),
-        (Join-Path $BackendBuild 'FluxoraInstallerCore.dll')
+        (Join-Path $BackendBuild "$Configuration\FluxoraInstallerCore.lib"),
+        (Join-Path $BackendBuild 'FluxoraInstallerCore.lib')
     )
 
     foreach ($path in $knownPaths) {
-        if (Test-Path -LiteralPath $path) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
             return $path
         }
     }
 
-    $latestDll = Get-ChildItem -LiteralPath $BackendBuild -Recurse -Filter 'FluxoraInstallerCore.dll' -ErrorAction SilentlyContinue |
+    $latestLibrary = Get-ChildItem -LiteralPath $BackendBuild -Recurse -Filter 'FluxoraInstallerCore.lib' -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
 
-    if ($latestDll) {
-        return $latestDll.FullName
+    if ($latestLibrary) {
+        return $latestLibrary.FullName
     }
 
-    throw "FluxoraInstallerCore.dll was not found under '$BackendBuild'."
+    throw "The static FluxoraInstallerCore.lib was not found under '$BackendBuild'."
 }
 
 function Assert-ChildPath {
@@ -643,47 +790,45 @@ function Remove-FluxoraPayloadSymbols {
     return $symbols.Count
 }
 
-function New-FluxoraInstallerManifest {
+function New-FluxoraSetupManifest {
     param(
         [Parameter(Mandatory = $true)]
         [string]$PayloadSha256,
 
         [Parameter(Mandatory = $true)]
-        [string]$NativeInstallerCorePath,
+        [UInt64]$PayloadExpandedBytes,
 
         [Parameter(Mandatory = $true)]
-        [string[]]$PublishArgs
+        [string]$NativeInstallerCoreLibraryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$BuildArgs
     )
 
-    $installerRoot = [System.IO.Path]::GetDirectoryName($InstallerProject)
     $candidatePaths = [System.Collections.Generic.List[string]]::new()
 
-    Get-ChildItem -LiteralPath $installerRoot -File -Recurse -Force |
+    Get-ChildItem -LiteralPath $TauriProject -File -Recurse -Force |
         Where-Object {
-            $relative = Get-PortableRelativePath -Root $installerRoot -Path $_.FullName
-            (-not ($relative -like 'bin/*')) -and
-                (-not ($relative -like 'obj/*')) -and
-                (-not ($relative -like 'Resources/Payload/*'))
+            $relative = Get-PortableRelativePath -Root $TauriProject -Path $_.FullName
+            (-not ($relative -like 'node_modules/*')) -and
+                (-not ($relative -like 'dist/*')) -and
+                (-not ($relative -like 'src-tauri/target/*')) -and
+                (-not ($relative -like 'src-tauri/resources/native/*')) -and
+                (-not ($relative -like 'src-tauri/resources/speech/*'))
         } |
         ForEach-Object { $candidatePaths.Add($_.FullName) }
 
-    $linkedInputPaths = @(
-        (Join-Path $ProjectRoot 'Icons\Fluxora.ico'),
-        (Join-Path $ProjectRoot 'Icons\Fluxora.png'),
-        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Assets\Icons.xaml'),
-        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Controls\LineIcon.cs'),
-        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Models\AppTheme.cs'),
-        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Services\ProgressUpdateCoalescer.cs'),
-        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Services\WindowChromeService.cs'),
-        $NativeInstallerCorePath
-    )
-
-    foreach ($path in $linkedInputPaths) {
-        Add-FluxoraInstallerInputPath -Paths $candidatePaths -Path $path
+    foreach ($linkedRoot in @(
+        (Join-Path $ProjectRoot 'Icons'),
+        (Join-Path $ProjectRoot 'legal\desktop'),
+        (Join-Path $ProjectRoot 'third_party\webview2'))) {
+        if (Test-Path -LiteralPath $linkedRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $linkedRoot -File -Recurse -Force |
+                ForEach-Object { $candidatePaths.Add($_.FullName) }
+        }
     }
 
-    Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fonts') -Filter '*.ttf' -File -ErrorAction SilentlyContinue |
-        ForEach-Object { $candidatePaths.Add($_.FullName) }
+    Add-FluxoraInstallerInputPath -Paths $candidatePaths -Path $NativeInstallerCoreLibraryPath
 
     $seenPaths = @{}
     $fileEntries = @(
@@ -697,15 +842,19 @@ function New-FluxoraInstallerManifest {
         }
     ) | Sort-Object Relative
 
-    $dotnetVersion = (& dotnet --version) -join ''
+    $cargoVersion = (& cargo --version) -join ''
+    $rustcVersion = (& rustc --version) -join ''
+    $packageManagerVersion = (& $TauriPackageManager --version) -join ''
     $hashInput = [System.Text.StringBuilder]::new()
-    [void]$hashInput.AppendLine("FluxoraInstallerManifest|$BuildManifestVersion")
+    [void]$hashInput.AppendLine("FluxoraTauriSetupManifest|$BuildManifestVersion")
     [void]$hashInput.AppendLine("Payload|$PayloadSha256")
+    [void]$hashInput.AppendLine("PayloadExpandedBytes|$PayloadExpandedBytes")
     [void]$hashInput.AppendLine("Configuration|$Configuration")
     [void]$hashInput.AppendLine("Runtime|$Runtime")
-    [void]$hashInput.AppendLine("DotNet|$dotnetVersion")
-
-    foreach ($arg in $PublishArgs) {
+    [void]$hashInput.AppendLine("Cargo|$cargoVersion")
+    [void]$hashInput.AppendLine("Rustc|$rustcVersion")
+    [void]$hashInput.AppendLine("PackageManager|$TauriPackageManager|$packageManagerVersion")
+    foreach ($arg in $BuildArgs) {
         [void]$hashInput.AppendLine("Arg|$arg")
     }
 
@@ -715,12 +864,16 @@ function New-FluxoraInstallerManifest {
 
     return [pscustomobject]@{
         Version = $BuildManifestVersion
-        Kind = 'FluxoraInstaller'
+        Kind = 'FluxoraTauriSetup'
         PayloadSha256 = $PayloadSha256
+        PayloadExpandedBytes = $PayloadExpandedBytes
         Configuration = $Configuration
         Runtime = $Runtime
-        DotNetVersion = $dotnetVersion
-        PublishArgs = @($PublishArgs)
+        CargoVersion = $cargoVersion
+        RustcVersion = $rustcVersion
+        PackageManager = $TauriPackageManager
+        PackageManagerVersion = $packageManagerVersion
+        BuildArgs = @($BuildArgs)
         Files = $fileEntries
         ManifestHash = Get-StringSha256Hex -Value $hashInput.ToString()
         SetupSha256 = $null
@@ -917,9 +1070,10 @@ function Write-FluxoraPayloadPackage {
 
 Assert-Command 'cmake'
 Assert-Command 'ctest'
-Assert-Command 'dotnet'
+Assert-Command 'cargo'
+Assert-Command 'rustc'
+Assert-Command 'pwsh'
 Assert-Command $TauriPackageManager
-
 if ($Target -eq 'Release' -and [string]::IsNullOrWhiteSpace($Runtime)) {
     throw "Installer publish requires a runtime because FluxoraSetup.exe is self-contained. Example: -Runtime win-x64"
 }
@@ -932,8 +1086,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $TauriProject 'package.json'))) {
     throw "Tauri frontend project was not found at '$TauriProject'."
 }
 
-if (-not (Test-Path -LiteralPath $InstallerProject)) {
-    throw "Installer project was not found at '$InstallerProject'."
+if (-not (Test-Path -LiteralPath $TauriUpdaterConfigPath -PathType Leaf)) {
+    throw "Tauri updater configuration was not found at '$TauriUpdaterConfigPath'."
+}
+
+if (-not (Test-Path -LiteralPath $TauriSetupConfigPath -PathType Leaf)) {
+    throw "Tauri Setup configuration was not found at '$TauriSetupConfigPath'."
 }
 
 Assert-ChildPath -Path $OutputDir -ParentPath $ProjectRoot
@@ -949,6 +1107,10 @@ Assert-ChildPath -Path $TauriSpeechResourcesDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraSkillsSourceDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraAiSkillsOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $PreservedDownloadsStagingDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $WebView2BootstrapperPath -ParentPath $ProjectRoot
+Assert-ChildPath -Path $WebView2BootstrapperMetadataPath -ParentPath $ProjectRoot
+Assert-ChildPath -Path $DesktopComplianceScriptPath -ParentPath $ProjectRoot
+Assert-ChildPath -Path $CMakeDependencyEvidencePath -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
     New-Item -ItemType Directory -Path $BuildCacheDir -Force | Out-Null
@@ -996,14 +1158,19 @@ Invoke-BuildStep "Preparing output folders" {
         New-Item -ItemType Directory -Path $SymbolsOutputDir -Force | Out-Null
     }
 
-    Get-ChildItem -LiteralPath $InstallerPayloadDir -Filter '*.flxpkg' -File -ErrorAction SilentlyContinue |
-        Remove-Item -Force
 }
 
 Invoke-BuildStep "Configuring C++ backend" {
     $backendConfigureArgs = @('-S', $BackendSource, '-B', $BackendBuild)
+    $backendConfigureArgs += @(
+        "-DFLUXORA_PRODUCT_VERSION=$FluxoraProductVersion",
+        '-DFLUXORA_ALLOW_SYSTEM_DEPENDENCIES=OFF'
+    )
     if ($Runtime -like 'win-*') {
-        $backendConfigureArgs += @('-DFLUXORA_ENABLE_VFS=ON')
+        $backendConfigureArgs += @(
+            '-DFLUXORA_ENABLE_VFS=ON',
+            '-DFLUXORA_ENABLE_MODDINGFLOW_AUTH_PROVIDER=ON'
+        )
     }
 
     Invoke-CheckedCommand -FilePath 'cmake' -Arguments $backendConfigureArgs
@@ -1032,6 +1199,112 @@ if ($Runtime -like 'win-*') {
             '--no-tests=error',
             '-R', '^FluxoraBridgeHostProtocol(Timeout)?$'
         )
+    }
+}
+
+Invoke-BuildStep "Installing Tauri dependencies" {
+    Push-Location $TauriProject
+    try {
+        Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments $TauriInstallArguments
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+Invoke-BuildStep "Verifying desktop legal, dependency, and icon compliance" {
+    Invoke-CheckedCommand -FilePath 'pwsh' -Arguments @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $DesktopComplianceScriptPath,
+        '-Release',
+        '-CMakeEvidencePath', $CMakeDependencyEvidencePath
+    )
+}
+
+$nativeInstallerCoreLibraryPath = $null
+if ($Runtime -eq 'win-x64') {
+    $nativeInstallerCoreLibraryPath = Get-NativeInstallerCoreLibraryPath
+    Invoke-BuildStep "Building native Tauri updater ($Configuration/$Runtime)" {
+        # Cargo resolves build scripts for the crate's dependency graph before
+        # dead-code elimination, so the isolated updater target still needs the
+        # pinned libclang runtime used by whisper-rs-sys/bindgen.
+        & (Join-Path $TauriProject 'scripts\ensure-libclang.ps1')
+        Push-Location $TauriProject
+        try {
+            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @(
+                'run', 'build:updater:frontend'
+            )
+        }
+        finally {
+            Pop-Location
+        }
+
+        $previousInstallerCoreLibDir = [Environment]::GetEnvironmentVariable(
+            'FLUXORA_INSTALLER_CORE_LIB_DIR',
+            'Process')
+        $installerRustFlagsVariable = 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS'
+        $previousInstallerRustFlags = [Environment]::GetEnvironmentVariable(
+            $installerRustFlagsVariable,
+            'Process')
+        try {
+            $env:FLUXORA_INSTALLER_CORE_LIB_DIR = Split-Path -Parent $nativeInstallerCoreLibraryPath
+            $staticCrtFlag = '-C target-feature=+crt-static'
+            if ([string]::IsNullOrWhiteSpace($previousInstallerRustFlags)) {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    $staticCrtFlag,
+                    'Process')
+            }
+            elseif ($previousInstallerRustFlags -notmatch '(?:^|\s)-C\s+target-feature=\+crt-static(?:\s|$)') {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    "$previousInstallerRustFlags $staticCrtFlag",
+                    'Process')
+            }
+            $updaterCargoArguments = @(
+                'build',
+                '--manifest-path', $TauriCargoManifestPath,
+                '--locked',
+                '--bin', 'FluxoraUpdater',
+                '--features', 'installer-native,custom-protocol'
+            ) + $TauriCargoProfileArguments
+            $updaterReleaseContractArguments = @(
+                'test',
+                '--manifest-path', $TauriCargoManifestPath,
+                '--locked',
+                '--release',
+                '--features', 'installer-native,custom-protocol',
+                '--bin', 'FluxoraUpdater'
+            )
+            Invoke-CheckedCommand -FilePath 'cargo' -Arguments $updaterReleaseContractArguments
+            Invoke-CheckedCommand -FilePath 'cargo' -Arguments $updaterCargoArguments
+        }
+        finally {
+            if ($null -eq $previousInstallerCoreLibDir) {
+                Remove-Item Env:FLUXORA_INSTALLER_CORE_LIB_DIR -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:FLUXORA_INSTALLER_CORE_LIB_DIR = $previousInstallerCoreLibDir
+            }
+            if ($null -eq $previousInstallerRustFlags) {
+                Remove-Item -LiteralPath "Env:$installerRustFlagsVariable" -ErrorAction SilentlyContinue
+            }
+            else {
+                [Environment]::SetEnvironmentVariable(
+                    $installerRustFlagsVariable,
+                    $previousInstallerRustFlags,
+                    'Process')
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $UpdaterExecutablePath -PathType Leaf)) {
+            throw "Updater build completed, but $TauriUpdaterExecutableName was not found at '$UpdaterExecutablePath'."
+        }
+        Assert-FluxoraNativePeImage `
+            -Path $UpdaterExecutablePath `
+            -RequireStaticMsvcRuntime
     }
 }
 
@@ -1069,6 +1342,10 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
         Copy-Item -LiteralPath $vulkanSpeechHostPath -Destination (Join-Path $tauriNativeTargetDir $vulkanSpeechHostResourceName) -Force
         Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $TauriNativeResourcesDir -Force
         Copy-Item -LiteralPath $nativeCorePath -Destination $TauriNativeResourcesDir -Force
+        if ($Runtime -eq 'win-x64') {
+            Copy-Item -LiteralPath $UpdaterExecutablePath -Destination $tauriNativeTargetDir -Force
+            Copy-Item -LiteralPath $UpdaterExecutablePath -Destination $TauriNativeResourcesDir -Force
+        }
         Copy-Item -LiteralPath $aiHostPath -Destination (Join-Path $TauriNativeResourcesDir $aiHostResourceName) -Force
         Copy-Item -LiteralPath $speechHostPath -Destination (Join-Path $TauriNativeResourcesDir $speechHostResourceName) -Force
         Copy-Item -LiteralPath $vulkanSpeechHostPath -Destination (Join-Path $TauriNativeResourcesDir $vulkanSpeechHostResourceName) -Force
@@ -1113,7 +1390,7 @@ if ($Runtime -like 'win-*') {
             Push-Location $tauriRustRoot
             try {
                 Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
-                    'test', '--release',
+                    'test', '--release', '--locked',
                     '--features', 'native-ai-integration-fixture',
                     '--test', 'ai_task_native_integration',
                     '--', '--nocapture'
@@ -1132,16 +1409,6 @@ if ($Runtime -like 'win-*') {
             }
         }
     }
-}
-
-Invoke-BuildStep "Installing Tauri dependencies" {
-        Push-Location $TauriProject
-        try {
-            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments $TauriInstallArguments
-        }
-        finally {
-            Pop-Location
-        }
 }
 
 Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.Arch))" {
@@ -1168,6 +1435,7 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
         $packagedVulkanSpeechHostPath = Join-Path $OutputDir 'resources\native\FluxoraSpeechHostVulkan.exe'
         $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
         $packagedVfsPath = Join-Path $OutputDir 'resources\native\FluxoraVfs.dll'
+        $packagedUpdaterPath = Join-Path $OutputDir 'resources\native\FluxoraUpdater.exe'
         $packagedGeneralSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'GENERAL\ConciseResponse\SKILL.MD'
         $packagedSkyrimDefaultSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'SkyrimSE\DefaultRules\SKILL.MD'
         $packagedSkyrimOptimizationSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'SkyrimSE\BuildOptimization\SKILL.MD'
@@ -1201,6 +1469,11 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
         if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
             throw "Tauri package is missing bundled native core at '$packagedCorePath'."
         }
+        if ($Runtime -eq 'win-x64') {
+            if (-not (Test-Path -LiteralPath $packagedUpdaterPath -PathType Leaf)) {
+                throw "Tauri package is missing the external updater at '$packagedUpdaterPath'."
+            }
+        }
         if (($Runtime -like 'win-*') -and (-not (Test-Path -LiteralPath $packagedVfsPath -PathType Leaf))) {
             throw "Tauri package is missing bundled VFS hook at '$packagedVfsPath'."
         }
@@ -1222,6 +1495,9 @@ Invoke-BuildStep "Removing symbols from app payload staging" {
     }
     else {
         Write-Host "No symbol files found in app payload staging."
+    }
+    if ($Runtime -like 'win-*') {
+        Assert-FluxoraNativePayload -Root $OutputDir
     }
 }
 
@@ -1259,39 +1535,45 @@ if ($Target -eq 'Release') {
         }
     }
 
-    Invoke-BuildStep "Publishing Fluxora installer ($Configuration)" {
+    Invoke-BuildStep "Building Fluxora Tauri Setup ($Configuration)" {
         if (-not (Test-Path -LiteralPath $InstallerPayloadPath)) {
             throw "Installer payload '$InstallerPayloadPath' was not found."
         }
 
-        $nativeInstallerCorePath = Get-NativeInstallerCorePath
-        Write-Host "Using native installer core: $nativeInstallerCorePath"
+        $webView2Metadata = Assert-FluxoraWebView2Bootstrapper
+        $nativeInstallerCoreLibraryPath = Get-NativeInstallerCoreLibraryPath
+        Write-Host "Using statically linked installer core: $nativeInstallerCoreLibraryPath"
+        Write-Host "Using pinned Microsoft WebView2 bootstrapper SHA-256: $($webView2Metadata.sha256)"
 
-        $installerPublishArgs = @(
-            'publish',
-            $InstallerProject,
-            '--configuration',
-            $Configuration,
-            '--output',
-            $InstallerOutputDir,
-            '--self-contained',
-            'true',
-            '-p:PublishSingleFile=true',
-            '-p:IncludeNativeLibrariesForSelfExtract=true',
-            '-p:DebugType=none',
-            '-p:DebugSymbols=false'
-        )
-
-        if (-not [string]::IsNullOrWhiteSpace($Runtime)) {
-            $installerPublishArgs += @('--runtime', $Runtime)
-        }
+        $setupCargoArguments = @(
+            'build',
+            '--manifest-path', $TauriCargoManifestPath,
+            '--locked',
+            '--bin', 'FluxoraSetup',
+            '--features', 'setup-production-assets,installer-native,custom-protocol'
+        ) + $TauriCargoProfileArguments
 
         $setupExePath = Join-Path $InstallerOutputDir 'FluxoraSetup.exe'
         $payloadPackageSha256 = Get-FileSha256Hex -Path $InstallerPayloadPath
-        $currentInstallerManifest = New-FluxoraInstallerManifest `
+        $payloadBuildManifest = Read-FluxoraManifest -Path $PayloadManifestPath
+        $payloadExpandedBytesValue = Get-FluxoraManifestPropertyValue `
+            -Manifest $payloadBuildManifest `
+            -Name 'TotalBytes'
+        $payloadExpandedBytes = [UInt64]0
+        if ($null -eq $payloadExpandedBytesValue -or
+            -not [UInt64]::TryParse(
+                [string]$payloadExpandedBytesValue,
+                [Globalization.NumberStyles]::None,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [ref]$payloadExpandedBytes) -or
+            $payloadExpandedBytes -eq 0) {
+            throw "Payload manifest '$PayloadManifestPath' does not contain a trusted positive TotalBytes value."
+        }
+        $currentInstallerManifest = New-FluxoraSetupManifest `
             -PayloadSha256 $payloadPackageSha256 `
-            -NativeInstallerCorePath $nativeInstallerCorePath `
-            -PublishArgs $installerPublishArgs
+            -PayloadExpandedBytes $payloadExpandedBytes `
+            -NativeInstallerCoreLibraryPath $nativeInstallerCoreLibraryPath `
+            -BuildArgs $setupCargoArguments
         $savedInstallerManifest = Read-FluxoraManifest -Path $InstallerManifestPath
         $installerCanSkip = $false
 
@@ -1308,25 +1590,139 @@ if ($Target -eq 'Release') {
         }
 
         if ($installerCanSkip) {
-            Write-Host "Installer inputs unchanged; skipping publish: $setupExePath"
+            $existingInstallerFiles = @(
+                Get-ChildItem -LiteralPath $InstallerOutputDir -File -Recurse -Force -ErrorAction SilentlyContinue
+            )
+            if ($existingInstallerFiles.Count -ne 1 -or
+                -not [string]::Equals(
+                    $existingInstallerFiles[0].FullName,
+                    [System.IO.Path]::GetFullPath($setupExePath),
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                $installerCanSkip = $false
+            }
+        }
+
+        if ($installerCanSkip) {
+            Write-Host "Setup inputs unchanged; skipping build: $setupExePath"
         }
         else {
             if ((Test-Path -LiteralPath $InstallerOutputDir) -and (-not $NoClean)) {
                 Remove-Item -LiteralPath $InstallerOutputDir -Recurse -Force
             }
+            New-Item -ItemType Directory -Path $InstallerOutputDir -Force | Out-Null
 
-            Invoke-CheckedCommand -FilePath 'dotnet' -Arguments $installerPublishArgs
-
-            if (-not (Test-Path -LiteralPath $setupExePath)) {
-                throw "Installer publish completed, but FluxoraSetup.exe was not found in '$InstallerOutputDir'."
+            Push-Location $TauriProject
+            try {
+                Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @(
+                    'run', 'build:setup:frontend'
+                )
+            }
+            finally {
+                Pop-Location
             }
 
-            Get-ChildItem -LiteralPath $InstallerOutputDir -Filter '*.pdb' -File -ErrorAction SilentlyContinue |
-                Remove-Item -Force
+            $previousInstallerCoreLibDir = [Environment]::GetEnvironmentVariable(
+                'FLUXORA_INSTALLER_CORE_LIB_DIR',
+                'Process')
+            $previousSetupPayloadPath = [Environment]::GetEnvironmentVariable(
+                'FLUXORA_SETUP_PAYLOAD_PATH',
+                'Process')
+            $previousSetupPayloadExpandedBytes = [Environment]::GetEnvironmentVariable(
+                'FLUXORA_SETUP_PAYLOAD_EXPANDED_BYTES',
+                'Process')
+            $previousWebView2BootstrapperPath = [Environment]::GetEnvironmentVariable(
+                'FLUXORA_WEBVIEW2_BOOTSTRAPPER_PATH',
+                'Process')
+            $installerRustFlagsVariable = 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS'
+            $previousInstallerRustFlags = [Environment]::GetEnvironmentVariable(
+                $installerRustFlagsVariable,
+                'Process')
+            try {
+                $env:FLUXORA_INSTALLER_CORE_LIB_DIR = Split-Path -Parent $nativeInstallerCoreLibraryPath
+                $env:FLUXORA_SETUP_PAYLOAD_PATH = [System.IO.Path]::GetFullPath($InstallerPayloadPath)
+                $env:FLUXORA_SETUP_PAYLOAD_EXPANDED_BYTES = $payloadExpandedBytes.ToString(
+                    [Globalization.CultureInfo]::InvariantCulture)
+                $env:FLUXORA_WEBVIEW2_BOOTSTRAPPER_PATH = [System.IO.Path]::GetFullPath($WebView2BootstrapperPath)
+                $staticCrtFlag = '-C target-feature=+crt-static'
+                if ([string]::IsNullOrWhiteSpace($previousInstallerRustFlags)) {
+                    [Environment]::SetEnvironmentVariable(
+                        $installerRustFlagsVariable,
+                        $staticCrtFlag,
+                        'Process')
+                }
+                elseif ($previousInstallerRustFlags -notmatch '(?:^|\s)-C\s+target-feature=\+crt-static(?:\s|$)') {
+                    [Environment]::SetEnvironmentVariable(
+                        $installerRustFlagsVariable,
+                        "$previousInstallerRustFlags $staticCrtFlag",
+                        'Process')
+                }
+                $setupReleaseContractArguments = @(
+                    'test',
+                    '--manifest-path', $TauriCargoManifestPath,
+                    '--locked',
+                    '--release',
+                    '--features', 'setup-production-assets,installer-native,custom-protocol',
+                    '--bin', 'FluxoraSetup'
+                )
+                Invoke-CheckedCommand -FilePath 'cargo' -Arguments $setupReleaseContractArguments
+                Invoke-CheckedCommand -FilePath 'cargo' -Arguments $setupCargoArguments
+            }
+            finally {
+                foreach ($environmentEntry in @(
+                    [pscustomobject]@{
+                        Name = 'FLUXORA_INSTALLER_CORE_LIB_DIR'
+                        Value = $previousInstallerCoreLibDir
+                    },
+                    [pscustomobject]@{
+                        Name = 'FLUXORA_SETUP_PAYLOAD_PATH'
+                        Value = $previousSetupPayloadPath
+                    },
+                    [pscustomobject]@{
+                        Name = 'FLUXORA_SETUP_PAYLOAD_EXPANDED_BYTES'
+                        Value = $previousSetupPayloadExpandedBytes
+                    },
+                    [pscustomobject]@{
+                        Name = 'FLUXORA_WEBVIEW2_BOOTSTRAPPER_PATH'
+                        Value = $previousWebView2BootstrapperPath
+                    },
+                    [pscustomobject]@{
+                        Name = $installerRustFlagsVariable
+                        Value = $previousInstallerRustFlags
+                    })) {
+                    if ($null -eq $environmentEntry.Value) {
+                        Remove-Item -LiteralPath "Env:$($environmentEntry.Name)" -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        [Environment]::SetEnvironmentVariable(
+                            $environmentEntry.Name,
+                            [string]$environmentEntry.Value,
+                            'Process')
+                    }
+                }
+            }
+
+            if (-not (Test-Path -LiteralPath $SetupExecutablePath -PathType Leaf)) {
+                throw "Setup build completed, but $TauriSetupExecutableName was not found at '$SetupExecutablePath'."
+            }
+            Copy-Item -LiteralPath $SetupExecutablePath -Destination $setupExePath -Force
 
             $currentInstallerManifest.SetupSha256 = Get-FileSha256Hex -Path $setupExePath
             Save-FluxoraManifest -Path $InstallerManifestPath -Manifest $currentInstallerManifest
         }
+
+        $publishedInstallerFiles = @(
+            Get-ChildItem -LiteralPath $InstallerOutputDir -File -Recurse -Force -ErrorAction SilentlyContinue
+        )
+        if ($publishedInstallerFiles.Count -ne 1 -or
+            -not [string]::Equals(
+                $publishedInstallerFiles[0].FullName,
+                [System.IO.Path]::GetFullPath($setupExePath),
+                [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "The approved installer directory must contain only '$setupExePath'."
+        }
+        Assert-FluxoraNativePeImage `
+            -Path $setupExePath `
+            -RequireStaticMsvcRuntime
     }
 }
 else {
@@ -1341,6 +1737,9 @@ Write-Host "  Build target: $Target"
 Write-Host "  App payload staging: $OutputDir"
 Write-Host "  Fluxora AI skills: $FluxoraAiSkillsOutputDir"
 Write-Host "  Tauri native resources: $TauriNativeResourcesRoot"
+if ($Runtime -eq 'win-x64') {
+    Write-Host "  External updater: $UpdaterExecutablePath"
+}
 if ($IncludeSymbols) {
     Write-Host "  Symbols artifact: $SymbolsOutputDir"
 }

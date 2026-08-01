@@ -4,6 +4,13 @@
   "version": "0.0.0",
   "identifier": "app.fluxora.desktop",
   "mainBinaryName": "Fluxora",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["moddingflow", "fluxora"]
+      }
+    }
+  },
   "build": {
     "beforeDevCommand": "npm run dev:frontend",
     "beforeBuildCommand": "npm run build:frontend",
@@ -41,7 +48,7 @@
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": ["nsis"],
     "publisher": "Fluxora",
     "icon": ["icons/Fluxora.ico", "icons/Fluxora.png"],

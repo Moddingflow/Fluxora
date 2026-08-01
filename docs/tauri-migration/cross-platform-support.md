@@ -21,7 +21,7 @@ Renderer remains a display/orchestration layer only. It does not infer filesyste
 | --- | --- | --- | --- |
 | Native core | `FluxoraCore.dll` | `libFluxoraCore.so` | `libFluxoraCore.dylib` |
 | Bridge host | `FluxoraBridgeHost.exe` | `FluxoraBridgeHost` | `FluxoraBridgeHost` |
-| Packaging smoke | `FluxoraSetup.exe` approved installer, Tauri NSIS smoke under `src-tauri/target` | deb/rpm package candidates, package smoke artifact | package smoke artifact, dmg/signing planned |
+| Packaging smoke | `FluxoraSetup.exe` approved installer; Tauri builds the executable with bundling disabled | deb/rpm package candidates, package smoke artifact | package smoke artifact, dmg/signing planned |
 | NXM protocol | Available through Tauri activation + Windows registry verification | Limited: `x-scheme-handler/nxm` package metadata is configured, xdg registration remains release smoke | Limited: `open-url` activation is wired, bundle URL scheme/signing/notarization remain release smoke |
 | Shell open | Tauri main `shell.openPath` / `showItemInFolder` | Tauri main, xdg behavior | Tauri main, Finder behavior |
 | VFS/hook launch | Available when bridge/core reports `FluxoraVfs.dll` for x64 | Unsupported until Linux adapter exists | Unsupported until signed macOS adapter exists |

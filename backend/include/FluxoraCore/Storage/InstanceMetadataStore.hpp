@@ -383,7 +383,9 @@ namespace fluxora
             std::wstring_view operationId,
             std::wstring_view beforeOrderId,
             std::wstring_view afterOrderId,
-            int fallbackTargetPosition);
+            int fallbackTargetPosition,
+            std::int64_t expectedRevision = -1,
+            bool applyIfCompleted = false);
 
         [[nodiscard]] static PendingInstallSessionRecord completePendingInstallSession(
             const std::filesystem::path& projectDirectory,

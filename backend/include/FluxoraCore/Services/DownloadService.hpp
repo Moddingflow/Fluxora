@@ -8,6 +8,7 @@
 #include "FluxoraCore/Services/IService.hpp"
 #include "FluxoraCore/Services/InstallConflictPreviewService.hpp"
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
+#include "FluxoraCore/Services/ModdingFlowDownloadQueueService.hpp"
 #include "FluxoraCore/Services/NexusDownloadDuplicateResolver.hpp"
 
 #include <condition_variable>
@@ -156,6 +157,12 @@ namespace fluxora
         void registerNxmProtocol(const std::filesystem::path& executablePath) const;
         [[nodiscard]] bool isNxmProtocolRegistered(const std::filesystem::path& executablePath) const;
         [[nodiscard]] bool canAutomaticallyDownloadNexus() const;
+
+        void configureModdingFlowDownloadQueue(
+            IModdingFlowDownloadQueueService* queue) noexcept;
+
+        [[nodiscard]] DownloadEntry queueModdingFlowArtifact(
+            const ModdingFlowManagedDownloadRequest& request) const;
 
         [[nodiscard]] std::vector<DownloadEntry> listDownloads(
             const std::filesystem::path& projectDirectory) const;
@@ -332,6 +339,7 @@ namespace fluxora
         const BuildPathSettingsService& pathSettings_;
         ArchiveCatalogService archiveCatalog_;
         NexusModsAuthService* nexusAuth_{nullptr};
+        IModdingFlowDownloadQueueService* moddingFlowDownloads_{nullptr};
         mutable std::mutex nxmShutdownMutex_;
         mutable std::mutex nxmQueueMutex_;
         mutable std::condition_variable nxmQueueCv_;

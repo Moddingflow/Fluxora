@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('external connection coordinator', () => {
-  it('publishes local status before startup restoration and retries with the required backoff', async () => {
+  it('publishes the Core-restored startup status before scheduling bounded retries', async () => {
     vi.useFakeTimers();
     const local = snapshot('restoring', 0, true);
     const restoreAll = vi
@@ -59,15 +59,18 @@ describe('external connection coordinator', () => {
       onSnapshot
     });
 
-    await coordinator.bootstrap();
+    await expect(coordinator.bootstrap()).resolves.toEqual(local);
 
-    expect(onSnapshot.mock.calls.map(([value]) => value)).toEqual([
-      local,
-      snapshot('temporarilyUnavailable', 1)
-    ]);
+    expect(onSnapshot.mock.calls.map(([value]) => value)).toEqual([local]);
+    expect(restoreAll).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(restoreAll).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(restoreAll).toHaveBeenNthCalledWith(1, 1, expect.objectContaining({
-      operationId: expect.stringContaining('connections_restore_startup')
+      operationId: expect.stringContaining('connections_restore_scheduled')
     }));
+    expect(onSnapshot).toHaveBeenLastCalledWith(snapshot('temporarilyUnavailable', 1));
 
     for (const [index, delay] of [2_000, 5_000, 15_000, 30_000, 60_000].entries()) {
       await vi.advanceTimersByTimeAsync(delay - 1);
@@ -128,7 +131,27 @@ describe('external connection coordinator', () => {
     }
   );
 
-  it('enters retry scheduling when the shell restoration call itself times out', async () => {
+  it('does not duplicate the authoritative Core startup restore for a ready provider', async () => {
+    const local = snapshot('ready', 0, false);
+    const listStatus = vi.fn(async () => local);
+    const restoreAll = vi.fn(async () => snapshot('ready', 1, false));
+    const onSnapshot = vi.fn();
+    const coordinator = createExternalConnectionCoordinator({
+      api: { listStatus, restoreAll },
+      createOperationId: () => 'op-ready-bootstrap',
+      onSnapshot
+    });
+
+    await expect(coordinator.bootstrap()).resolves.toEqual(local);
+
+    expect(listStatus).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).toHaveBeenCalledOnce();
+    expect(onSnapshot).toHaveBeenCalledWith(local);
+    expect(restoreAll).not.toHaveBeenCalled();
+    coordinator.stop();
+  });
+
+  it('keeps retry scheduling when a deferred shell restoration call times out', async () => {
     vi.useFakeTimers();
     const restoreAll = vi
       .fn()
@@ -144,7 +167,11 @@ describe('external connection coordinator', () => {
       onSnapshot
     });
 
-    await expect(coordinator.bootstrap()).rejects.toThrow('bridge timeout');
+    const local = snapshot('restoring', 0);
+    await expect(coordinator.bootstrap()).resolves.toEqual(local);
+    expect(restoreAll).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(onSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({
       timedOut: true,
       providers: [expect.objectContaining({ state: 'temporarilyUnavailable', retryable: true })]

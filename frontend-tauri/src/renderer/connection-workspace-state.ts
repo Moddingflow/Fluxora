@@ -19,6 +19,7 @@ const emptySnapshot = (): FluxoraExternalConnectionSnapshot => ({
 const connectionStates = new Set<FluxoraExternalConnectionState>([
   'notConfigured',
   'notLinked',
+  'connecting',
   'restoring',
   'ready',
   'temporarilyUnavailable',
@@ -42,7 +43,9 @@ const normalizeStatus = (value: unknown): FluxoraExternalConnectionStatus | null
     providerId: record.providerId,
     label: record.label,
     state: record.state as FluxoraExternalConnectionState,
-    accountName: typeof record.accountName === 'string' ? record.accountName : '',
+    accountName: record.providerId.toLowerCase() === 'moddingflow'
+      ? ''
+      : typeof record.accountName === 'string' ? record.accountName : '',
     hasStoredSession: record.hasStoredSession === true,
     retryable: record.retryable === true,
     requiresUserAction: record.requiresUserAction === true,
@@ -141,7 +144,8 @@ export const saveCachedConnectionSnapshot = (
   snapshot: FluxoraExternalConnectionSnapshot
 ): void => {
   try {
-    storage?.setItem(connectionSnapshotStorageKey, JSON.stringify(snapshot));
+    const safeSnapshot = normalizeSnapshot(snapshot) ?? emptySnapshot();
+    storage?.setItem(connectionSnapshotStorageKey, JSON.stringify(safeSnapshot));
   } catch {
     // Local storage can be unavailable in restricted preview contexts.
   }
@@ -188,13 +192,15 @@ export const connectionSummary = (
   switch (status.state) {
     case 'ready':
       return status.accountName ? `Connected - ${status.accountName}` : 'Connected';
+    case 'connecting':
+      return 'Connecting';
     case 'restoring':
     case 'temporarilyUnavailable':
       return 'Reconnecting';
     case 'reauthRequired':
-      return status.accountName ? `Sign in again - ${status.accountName}` : 'Sign in again';
+      return status.accountName ? `Reconnect - ${status.accountName}` : 'Reconnect';
     case 'notConfigured':
-      return 'Provider is not configured';
+      return status.message || 'Provider is not configured';
     case 'notLinked':
     default:
       return 'Not connected';
@@ -205,15 +211,18 @@ export const connectionActionLabel = (
   status: FluxoraExternalConnectionStatus | null | undefined
 ): string => {
   if (status?.state === 'ready') {
-    return `Disconnect ${status.label}`;
+    return 'Disconnect';
+  }
+  if (status?.state === 'connecting') {
+    return 'Cancel';
   }
   if (status?.state === 'reauthRequired') {
-    return 'Sign in again';
+    return 'Reconnect';
   }
   if (status?.state === 'restoring' || status?.state === 'temporarilyUnavailable') {
     return 'Reconnecting';
   }
-  return `Connect ${status?.label ?? 'provider'}`;
+  return 'Connect';
 };
 
 export const connectionCanToggle = (
@@ -223,5 +232,10 @@ export const connectionCanToggle = (
   Boolean(
     providerAvailable &&
     status &&
-    (status.state === 'ready' || status.state === 'notLinked' || status.state === 'reauthRequired')
+    (
+      status.state === 'ready'
+      || status.state === 'notLinked'
+      || status.state === 'connecting'
+      || status.state === 'reauthRequired'
+    )
   );

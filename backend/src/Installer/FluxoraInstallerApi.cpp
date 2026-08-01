@@ -1,4 +1,12 @@
 #include "FluxoraInstaller/FluxoraInstallerApi.hpp"
+#include "FluxoraInstaller/InstallerDirectoryTransaction.hpp"
+#include "FluxoraInstaller/InstallerLogService.hpp"
+#include "FluxoraInstaller/SetupBootstrapService.hpp"
+#include "FluxoraInstaller/UpdateEngine.hpp"
+#include "FluxoraInstaller/UpdateProcessLock.hpp"
+#include "FluxoraInstaller/UpdateWorkflowRequest.hpp"
+#include "FluxoraInstaller/UpdateWorkflowService.hpp"
+#include "FluxoraInstaller/WindowsIntegration.hpp"
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -20,6 +28,8 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <locale>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -51,7 +61,8 @@ namespace
     constexpr std::uint32_t MinimumPackageVersion = 1;
     constexpr std::uint32_t CurrentPackageVersion = 2;
     constexpr std::uint32_t PackageVersionWithFileHashes = 2;
-    constexpr std::uint32_t TransactionVersion = 1;
+    constexpr std::uint32_t LegacyTransactionVersion = 1;
+    constexpr std::uint32_t TransactionVersion = 2;
     constexpr std::size_t TransactionIdSize = 16;
     constexpr std::uintmax_t MaximumTransactionMarkerBytes = 64 * 1024;
     constexpr std::size_t Sha256HashSize = 32;
@@ -87,6 +98,12 @@ namespace
         bool hasReport{false};
     };
 
+    class SetupCancelledError final : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
     using TransactionId = std::array<unsigned char, TransactionIdSize>;
 
     struct InstallerTransactionPaths
@@ -101,6 +118,7 @@ namespace
     {
         InstallerTransactionPaths paths;
         bool hadExistingInstall{false};
+        bool requiresHealthConfirmation{false};
     };
 
     bool isBlank(const wchar_t* value)
@@ -226,6 +244,99 @@ namespace
             (std::wstring(L"fluxora-installer-core-") + logDateStamp() + L".log");
     }
 
+    std::string redactUpdaterLogMessageImpl(std::string_view message)
+    {
+        std::string safe(message);
+        for (char& character : safe)
+        {
+            const unsigned char value = static_cast<unsigned char>(character);
+            if (value < 0x20 || value == 0x7f)
+            {
+                character = ' ';
+            }
+        }
+
+        const auto redactSpan = [&](std::size_t begin, std::size_t end, std::string_view replacement) {
+            safe.replace(begin, end - begin, replacement);
+        };
+        for (std::string_view scheme : {std::string_view("https://"), std::string_view("http://")})
+        {
+            std::size_t offset = 0;
+            while ((offset = safe.find(scheme, offset)) != std::string::npos)
+            {
+                std::size_t end = offset;
+                while (end < safe.size() && safe[end] != ' ' && safe[end] != '"')
+                {
+                    ++end;
+                }
+                redactSpan(offset, end, "<redacted-url>");
+                offset += 14;
+            }
+        }
+
+        for (std::string_view key : {
+                 std::string_view("path=\""), std::string_view("source=\""),
+                 std::string_view("destination=\""), std::string_view("installDirectory=\""),
+                 std::string_view("stagingDirectory=\"")})
+        {
+            std::size_t offset = 0;
+            while ((offset = safe.find(key, offset)) != std::string::npos)
+            {
+                const std::size_t valueStart = offset + key.size();
+                const std::size_t end = safe.find('"', valueStart);
+                if (end == std::string::npos)
+                {
+                    safe.erase(valueStart);
+                    safe += "<redacted-path>\"";
+                    break;
+                }
+                redactSpan(valueStart, end, "<redacted-path>");
+                offset = valueStart + 15;
+            }
+        }
+
+        for (std::string_view key : {
+                 std::string_view("token="), std::string_view("authorization="),
+                 std::string_view("signature="), std::string_view("nonce=")})
+        {
+            std::size_t offset = 0;
+            while ((offset = safe.find(key, offset)) != std::string::npos)
+            {
+                const std::size_t valueStart = offset + key.size();
+                std::size_t end = valueStart;
+                while (end < safe.size() && safe[end] != ' ' && safe[end] != ',' && safe[end] != '"')
+                {
+                    ++end;
+                }
+                redactSpan(valueStart, end, "<redacted>");
+                offset = valueStart + 10;
+            }
+        }
+
+        std::size_t offset = 0;
+        while (offset < safe.size())
+        {
+            const bool drivePath = offset + 2 < safe.size() &&
+                ((safe[offset] >= 'A' && safe[offset] <= 'Z') ||
+                 (safe[offset] >= 'a' && safe[offset] <= 'z')) &&
+                safe[offset + 1] == ':' && (safe[offset + 2] == '\\' || safe[offset + 2] == '/');
+            const bool uncPath = offset + 1 < safe.size() && safe[offset] == '\\' && safe[offset + 1] == '\\';
+            if (!drivePath && !uncPath)
+            {
+                ++offset;
+                continue;
+            }
+            std::size_t end = offset;
+            while (end < safe.size() && safe[end] != ' ' && safe[end] != '"' && safe[end] != ',')
+            {
+                ++end;
+            }
+            redactSpan(offset, end, "<redacted-path>");
+            offset += 15;
+        }
+        return safe;
+    }
+
     void writeLog(std::string_view level, std::string_view message)
     {
         try
@@ -245,7 +356,7 @@ namespace
             {
                 line << " [op=" << currentOperationId << "]";
             }
-            line << " " << message;
+            line << " " << redactUpdaterLogMessageImpl(message);
 
             std::lock_guard lock(logMutex);
             if (!installerLogger)
@@ -483,9 +594,15 @@ namespace
     class CallbackPackageReader final : public PackageReader
     {
     public:
-        CallbackPackageReader(FluxoraInstallerReadCallback readCallback, void* readUserData)
+        CallbackPackageReader(
+            FluxoraInstallerReadCallback readCallback,
+            void* readUserData,
+            FluxoraInstallerCancelCallback cancelCallback = nullptr,
+            void* cancelUserData = nullptr)
             : readCallback_(readCallback),
-              readUserData_(readUserData)
+              readUserData_(readUserData),
+              cancelCallback_(cancelCallback),
+              cancelUserData_(cancelUserData)
         {
             if (readCallback_ == nullptr)
             {
@@ -495,6 +612,12 @@ namespace
 
         std::size_t readSome(char* buffer, std::size_t byteCount) override
         {
+            if (cancelCallback_ != nullptr &&
+                cancelCallback_(0, cancelUserData_) != 0)
+            {
+                throw SetupCancelledError(
+                    "Setup was cancelled before the commit boundary.");
+            }
             if (byteCount == 0)
             {
                 return 0;
@@ -526,6 +649,8 @@ namespace
     private:
         FluxoraInstallerReadCallback readCallback_{nullptr};
         void* readUserData_{nullptr};
+        FluxoraInstallerCancelCallback cancelCallback_{nullptr};
+        void* cancelUserData_{nullptr};
     };
 
 #ifdef _WIN32
@@ -654,6 +779,20 @@ namespace
         json += L"\"desktopShortcutPath\":\"" + jsonEscape(makeAbsoluteString(result.desktopShortcutPath)) + L"\",";
         json += L"\"createdDesktopShortcut\":";
         json += result.createdDesktopShortcut ? L"true" : L"false";
+        json += L"}";
+        return json;
+    }
+
+    std::wstring serializeUpdateResult(const fluxora::installer::UpdateApplyResult& result)
+    {
+        std::wstring json;
+        json += L"{";
+        json += L"\"installDirectory\":\"" +
+            jsonEscape(makeAbsoluteString(result.installDirectory)) + L"\",";
+        json += L"\"applicationPath\":\"" +
+            jsonEscape(makeAbsoluteString(result.applicationPath)) + L"\",";
+        json += L"\"targetVersion\":\"" +
+            jsonEscape(fromUtf8(result.targetVersion)) + L"\"";
         json += L"}";
         return json;
     }
@@ -881,6 +1020,14 @@ namespace
     {
         return directory /
             (L".fluxora-commit-" + fromUtf8(transactionIdHex(transactionId)) + L".pending");
+    }
+
+    std::filesystem::path installTransactionConfirmationPath(
+        const InstallerTransactionPaths& transaction)
+    {
+        std::filesystem::path path = transaction.markerPath;
+        path += L".confirmed-" + fromUtf8(transactionIdHex(transaction.id));
+        return path;
     }
 
     TransactionId generateTransactionId(std::uint64_t attempt)
@@ -1126,7 +1273,8 @@ namespace
 
     std::vector<unsigned char> serializeTransactionMarker(
         const InstallerTransactionPaths& transaction,
-        bool hadExistingInstall)
+        bool hadExistingInstall,
+        bool requiresHealthConfirmation)
     {
         const std::string stagingName = toUtf8(transaction.stagingDirectory.filename().wstring());
         const std::string backupName = toUtf8(transaction.backupDirectory.filename().wstring());
@@ -1139,12 +1287,15 @@ namespace
 
         std::vector<unsigned char> marker;
         marker.reserve(
-            TransactionMagic.size() + sizeof(TransactionVersion) + sizeof(std::uint8_t) +
+            TransactionMagic.size() + sizeof(TransactionVersion) + (sizeof(std::uint8_t) * 2) +
             transaction.id.size() + (sizeof(std::uint32_t) * 2) +
             stagingName.size() + backupName.size());
         appendTransactionBytes(marker, TransactionMagic.data(), TransactionMagic.size());
         appendTransactionPod(marker, TransactionVersion);
         appendTransactionPod(marker, static_cast<std::uint8_t>(hadExistingInstall ? 1 : 0));
+        appendTransactionPod(
+            marker,
+            static_cast<std::uint8_t>(requiresHealthConfirmation ? 1 : 0));
         appendTransactionBytes(marker, transaction.id.data(), transaction.id.size());
         appendTransactionPod(marker, static_cast<std::uint32_t>(stagingName.size()));
         appendTransactionBytes(marker, stagingName.data(), stagingName.size());
@@ -1257,7 +1408,9 @@ namespace
 
         std::array<unsigned char, TransactionMagic.size()> magic{};
         reader.readExact(magic.data(), magic.size(), "magic");
-        if (magic != TransactionMagic || reader.readPod<std::uint32_t>("version") != TransactionVersion)
+        const std::uint32_t version = reader.readPod<std::uint32_t>("version");
+        if (magic != TransactionMagic ||
+            (version != LegacyTransactionVersion && version != TransactionVersion))
         {
             throw std::runtime_error("Installer transaction marker has an unsupported format.");
         }
@@ -1271,6 +1424,17 @@ namespace
         InstallerTransactionMarker marker;
         marker.paths.markerPath = markerPath;
         marker.hadExistingInstall = hadExistingInstall != 0;
+        if (version >= TransactionVersion)
+        {
+            const std::uint8_t requiresHealthConfirmation =
+                reader.readPod<std::uint8_t>("health-confirmation flag");
+            if (requiresHealthConfirmation > 1)
+            {
+                throw std::runtime_error(
+                    "Installer transaction marker has an invalid health-confirmation flag.");
+            }
+            marker.requiresHealthConfirmation = requiresHealthConfirmation != 0;
+        }
         reader.readExact(marker.paths.id.data(), marker.paths.id.size(), "transaction id");
         const std::wstring stagingName = fromUtf8(reader.readString("staging path"));
         const std::wstring backupName = fromUtf8(reader.readString("backup path"));
@@ -1355,11 +1519,13 @@ namespace
 
     void persistTransactionMarker(
         const InstallerTransactionPaths& transaction,
-        bool hadExistingInstall)
+        bool hadExistingInstall,
+        bool requiresHealthConfirmation = false)
     {
         const std::vector<unsigned char> marker = serializeTransactionMarker(
             transaction,
-            hadExistingInstall);
+            hadExistingInstall,
+            requiresHealthConfirmation);
         std::filesystem::path temporaryMarker = transaction.markerPath;
         temporaryMarker += L".tmp-" + fromUtf8(transactionIdHex(transaction.id));
 
@@ -1399,6 +1565,16 @@ namespace
             installTransactionSentinelPath(transaction.stagingDirectory, transaction.id),
             bytes,
             "commit sentinel");
+    }
+
+    void persistTransactionConfirmation(const InstallerTransactionPaths& transaction)
+    {
+        const std::string value = transactionIdHex(transaction.id);
+        const std::vector<unsigned char> bytes(value.begin(), value.end());
+        writeDurableNewFile(
+            installTransactionConfirmationPath(transaction),
+            bytes,
+            "health confirmation");
     }
 
     void removeDurableTransactionFile(
@@ -1465,6 +1641,27 @@ namespace
             std::equal(contents.begin(), contents.end(), expected.begin());
     }
 
+    bool transactionHasHealthConfirmation(const InstallerTransactionPaths& transaction)
+    {
+        const std::filesystem::path path = installTransactionConfirmationPath(transaction);
+        if (!transactionPathExistsWithoutReparse(path, "health confirmation"))
+        {
+            return false;
+        }
+        const std::vector<unsigned char> contents = readTransactionFile(
+            path,
+            256,
+            "health confirmation");
+        const std::string expected = transactionIdHex(transaction.id);
+        if (contents.size() != expected.size() ||
+            !std::equal(contents.begin(), contents.end(), expected.begin()))
+        {
+            throw std::runtime_error(
+                "Installer transaction health confirmation does not match the pending update.");
+        }
+        return true;
+    }
+
     bool isVerifiedInstalledDirectory(const std::filesystem::path& installDirectory)
     {
         if (!transactionPathExistsWithoutReparse(installDirectory, "live directory"))
@@ -1484,6 +1681,188 @@ namespace
             return false;
         }
         return std::filesystem::is_regular_file(applicationPath, error) && !error;
+    }
+
+    std::filesystem::path validatePendingTransactionDirectory(
+        const std::filesystem::path& installDirectory)
+    {
+        if (installDirectory.empty())
+        {
+            throw std::invalid_argument("Install directory is required.");
+        }
+        std::error_code error;
+        const std::filesystem::path absolute = std::filesystem::absolute(installDirectory, error);
+        if (error || absolute.empty() || isRootDirectory(absolute))
+        {
+            throw std::invalid_argument("Pending update install directory is invalid.");
+        }
+        const std::filesystem::path normalized = absolute.lexically_normal();
+        rejectReparseInstallDirectory(normalized);
+        if (!std::filesystem::is_directory(normalized, error) || error)
+        {
+            throw std::invalid_argument("Pending update installation directory is unavailable.");
+        }
+        return normalized;
+    }
+
+    void completeConfirmedApplicationUpdate(
+        const std::filesystem::path& installDirectory,
+        const InstallerTransactionMarker& marker)
+    {
+        const bool liveExists = transactionPathExistsWithoutReparse(
+            installDirectory,
+            "live directory");
+        const bool stagingExists = transactionPathExistsWithoutReparse(
+            marker.paths.stagingDirectory,
+            "staging directory");
+        if (!liveExists || stagingExists || !isVerifiedInstalledDirectory(installDirectory))
+        {
+            throw std::runtime_error(
+                "Confirmed update transaction does not contain one verified live installation.");
+        }
+
+        try
+        {
+            if (transactionPathExistsWithoutReparse(
+                    marker.paths.backupDirectory,
+                    "backup directory"))
+            {
+                removeOwnedTransactionDirectory(
+                    marker.paths.backupDirectory,
+                    "confirmed update backup directory");
+            }
+            removeDurableTransactionFile(
+                installTransactionSentinelPath(installDirectory, marker.paths.id),
+                "confirmed update sentinel");
+            removeDurableTransactionFile(
+                installTransactionConfirmationPath(marker.paths),
+                "health confirmation");
+            removeDurableTransactionFile(marker.paths.markerPath, "confirmed update marker");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            writeLog(
+                "WARNING",
+                std::string("Healthy update retained deferred transaction cleanup. ") +
+                    cleanupError.what());
+        }
+    }
+
+    void finalizePendingApplicationUpdateImpl(const std::filesystem::path& installDirectory)
+    {
+        const std::filesystem::path validated =
+            validatePendingTransactionDirectory(installDirectory);
+        const std::filesystem::path markerPath = installTransactionMarkerPath(validated);
+        if (!transactionPathExistsWithoutReparse(markerPath, "pending update marker"))
+        {
+            throw std::runtime_error("No pending Fluxora update can be finalized.");
+        }
+        const InstallerTransactionMarker marker = readTransactionMarker(validated, markerPath);
+        if (!marker.requiresHealthConfirmation || !marker.hadExistingInstall)
+        {
+            throw std::runtime_error("Installer transaction is not awaiting update health confirmation.");
+        }
+
+        if (!transactionHasHealthConfirmation(marker.paths))
+        {
+            const bool liveHasSentinel = directoryHasTransactionSentinel(validated, marker.paths.id);
+            const bool stagingExists = transactionPathExistsWithoutReparse(
+                marker.paths.stagingDirectory,
+                "staging directory");
+            const bool backupExists = transactionPathExistsWithoutReparse(
+                marker.paths.backupDirectory,
+                "backup directory");
+            if (!liveHasSentinel || stagingExists || !backupExists ||
+                !isVerifiedInstalledDirectory(validated))
+            {
+                throw std::runtime_error(
+                    "Pending update is not in a safe state for health finalization.");
+            }
+            persistTransactionConfirmation(marker.paths);
+        }
+        completeConfirmedApplicationUpdate(validated, marker);
+        writeLog("INFO", "Healthy Fluxora update finalized and retained backup removed.");
+    }
+
+    void rollbackPendingApplicationUpdateImpl(const std::filesystem::path& installDirectory)
+    {
+        const std::filesystem::path validated =
+            validatePendingTransactionDirectory(installDirectory);
+        const std::filesystem::path markerPath = installTransactionMarkerPath(validated);
+        if (!transactionPathExistsWithoutReparse(markerPath, "pending update marker"))
+        {
+            throw std::runtime_error("No pending Fluxora update can be rolled back.");
+        }
+        const InstallerTransactionMarker marker = readTransactionMarker(validated, markerPath);
+        if (!marker.requiresHealthConfirmation || !marker.hadExistingInstall)
+        {
+            throw std::runtime_error("Installer transaction is not a rollback-capable update.");
+        }
+        if (transactionHasHealthConfirmation(marker.paths))
+        {
+            throw std::runtime_error("A health-confirmed Fluxora update cannot be rolled back.");
+        }
+
+        const bool liveHasSentinel = directoryHasTransactionSentinel(validated, marker.paths.id);
+        const bool stagingExists = transactionPathExistsWithoutReparse(
+            marker.paths.stagingDirectory,
+            "staging directory");
+        const bool backupExists = transactionPathExistsWithoutReparse(
+            marker.paths.backupDirectory,
+            "backup directory");
+        if (!liveHasSentinel || stagingExists || !backupExists)
+        {
+            throw std::runtime_error("Pending update is not in a safe state for rollback.");
+        }
+
+        renameDirectory(
+            validated,
+            marker.paths.stagingDirectory,
+            "Moving the unhealthy Fluxora update out of the live path");
+        try
+        {
+            renameDirectory(
+                marker.paths.backupDirectory,
+                validated,
+                "Restoring the previous healthy Fluxora installation");
+        }
+        catch (...)
+        {
+            try
+            {
+                renameDirectory(
+                    marker.paths.stagingDirectory,
+                    validated,
+                    "Restoring the pending update after rollback failure");
+            }
+            catch (const std::exception& restoreError)
+            {
+                writeLog(
+                    "ERROR",
+                    std::string("Rollback and live-directory recovery both failed. ") +
+                        restoreError.what());
+            }
+            throw;
+        }
+
+        try
+        {
+            removeOwnedTransactionDirectory(
+                marker.paths.stagingDirectory,
+                "unhealthy update directory");
+            removeDurableTransactionFile(
+                installTransactionConfirmationPath(marker.paths),
+                "health confirmation");
+            removeDurableTransactionFile(marker.paths.markerPath, "rolled-back update marker");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            writeLog(
+                "WARNING",
+                std::string("Update rollback restored the previous version; cleanup was deferred. ") +
+                    cleanupError.what());
+        }
+        writeLog("INFO", "Unhealthy Fluxora update rolled back to the retained backup.");
     }
 
     void recoverInstallTransaction(const std::filesystem::path& installDirectory)
@@ -1510,6 +1889,27 @@ namespace
         const bool stagingHasSentinel = stagingExists && directoryHasTransactionSentinel(
             marker.paths.stagingDirectory,
             marker.paths.id);
+
+        if (marker.requiresHealthConfirmation)
+        {
+            if (transactionHasHealthConfirmation(marker.paths))
+            {
+                completeConfirmedApplicationUpdate(installDirectory, marker);
+                writeLog("INFO", "Recovered cleanup for a previously health-confirmed update.");
+                return;
+            }
+            if (liveHasSentinel && !stagingExists && backupExists)
+            {
+                rollbackPendingApplicationUpdateImpl(installDirectory);
+                writeLog("INFO", "Recovered an unconfirmed update by restoring its retained backup.");
+                return;
+            }
+            if (liveHasSentinel)
+            {
+                throw std::runtime_error(
+                    "Unconfirmed update recovery found no complete retained backup; refusing to finalize.");
+            }
+        }
 
         if (liveHasSentinel)
         {
@@ -1660,11 +2060,21 @@ namespace
 
     bool isProtectedDownloadsOutputPath(const std::wstring& normalizedOutputPath)
     {
-        constexpr std::wstring_view protectedDirectory = L"downloads";
-        return normalizedOutputPath == protectedDirectory ||
-            (normalizedOutputPath.size() > protectedDirectory.size() &&
-             normalizedOutputPath.compare(0, protectedDirectory.size(), protectedDirectory) == 0 &&
-             normalizedOutputPath[protectedDirectory.size()] == L'/');
+        constexpr std::array<std::wstring_view, 2> protectedDirectories{
+            L"downloads",
+            L"logs"};
+        return std::any_of(
+            protectedDirectories.begin(),
+            protectedDirectories.end(),
+            [&](std::wstring_view protectedDirectory) {
+                return normalizedOutputPath == protectedDirectory ||
+                    (normalizedOutputPath.size() > protectedDirectory.size() &&
+                     normalizedOutputPath.compare(
+                         0,
+                         protectedDirectory.size(),
+                         protectedDirectory) == 0 &&
+                     normalizedOutputPath[protectedDirectory.size()] == L'/');
+            });
     }
 
     std::filesystem::path resolvePackageEntryPath(
@@ -1722,6 +2132,150 @@ namespace
         std::uint64_t fileCount{0};
         std::uint64_t byteCount{0};
     };
+
+    ProtectedDownloadsPathKind inspectProtectedDownloadsPath(const std::filesystem::path& path);
+
+    struct ProtectedPathSnapshotEntry final
+    {
+        bool directory{false};
+        std::uint64_t size{0};
+        std::array<unsigned char, Sha256HashSize> digest{};
+
+        bool operator==(const ProtectedPathSnapshotEntry&) const = default;
+    };
+
+    using ProtectedPathSnapshot = std::map<std::wstring, ProtectedPathSnapshotEntry>;
+
+    std::array<unsigned char, Sha256HashSize> hashProtectedFile(
+        const std::filesystem::path& path)
+    {
+        std::ifstream input(path, std::ios::binary);
+        if (!input)
+        {
+            throw std::runtime_error("Failed to open a protected update file for verification.");
+        }
+        Sha256Hasher hasher;
+        std::array<char, CopyBufferSize> buffer{};
+        while (input)
+        {
+            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            const std::streamsize count = input.gcount();
+            if (count > 0)
+            {
+                hasher.append(buffer.data(), static_cast<std::size_t>(count));
+            }
+        }
+        if (!input.eof())
+        {
+            throw std::runtime_error("Failed to read a protected update file completely.");
+        }
+        return hasher.finish();
+    }
+
+    void collectProtectedSnapshot(
+        const std::filesystem::path& root,
+        const std::filesystem::path& current,
+        ProtectedPathSnapshot& snapshot)
+    {
+        std::error_code iteratorError;
+        std::filesystem::directory_iterator iterator(current, {}, iteratorError);
+        if (iteratorError)
+        {
+            throw std::runtime_error("Failed to enumerate protected update data for verification.");
+        }
+        for (const std::filesystem::directory_iterator end; iterator != end; iterator.increment(iteratorError))
+        {
+            if (iteratorError)
+            {
+                throw std::runtime_error("Protected update data changed during verification.");
+            }
+            const std::filesystem::path path = iterator->path();
+            const ProtectedDownloadsPathKind kind = inspectProtectedDownloadsPath(path);
+            const std::wstring relative = path.lexically_relative(root).generic_wstring();
+            if (relative.empty() || !snapshot.emplace(relative, ProtectedPathSnapshotEntry{}).second)
+            {
+                throw std::runtime_error("Protected update data contains an aliased path.");
+            }
+            ProtectedPathSnapshotEntry& entry = snapshot.at(relative);
+            if (kind == ProtectedDownloadsPathKind::Directory)
+            {
+                entry.directory = true;
+                collectProtectedSnapshot(root, path, snapshot);
+            }
+            else if (kind == ProtectedDownloadsPathKind::RegularFile)
+            {
+                std::error_code sizeError;
+                const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+                if (sizeError || size > std::numeric_limits<std::uint64_t>::max())
+                {
+                    throw std::runtime_error("Failed to measure protected update data.");
+                }
+                entry.size = static_cast<std::uint64_t>(size);
+                entry.digest = hashProtectedFile(path);
+                std::error_code afterError;
+                if (std::filesystem::file_size(path, afterError) != size || afterError)
+                {
+                    throw std::runtime_error("Protected update data changed while it was hashed.");
+                }
+            }
+            else
+            {
+                throw std::runtime_error("Protected update data contains an unsupported filesystem entry.");
+            }
+        }
+        if (iteratorError)
+        {
+            throw std::runtime_error("Protected update data changed during verification.");
+        }
+    }
+
+    ProtectedPathSnapshot snapshotProtectedDirectory(const std::filesystem::path& root)
+    {
+        if (inspectProtectedDownloadsPath(root) != ProtectedDownloadsPathKind::Directory)
+        {
+            throw std::runtime_error("Protected update data is no longer a directory.");
+        }
+        ProtectedPathSnapshot snapshot;
+        collectProtectedSnapshot(root, root, snapshot);
+        return snapshot;
+    }
+
+    void requireProtectedDataMatches(
+        const std::filesystem::path& sourceRoot,
+        const std::filesystem::path& destinationRoot)
+    {
+        const std::filesystem::path sourceDownloads = sourceRoot / L"Downloads";
+        const std::filesystem::path destinationDownloads = destinationRoot / L"Downloads";
+        const ProtectedDownloadsPathKind sourceDownloadsKind = inspectProtectedDownloadsPath(sourceDownloads);
+        if (inspectProtectedDownloadsPath(destinationDownloads) != ProtectedDownloadsPathKind::Directory ||
+            (sourceDownloadsKind == ProtectedDownloadsPathKind::Directory &&
+             snapshotProtectedDirectory(sourceDownloads) != snapshotProtectedDirectory(destinationDownloads)) ||
+            (sourceDownloadsKind == ProtectedDownloadsPathKind::Missing &&
+             !snapshotProtectedDirectory(destinationDownloads).empty()))
+        {
+            throw std::runtime_error("Protected Downloads changed before the update commit completed.");
+        }
+        if (sourceDownloadsKind != ProtectedDownloadsPathKind::Directory &&
+            sourceDownloadsKind != ProtectedDownloadsPathKind::Missing)
+        {
+            throw std::runtime_error("Protected Downloads is no longer a directory.");
+        }
+
+        const std::filesystem::path sourceLogs = sourceRoot / L"logs";
+        const std::filesystem::path destinationLogs = destinationRoot / L"logs";
+        const ProtectedDownloadsPathKind sourceLogsKind = inspectProtectedDownloadsPath(sourceLogs);
+        const ProtectedDownloadsPathKind destinationLogsKind = inspectProtectedDownloadsPath(destinationLogs);
+        if ((sourceLogsKind == ProtectedDownloadsPathKind::Missing &&
+             destinationLogsKind != ProtectedDownloadsPathKind::Missing) ||
+            (sourceLogsKind == ProtectedDownloadsPathKind::Directory &&
+             (destinationLogsKind != ProtectedDownloadsPathKind::Directory ||
+              snapshotProtectedDirectory(sourceLogs) != snapshotProtectedDirectory(destinationLogs))) ||
+            (sourceLogsKind != ProtectedDownloadsPathKind::Missing &&
+             sourceLogsKind != ProtectedDownloadsPathKind::Directory))
+        {
+            throw std::runtime_error("Protected logs changed before the update commit completed.");
+        }
+    }
 
     ProtectedDownloadsPathKind inspectProtectedDownloadsPath(
         const std::filesystem::path& path)
@@ -1907,10 +2461,58 @@ namespace
         }
 
         ProtectedDownloadsCopyStats stats;
+        const ProtectedPathSnapshot sourceBefore = snapshotProtectedDirectory(liveDownloads);
         copyProtectedDownloadsDirectory(liveDownloads, stagedDownloads, stats);
+        const ProtectedPathSnapshot sourceAfter = snapshotProtectedDirectory(liveDownloads);
+        const ProtectedPathSnapshot destination = snapshotProtectedDirectory(stagedDownloads);
+        if (sourceBefore != sourceAfter || sourceBefore != destination)
+        {
+            throw std::runtime_error("Protected Downloads changed while the update was being staged.");
+        }
         std::ostringstream stream;
         stream << "Protected Downloads directory staged for the atomic update. source=\""
                << toUtf8(liveDownloads.wstring())
+               << "\", files=" << stats.fileCount
+               << ", bytes=" << stats.byteCount;
+        writeLog("INFO", stream.str());
+    }
+
+    void stageProtectedLogsDirectory(
+        const std::filesystem::path& liveInstallDirectory,
+        const std::filesystem::path& stagingDirectory,
+        bool replacingExisting)
+    {
+        if (!replacingExisting)
+        {
+            return;
+        }
+
+        const std::filesystem::path liveLogs = liveInstallDirectory / L"logs";
+        const ProtectedDownloadsPathKind liveKind = inspectProtectedDownloadsPath(liveLogs);
+        if (liveKind == ProtectedDownloadsPathKind::Missing)
+        {
+            return;
+        }
+        if (liveKind != ProtectedDownloadsPathKind::Directory)
+        {
+            throw std::runtime_error(
+                "The protected logs path in the existing installation is not a directory: " +
+                toUtf8(liveLogs.wstring()));
+        }
+
+        ProtectedDownloadsCopyStats stats;
+        const std::filesystem::path stagedLogs = stagingDirectory / L"logs";
+        const ProtectedPathSnapshot sourceBefore = snapshotProtectedDirectory(liveLogs);
+        copyProtectedDownloadsDirectory(liveLogs, stagedLogs, stats);
+        const ProtectedPathSnapshot sourceAfter = snapshotProtectedDirectory(liveLogs);
+        const ProtectedPathSnapshot destination = snapshotProtectedDirectory(stagedLogs);
+        if (sourceBefore != sourceAfter || sourceBefore != destination)
+        {
+            throw std::runtime_error("Protected logs changed while the update was being staged.");
+        }
+        std::ostringstream stream;
+        stream << "Protected logs directory staged for the atomic update. source=\""
+               << toUtf8(liveLogs.wstring())
                << "\", files=" << stats.fileCount
                << ", bytes=" << stats.byteCount;
         writeLog("INFO", stream.str());
@@ -1968,7 +2570,15 @@ namespace
              << L"\"totalBytes\":" << totalBytes
              << L"}";
 
-        callback(json.str().c_str(), userData);
+        try
+        {
+            callback(json.str().c_str(), userData);
+        }
+        catch (...)
+        {
+            // A foreign-language callback must never unwind through the C ABI.
+            // Progress delivery is best-effort and does not change transaction state.
+        }
         writeProgressDebugLog(phase, currentItem, copiedBytes, totalBytes, true);
     }
 
@@ -2315,16 +2925,31 @@ namespace
 #endif
     }
 
+    using InstallCommitValidator =
+        std::function<void(const std::filesystem::path&)>;
+    using InstallCommitBoundary = std::function<void()>;
+    using InstallPayloadValidator =
+        std::function<void(const std::filesystem::path&, std::uint64_t)>;
+
     InstallResult installPackageFromReader(
         PackageReader& package,
         const std::filesystem::path& installDirectory,
         bool shouldCreateDesktopShortcut,
         FluxoraInstallerProgressCallback callback,
         void* userData,
-        InstallerProgressState& progressState)
+        InstallerProgressState& progressState,
+        const InstallCommitValidator& preCommitValidator = {},
+        const InstallCommitBoundary& enterCommitBoundary = {},
+        bool emitCompletedProgress = true,
+        bool deferTransactionFinalization = false,
+        const InstallPayloadValidator& payloadValidator = {})
     {
         const std::filesystem::path validatedInstallDirectory = validateInstallDirectory(installDirectory);
         const PackageHeader header = readHeader(package);
+        if (payloadValidator)
+        {
+            payloadValidator(validatedInstallDirectory, header.totalBytes);
+        }
         const InstallerTransactionPaths transaction = createStagingTransaction(validatedInstallDirectory);
         const std::filesystem::path& stagingDirectory = transaction.stagingDirectory;
         TransactionDirectoryCleanup stagingCleanup(stagingDirectory, "staging directory");
@@ -2424,11 +3049,27 @@ namespace
             throw std::runtime_error(
                 "Failed to inspect existing installation: " + existsError.message());
         }
+        if (preCommitValidator)
+        {
+            preCommitValidator(validatedInstallDirectory);
+        }
 
         stageProtectedDownloadsDirectory(
             validatedInstallDirectory,
             stagingDirectory,
             replacingExisting);
+        stageProtectedLogsDirectory(
+            validatedInstallDirectory,
+            stagingDirectory,
+            replacingExisting);
+        if (preCommitValidator)
+        {
+            preCommitValidator(validatedInstallDirectory);
+        }
+        if (enterCommitBoundary)
+        {
+            enterCommitBoundary();
+        }
 
         persistTransactionSentinel(transaction);
         persistTransactionMarker(transaction, replacingExisting);
@@ -2511,24 +3152,34 @@ namespace
         }
 
         stagingCleanup.dismiss();
-        try
+        if (!deferTransactionFinalization)
         {
-            if (existingMovedToBackup)
+            try
             {
-                removeOwnedTransactionDirectory(backupDirectory, "backup directory");
-                existingMovedToBackup = false;
+                if (existingMovedToBackup)
+                {
+                    removeOwnedTransactionDirectory(
+                        backupDirectory,
+                        "backup directory");
+                    existingMovedToBackup = false;
+                }
+                removeDurableTransactionFile(
+                    installTransactionSentinelPath(
+                        validatedInstallDirectory,
+                        transaction.id),
+                    "commit sentinel");
+                removeDurableTransactionFile(
+                    transaction.markerPath,
+                    "marker");
             }
-            removeDurableTransactionFile(
-                installTransactionSentinelPath(validatedInstallDirectory, transaction.id),
-                "commit sentinel");
-            removeDurableTransactionFile(transaction.markerPath, "marker");
-        }
-        catch (const std::exception& cleanupError)
-        {
-            writeLog(
-                "WARNING",
-                std::string("Installation committed; durable transaction cleanup was deferred. ") +
-                    cleanupError.what());
+            catch (const std::exception& cleanupError)
+            {
+                writeLog(
+                    "WARNING",
+                    std::string(
+                        "Installation committed; durable transaction cleanup was deferred. ") +
+                        cleanupError.what());
+            }
         }
 
         writeLog(
@@ -2570,7 +3221,18 @@ namespace
             }
         }
 
-        emitProgress(callback, userData, progressState, L"completed", L"", header.totalBytes, header.totalBytes, true);
+        if (emitCompletedProgress)
+        {
+            emitProgress(
+                callback,
+                userData,
+                progressState,
+                L"completed",
+                L"",
+                header.totalBytes,
+                header.totalBytes,
+                true);
+        }
         return result;
     }
 
@@ -2604,51 +3266,463 @@ namespace
         bool shouldCreateDesktopShortcut,
         FluxoraInstallerProgressCallback callback,
         void* userData,
-        InstallerProgressState& progressState)
+        InstallerProgressState& progressState,
+        const InstallCommitValidator& preCommitValidator = {},
+        const InstallCommitBoundary& enterCommitBoundary = {},
+        bool emitCompletedProgress = true,
+        bool deferTransactionFinalization = false,
+        FluxoraInstallerCancelCallback cancelCallback = nullptr,
+        void* cancelUserData = nullptr,
+        const InstallPayloadValidator& payloadValidator = {})
     {
-        CallbackPackageReader package(readCallback, readUserData);
+        CallbackPackageReader package(
+            readCallback,
+            readUserData,
+            cancelCallback,
+            cancelUserData);
         return installPackageFromReader(
             package,
             installDirectory,
             shouldCreateDesktopShortcut,
             callback,
             userData,
-            progressState);
+            progressState,
+            preCommitValidator,
+            enterCommitBoundary,
+            emitCompletedProgress,
+            deferTransactionFinalization,
+            payloadValidator);
     }
 
-    int mapException(const std::exception& exception, int resultCode)
+    std::wstring serializeWorkflowProgress(
+        const fluxora::installer::UpdateWorkflowProgress& progress)
     {
-        lastError = fromUtf8(exception.what());
-        writeLog("ERROR", exception.what());
+        std::wostringstream json;
+        json.imbue(std::locale::classic());
+        json << L"{\"schemaVersion\":1"
+             << L",\"operationId\":\""
+             << jsonEscape(fromUtf8(progress.operationId)) << L"\""
+             << L",\"phase\":\""
+             << jsonEscape(fromUtf8(progress.phase)) << L"\""
+             << L",\"statusKey\":\""
+             << jsonEscape(fromUtf8(progress.statusKey)) << L"\""
+             << L",\"currentItem\":\""
+             << jsonEscape(fromUtf8(progress.currentItem)) << L"\""
+             << L",\"completedBytes\":" << progress.completedBytes
+             << L",\"totalBytes\":" << progress.totalBytes
+             << L",\"percent\":" << std::fixed << std::setprecision(3)
+             << progress.percent
+             << L",\"canCancel\":"
+             << (progress.canCancel ? L"true" : L"false")
+             << L"}";
+        return json.str();
+    }
+
+    void emitWorkflowProgress(
+        FluxoraInstallerProgressCallback callback,
+        void* userData,
+        const fluxora::installer::UpdateWorkflowProgress& progress)
+    {
+        if (callback == nullptr)
+        {
+            return;
+        }
+        const std::wstring json = serializeWorkflowProgress(progress);
+        try
+        {
+            callback(json.c_str(), userData);
+        }
+        catch (...)
+        {
+            // A foreign-language callback must never unwind through the C ABI.
+            // Progress delivery is best-effort and does not change transaction state.
+        }
+    }
+
+    std::wstring serializeWorkflowResult(
+        const fluxora::installer::UpdateWorkflowResult& result)
+    {
+        std::wostringstream json;
+        json << L"{\"schemaVersion\":1"
+             << L",\"operationId\":\""
+             << jsonEscape(fromUtf8(result.operationId)) << L"\""
+             << L",\"outcome\":\"succeeded\""
+             << L",\"targetVersion\":\""
+             << jsonEscape(fromUtf8(result.targetVersion)) << L"\""
+             << L"}";
+        return json.str();
+    }
+
+    std::wstring serializeWindowsIntegrationResult(
+        const fluxora::installer::WindowsIntegrationResult& result)
+    {
+        std::wostringstream json;
+        json << L"{\"schemaVersion\":1"
+             << L",\"protocolConfigured\":"
+             << (result.protocolConfigured ? L"true" : L"false")
+             << L",\"shortcutConfigured\":"
+             << (result.shortcutConfigured ? L"true" : L"false")
+             << L",\"protocolRemoved\":"
+             << (result.protocolRemoved ? L"true" : L"false")
+             << L",\"shortcutRemoved\":"
+             << (result.shortcutRemoved ? L"true" : L"false")
+             << L"}";
+        return json.str();
+    }
+
+    void requireOutputBufferCapacity(
+        const std::wstring& value,
+        wchar_t* buffer,
+        int bufferLength)
+    {
+        if (buffer == nullptr || bufferLength <= 0)
+        {
+            throw std::invalid_argument("Output buffer is required.");
+        }
+        if (value.size() + 1 > static_cast<std::size_t>(bufferLength))
+        {
+            throw std::length_error("Output buffer is too small.");
+        }
+    }
+
+    bool requireBooleanArgument(int value, const char* name)
+    {
+        if (value != 0 && value != 1)
+        {
+            throw std::invalid_argument(
+                std::string(name) + " must be zero or one.");
+        }
+        return value == 1;
+    }
+
+    std::string requireOperationId(const wchar_t* operationId)
+    {
+        if (operationId == nullptr)
+        {
+            throw std::invalid_argument("Operation identifier is required.");
+        }
+        const std::size_t length = wcsnlen_s(operationId, 129);
+        if (length == 0 || length > 128)
+        {
+            throw std::invalid_argument(
+                "Operation identifier must be 1-128 safe ASCII characters.");
+        }
+        std::string value;
+        value.reserve(length);
+        for (std::size_t index = 0; index < length; ++index)
+        {
+            const wchar_t character = operationId[index];
+            const bool safe =
+                (character >= L'A' && character <= L'Z') ||
+                (character >= L'a' && character <= L'z') ||
+                (character >= L'0' && character <= L'9') ||
+                character == L'.' || character == L'_' ||
+                character == L'-';
+            if (!safe)
+            {
+                throw std::invalid_argument(
+                    "Operation identifier must be 1-128 safe ASCII characters.");
+            }
+            value.push_back(static_cast<char>(character));
+        }
+        return value;
+    }
+
+    class ScopedOperationContext final
+    {
+    public:
+        explicit ScopedOperationContext(std::string operationId)
+        {
+            if (!fluxora::installer::isSafeOperationId(operationId))
+            {
+                throw std::invalid_argument(
+                    "Operation identifier must be 1-128 safe ASCII characters.");
+            }
+            currentOperationId = std::move(operationId);
+        }
+        ScopedOperationContext(const ScopedOperationContext&) = delete;
+        ScopedOperationContext& operator=(const ScopedOperationContext&) = delete;
+        ~ScopedOperationContext()
+        {
+            currentOperationId.clear();
+        }
+    };
+
+    class SetupWindowsIntegrationError final : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
+    fluxora::installer::SetupInstallValidation requireSafeSetupDestination(
+        const std::filesystem::path& installDirectory,
+        std::uint64_t expandedPayloadBytes)
+    {
+        fluxora::installer::WindowsCurrentUserRegistryStore registry;
+        fluxora::installer::SetupInstallValidation validation =
+            fluxora::installer::SetupBootstrapService(registry).validate(
+                installDirectory,
+                expandedPayloadBytes);
+        if (validation.status !=
+            fluxora::installer::SetupValidationStatus::Valid)
+        {
+            throw std::invalid_argument(
+                "Setup destination validation failed: " + validation.code);
+        }
+        return validation;
+    }
+
+    int mapException(const std::exception& exception, int resultCode) noexcept
+    {
+        try
+        {
+            lastError = fromUtf8(exception.what());
+        }
+        catch (...)
+        {
+            lastError.clear();
+        }
+        try
+        {
+            writeLog("ERROR", exception.what());
+        }
+        catch (...)
+        {
+        }
         return resultCode;
+    }
+
+    int mapUnknownException(int resultCode) noexcept
+    {
+        try
+        {
+            lastError = L"Native installer failed with an unknown error.";
+        }
+        catch (...)
+        {
+        }
+        try
+        {
+            writeLog("ERROR", "Native installer failed with an unknown error.");
+        }
+        catch (...)
+        {
+        }
+        return resultCode;
+    }
+}
+
+namespace fluxora::installer::detail
+{
+    std::string redactUpdaterLogMessage(std::string_view message)
+    {
+        return ::redactUpdaterLogMessageImpl(message);
+    }
+
+    void replaceApplicationDirectory(
+        const std::filesystem::path& installDirectory,
+        const DirectoryBuilder& builder,
+        const DirectoryValidator& validator,
+        const DirectoryStageObserver& observer,
+        bool requiresHealthConfirmation)
+    {
+        if (!builder || !validator)
+        {
+            throw std::invalid_argument("Update directory builder and validator are required.");
+        }
+
+        const std::filesystem::path validatedInstallDirectory =
+            ::validateInstallDirectory(installDirectory);
+        std::error_code existsError;
+        if (!std::filesystem::is_directory(validatedInstallDirectory, existsError) || existsError)
+        {
+            throw std::invalid_argument("Fluxora update requires an existing installation directory.");
+        }
+
+        const ::InstallerTransactionPaths transaction =
+            ::createStagingTransaction(validatedInstallDirectory);
+        const std::filesystem::path& stagingDirectory = transaction.stagingDirectory;
+        ::TransactionDirectoryCleanup stagingCleanup(stagingDirectory, "update staging directory");
+
+        builder(stagingDirectory);
+        validator(stagingDirectory);
+        if (observer)
+        {
+            observer(DirectoryTransactionStage::StagingBuilt);
+        }
+
+        ::rejectReparseInstallDirectory(validatedInstallDirectory);
+        ::stageProtectedDownloadsDirectory(
+            validatedInstallDirectory,
+            stagingDirectory,
+            true);
+        ::stageProtectedLogsDirectory(
+            validatedInstallDirectory,
+            stagingDirectory,
+            true);
+        if (observer)
+        {
+            observer(DirectoryTransactionStage::ProtectedDataStaged);
+        }
+        ::requireProtectedDataMatches(validatedInstallDirectory, stagingDirectory);
+        ::persistTransactionSentinel(transaction);
+        ::persistTransactionMarker(
+            transaction,
+            true,
+            requiresHealthConfirmation);
+
+        std::filesystem::path backupDirectory = transaction.backupDirectory;
+        bool existingMovedToBackup = false;
+        bool stagingMovedToInstall = false;
+        try
+        {
+            // This is the last staging-tree operation before the live-directory swap.
+            // The validator ignores only the owned transaction sentinel and protected data.
+            validator(stagingDirectory);
+            ::renameDirectory(
+                validatedInstallDirectory,
+                backupDirectory,
+                "Backing up the existing Fluxora installation for update");
+            existingMovedToBackup = true;
+            if (observer)
+            {
+                observer(DirectoryTransactionStage::BackupCreated);
+            }
+
+            ::renameDirectory(
+                stagingDirectory,
+                validatedInstallDirectory,
+                "Committing the staged Fluxora update");
+            stagingMovedToInstall = true;
+            if (observer)
+            {
+                observer(DirectoryTransactionStage::StagingCommitted);
+            }
+            // Revalidate the path that is actually live. This closes the observable
+            // staging-path mutation window between the pre-swap validation and rename.
+            validator(validatedInstallDirectory);
+            ::requireProtectedDataMatches(backupDirectory, validatedInstallDirectory);
+        }
+        catch (...)
+        {
+            const std::exception_ptr originalFailure = std::current_exception();
+            ::writeLog("WARNING", "Updater commit failed. Rolling back the installation directory swap.");
+            try
+            {
+                if (stagingMovedToInstall)
+                {
+                    ::renameDirectory(
+                        validatedInstallDirectory,
+                        stagingDirectory,
+                        "Moving the failed update out of the live path");
+                    stagingMovedToInstall = false;
+                }
+                if (existingMovedToBackup)
+                {
+                    ::renameDirectory(
+                        backupDirectory,
+                        validatedInstallDirectory,
+                        "Restoring the previous Fluxora installation after update failure");
+                    existingMovedToBackup = false;
+                }
+
+                try
+                {
+                    ::removeOwnedTransactionDirectory(stagingDirectory, "update staging directory");
+                    stagingCleanup.dismiss();
+                    ::removeDurableTransactionFile(transaction.markerPath, "update transaction marker");
+                }
+                catch (const std::exception& cleanupError)
+                {
+                    ::writeLog(
+                        "WARNING",
+                        std::string("Update rollback completed, but durable cleanup was deferred. ") +
+                            cleanupError.what());
+                }
+            }
+            catch (const std::exception& rollbackError)
+            {
+                ::writeLog("ERROR", std::string("Updater rollback failed. ") + rollbackError.what());
+                throw fluxora::installer::detail::InstallerRecoveryError(
+                    std::string("Fluxora update failed and rollback could not restore the previous installation. ") +
+                    rollbackError.what());
+            }
+            std::rethrow_exception(originalFailure);
+        }
+
+        stagingCleanup.dismiss();
+        ::writeLog(
+            "INFO",
+            "Update directory committed pending health confirmation; retained backup is durable.");
+    }
+
+    void finalizePendingApplicationUpdate(const std::filesystem::path& installDirectory)
+    {
+        ::finalizePendingApplicationUpdateImpl(installDirectory);
+    }
+
+    void rollbackPendingApplicationUpdate(const std::filesystem::path& installDirectory)
+    {
+        ::rollbackPendingApplicationUpdateImpl(installDirectory);
+    }
+
+    void recoverApplicationDirectory(const std::filesystem::path& installDirectory)
+    {
+        (void)::validateInstallDirectory(installDirectory);
     }
 }
 
 extern "C"
 {
-    int fluxora_installer_is_available()
+    int fluxora_installer_is_available() noexcept
     {
-        return 1;
+        try
+        {
+            return 1;
+        }
+        catch (...)
+        {
+            return 0;
+        }
     }
 
-    int fluxora_installer_set_operation_context(const wchar_t* operationId)
+    int fluxora_installer_set_operation_context(
+        const wchar_t* operationId) noexcept
     {
-        if (isBlank(operationId))
+        try
+        {
+            lastError.clear();
+            if (isBlank(operationId))
+            {
+                currentOperationId.clear();
+            }
+            else
+            {
+                currentOperationId = requireOperationId(operationId);
+            }
+            return FluxoraInstallerResultOk;
+        }
+        catch (const std::invalid_argument& exception)
         {
             currentOperationId.clear();
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
         }
-        else
+        catch (const std::exception& exception)
         {
-            currentOperationId = toUtf8(operationId);
+            currentOperationId.clear();
+            return mapException(exception, FluxoraInstallerResultInstallError);
         }
-
-        return FluxoraInstallerResultOk;
+        catch (...)
+        {
+            currentOperationId.clear();
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
     }
 
     int fluxora_installer_validate_install_directory(
         const wchar_t* installDirectory,
         wchar_t* messageBuffer,
-        int messageBufferLength)
+        int messageBufferLength) noexcept
     {
         try
         {
@@ -2669,6 +3743,10 @@ extern "C"
         {
             return mapException(exception, FluxoraInstallerResultInstallError);
         }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
     }
 
     int fluxora_installer_install_package(
@@ -2678,7 +3756,7 @@ extern "C"
         FluxoraInstallerProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,
-        int jsonBufferLength)
+        int jsonBufferLength) noexcept
     {
         InstallerProgressState progressState;
         try
@@ -2748,6 +3826,10 @@ extern "C"
                 true);
             return mapException(exception, FluxoraInstallerResultInstallError);
         }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
     }
 
     int fluxora_installer_install_package_stream(
@@ -2758,7 +3840,7 @@ extern "C"
         FluxoraInstallerProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,
-        int jsonBufferLength)
+        int jsonBufferLength) noexcept
     {
         InstallerProgressState progressState;
         try
@@ -2829,10 +3911,1068 @@ extern "C"
                 true);
             return mapException(exception, FluxoraInstallerResultInstallError);
         }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
     }
 
-    int fluxora_installer_get_last_error(wchar_t* messageBuffer, int messageBufferLength)
+    int fluxora_installer_install_setup_payload_stream(
+        FluxoraInstallerReadCallback readCallback,
+        void* readUserData,
+        const wchar_t* installDirectory,
+        std::uint64_t expandedPayloadBytes,
+        int createDesktopShortcut,
+        const wchar_t* operationId,
+        FluxoraInstallerCancelCallback cancelCallback,
+        void* cancelUserData,
+        FluxoraInstallerProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
     {
-        return writeToBuffer(lastError, messageBuffer, messageBufferLength);
+        InstallerProgressState progressState;
+        std::string operation = "none";
+        std::unique_ptr<fluxora::installer::InstallerLogService> structuredLog;
+        try
+        {
+            lastError.clear();
+            if (readCallback == nullptr || isBlank(installDirectory) ||
+                expandedPayloadBytes == 0)
+            {
+                throw std::invalid_argument(
+                    "Setup payload stream, expanded size and install directory are required.");
+            }
+            operation = requireOperationId(operationId);
+            ScopedOperationContext operationContext(operation);
+            const bool createShortcut = requireBooleanArgument(
+                createDesktopShortcut,
+                "createDesktopShortcut");
+            if (cancelCallback != nullptr &&
+                cancelCallback(0, cancelUserData) != 0)
+            {
+                throw SetupCancelledError(
+                    "Setup was cancelled before the commit boundary.");
+            }
+            auto validation = requireSafeSetupDestination(
+                installDirectory,
+                expandedPayloadBytes);
+            fluxora::installer::UpdateProcessLock installLock =
+                fluxora::installer::UpdateProcessLock::acquire(
+                    validation.normalizedInstallDirectory);
+            validation = requireSafeSetupDestination(
+                validation.normalizedInstallDirectory,
+                expandedPayloadBytes);
+
+            InstallResult expected;
+            expected.installDirectory = validation.normalizedInstallDirectory;
+            expected.applicationPath =
+                validation.normalizedInstallDirectory / L"Fluxora.exe";
+            expected.createdDesktopShortcut = createShortcut;
+            if (createShortcut)
+            {
+                expected.desktopShortcutPath =
+                    fluxora::installer::WindowsDesktopShortcutStore::shortcutPath();
+            }
+            requireOutputBufferCapacity(
+                serializeResult(expected),
+                jsonBuffer,
+                jsonBufferLength);
+
+            {
+                fluxora::installer::WindowsCurrentUserRegistryStore registry;
+                fluxora::installer::ProtocolRegistrationService protocol(registry);
+                fluxora::installer::InstallationOwnershipService ownership(registry);
+                fluxora::installer::WindowsDesktopShortcutStore shortcut;
+                fluxora::installer::WindowsUserIntegrationService(
+                    protocol,
+                    shortcut,
+                    ownership)
+                    .validateConfigure(
+                        expected.applicationPath,
+                        createShortcut);
+            }
+
+            structuredLog =
+                std::make_unique<fluxora::installer::InstallerLogService>();
+            structuredLog->info(
+                fluxora::installer::InstallerLogChannel::Installer,
+                operation,
+                "setup-install-started");
+            structuredLog->info(
+                fluxora::installer::InstallerLogChannel::Operation,
+                operation,
+                "setup-install-started");
+
+            InstallResult result = installPackageStream(
+                readCallback,
+                readUserData,
+                validation.normalizedInstallDirectory,
+                false,
+                progressCallback,
+                progressUserData,
+                progressState,
+                [&](const std::filesystem::path& destination) {
+                    const auto current = requireSafeSetupDestination(
+                        destination,
+                        expandedPayloadBytes);
+                    if (current.normalizedInstallDirectory !=
+                        validation.normalizedInstallDirectory)
+                    {
+                        throw std::invalid_argument(
+                            "Setup destination changed during installation.");
+                    }
+                    if (cancelCallback != nullptr &&
+                        cancelCallback(0, cancelUserData) != 0)
+                    {
+                        throw SetupCancelledError(
+                            "Setup was cancelled before the commit boundary.");
+                    }
+                    fluxora::installer::WindowsCurrentUserRegistryStore registry;
+                    fluxora::installer::ProtocolRegistrationService protocol(registry);
+                    fluxora::installer::InstallationOwnershipService ownership(registry);
+                    fluxora::installer::WindowsDesktopShortcutStore shortcut;
+                    fluxora::installer::WindowsUserIntegrationService(
+                        protocol,
+                        shortcut,
+                        ownership)
+                        .validateConfigure(
+                            destination / L"Fluxora.exe",
+                            createShortcut);
+                },
+                [&] {
+                    if (cancelCallback != nullptr &&
+                        cancelCallback(1, cancelUserData) != 0)
+                    {
+                        throw SetupCancelledError(
+                            "Setup was cancelled before the commit boundary.");
+                    }
+                    fluxora::installer::WindowsCurrentUserRegistryStore registry;
+                    fluxora::installer::InstallationOwnershipService ownership(
+                        registry);
+                    ownership.claimPending(
+                        validation.normalizedInstallDirectory /
+                        L"Fluxora.exe");
+                    emitProgress(
+                        progressCallback,
+                        progressUserData,
+                        progressState,
+                        L"committing",
+                        L"",
+                        0,
+                        0,
+                        true);
+                },
+                false,
+                true,
+                cancelCallback,
+                cancelUserData,
+                [&](const std::filesystem::path& destination,
+                    std::uint64_t actualExpandedBytes) {
+                    if (actualExpandedBytes != expandedPayloadBytes)
+                    {
+                        throw std::invalid_argument(
+                            "Setup payload expanded size does not match its trusted build metadata.");
+                    }
+                    const auto current = requireSafeSetupDestination(
+                        destination,
+                        expandedPayloadBytes);
+                    if (current.normalizedInstallDirectory !=
+                        validation.normalizedInstallDirectory)
+                    {
+                        throw std::invalid_argument(
+                            "Setup destination changed before payload extraction.");
+                    }
+                });
+
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"integrating",
+                L"Fluxora.exe",
+                1,
+                1,
+                true);
+            try
+            {
+                fluxora::installer::WindowsCurrentUserRegistryStore registry;
+                fluxora::installer::ProtocolRegistrationService protocol(registry);
+                fluxora::installer::InstallationOwnershipService ownership(registry);
+                fluxora::installer::WindowsDesktopShortcutStore shortcut;
+                const auto integration =
+                    fluxora::installer::WindowsUserIntegrationService(
+                        protocol,
+                        shortcut,
+                        ownership)
+                        .configure(result.applicationPath, createShortcut);
+                result.createdDesktopShortcut =
+                    integration.shortcutConfigured;
+                result.desktopShortcutPath =
+                    integration.shortcutConfigured
+                        ? fluxora::installer::WindowsDesktopShortcutStore::
+                              shortcutPath()
+                        : std::filesystem::path{};
+            }
+            catch (const std::exception& exception)
+            {
+                throw SetupWindowsIntegrationError(exception.what());
+            }
+            fluxora::installer::detail::finalizePendingApplicationUpdate(
+                validation.normalizedInstallDirectory);
+
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"completed",
+                L"",
+                1,
+                1,
+                true);
+            structuredLog->info(
+                fluxora::installer::InstallerLogChannel::Installer,
+                operation,
+                "setup-install-completed");
+            structuredLog->info(
+                fluxora::installer::InstallerLogChannel::Operation,
+                operation,
+                "setup-install-completed");
+            return writeToBuffer(
+                serializeResult(result),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::length_error& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBufferTooSmall);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            if (structuredLog)
+            {
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Installer,
+                    operation,
+                    "setup-install-failed",
+                    "invalid-destination");
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Operation,
+                    operation,
+                    "setup-install-failed",
+                    "invalid-destination");
+            }
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const fluxora::installer::UpdateBusyError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBusy);
+        }
+        catch (const SetupCancelledError& exception)
+        {
+            if (structuredLog)
+            {
+                structuredLog->info(
+                    fluxora::installer::InstallerLogChannel::Installer,
+                    operation,
+                    "setup-install-cancelled");
+                structuredLog->info(
+                    fluxora::installer::InstallerLogChannel::Operation,
+                    operation,
+                    "setup-install-cancelled");
+            }
+            return mapException(exception, FluxoraInstallerResultCancelled);
+        }
+        catch (const SetupWindowsIntegrationError& exception)
+        {
+            if (structuredLog)
+            {
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Installer,
+                    operation,
+                    "setup-integration-failed",
+                    "windows-integration");
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Operation,
+                    operation,
+                    "setup-integration-failed",
+                    "windows-integration");
+            }
+            return mapException(
+                exception,
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+        catch (const std::exception& exception)
+        {
+            if (structuredLog)
+            {
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Installer,
+                    operation,
+                    "setup-install-failed",
+                    "install-failed");
+                structuredLog->error(
+                    fluxora::installer::InstallerLogChannel::Operation,
+                    operation,
+                    "setup-install-failed",
+                    "install-failed");
+            }
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_apply_update(
+        const wchar_t* manifestPath,
+        const wchar_t* signaturePath,
+        const wchar_t* packagePath,
+        const wchar_t* installDirectory,
+        const wchar_t* currentVersion,
+        const wchar_t* targetVersion,
+        const wchar_t* target,
+        int assetKind,
+        const wchar_t* fromVersion,
+        const wchar_t* expectedPackageSha256,
+        std::uint64_t expectedPackageSize,
+        const wchar_t* applicationExecutable,
+        const unsigned char* publicKeyDer,
+        std::uint32_t publicKeyDerLength,
+        FluxoraInstallerProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        InstallerProgressState progressState;
+        try
+        {
+            if (isBlank(manifestPath) || isBlank(signaturePath) || isBlank(packagePath) ||
+                isBlank(installDirectory) || isBlank(currentVersion) || isBlank(targetVersion) ||
+                isBlank(target) || isBlank(expectedPackageSha256) ||
+                isBlank(applicationExecutable) || publicKeyDer == nullptr || publicKeyDerLength == 0 ||
+                (assetKind != 0 && assetKind != 1))
+            {
+                throw std::invalid_argument("Complete update request metadata is required.");
+            }
+
+            fluxora::installer::UpdateRequest request;
+            request.manifestPath = std::filesystem::path(manifestPath);
+            request.signaturePath = std::filesystem::path(signaturePath);
+            request.packagePath = std::filesystem::path(packagePath);
+            request.installDirectory = std::filesystem::path(installDirectory);
+            request.currentVersion = toUtf8(currentVersion);
+            request.targetVersion = toUtf8(targetVersion);
+            request.target = toUtf8(target);
+            request.assetKind = assetKind == 0
+                ? fluxora::installer::UpdateAssetKind::Full
+                : fluxora::installer::UpdateAssetKind::Delta;
+            if (!isBlank(fromVersion))
+            {
+                request.fromVersion = toUtf8(fromVersion);
+            }
+            request.expectedPackageSha256 = toUtf8(expectedPackageSha256);
+            request.expectedPackageSize = expectedPackageSize;
+            request.applicationExecutable = applicationExecutable;
+
+            std::vector<std::byte> keyBytes(publicKeyDerLength);
+            std::memcpy(keyBytes.data(), publicKeyDer, publicKeyDerLength);
+            fluxora::installer::UpdateEngine engine(std::move(keyBytes));
+            writeLog("INFO", "Starting verified Fluxora application update.");
+            const fluxora::installer::UpdateApplyResult result = engine.apply(
+                request,
+                [&](std::string_view phase,
+                    std::string_view item,
+                    std::uint64_t completedBytes,
+                    std::uint64_t totalBytes) {
+                    emitProgress(
+                        progressCallback,
+                        progressUserData,
+                        progressState,
+                        fromUtf8(std::string(phase)),
+                        fromUtf8(std::string(item)),
+                        completedBytes,
+                        totalBytes,
+                        phase == "preparing" || phase == "completed");
+                });
+            writeLog("INFO", "Verified Fluxora application update completed.");
+            return writeToBuffer(serializeUpdateResult(result), jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const fluxora::installer::detail::InstallerRecoveryError& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (const std::exception& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_recover_update(
+        const wchar_t* installDirectory,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            if (isBlank(installDirectory))
+            {
+                throw std::invalid_argument("Install directory is required to recover an update.");
+            }
+            fluxora::installer::detail::recoverApplicationDirectory(installDirectory);
+            return writeToBuffer(
+                L"{\"schemaVersion\":1,\"status\":\"recovered\"}",
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultRecoveryError);
+        }
+    }
+
+    int fluxora_installer_finalize_update(
+        const wchar_t* installDirectory,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            if (isBlank(installDirectory))
+            {
+                throw std::invalid_argument("Install directory is required to finalize an update.");
+            }
+            fluxora::installer::detail::finalizePendingApplicationUpdate(installDirectory);
+            return writeToBuffer(
+                L"{\"schemaVersion\":1,\"status\":\"finalized\"}",
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_rollback_update(
+        const wchar_t* installDirectory,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            if (isBlank(installDirectory))
+            {
+                throw std::invalid_argument("Install directory is required to roll back an update.");
+            }
+            fluxora::installer::detail::rollbackPendingApplicationUpdate(installDirectory);
+            return writeToBuffer(
+                L"{\"schemaVersion\":1,\"status\":\"rolled-back\"}",
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_get_setup_bootstrap_state(
+        std::uint64_t expandedPayloadBytes,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (expandedPayloadBytes == 0)
+            {
+                throw std::invalid_argument(
+                    "Embedded setup payload expanded size must be greater than zero.");
+            }
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            const auto state =
+                fluxora::installer::SetupBootstrapService(registry).bootstrap(
+                    expandedPayloadBytes);
+            return writeToBuffer(
+                fluxora::installer::SetupBootstrapService::serialize(state),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_validate_install_options(
+        const wchar_t* installDirectory,
+        std::uint64_t expandedPayloadBytes,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(installDirectory) || expandedPayloadBytes == 0)
+            {
+                throw std::invalid_argument(
+                    "Install directory and embedded payload expanded size are required.");
+            }
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            const auto validation =
+                fluxora::installer::SetupBootstrapService(registry).validate(
+                    installDirectory,
+                    expandedPayloadBytes);
+            return writeToBuffer(
+                fluxora::installer::SetupBootstrapService::serialize(validation),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_load_update_request(
+        const wchar_t* requestPath,
+        const wchar_t* updaterExecutablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(requestPath) || isBlank(updaterExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Update request and updater executable paths are required.");
+            }
+            const auto request =
+                fluxora::installer::UpdateWorkflowRequestLoader::loadAndValidate(
+                    requestPath,
+                    updaterExecutablePath);
+            return writeToBuffer(
+                fluxora::installer::UpdateWorkflowRequestLoader::
+                    sanitizedSummaryJson(request),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultWorkflowError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultWorkflowError);
+        }
+    }
+
+    int fluxora_installer_run_update_workflow(
+        const wchar_t* requestPath,
+        const wchar_t* updaterExecutablePath,
+        const unsigned char* publicKeyDer,
+        std::uint32_t publicKeyDerLength,
+        FluxoraInstallerProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(requestPath) || isBlank(updaterExecutablePath) ||
+                publicKeyDer == nullptr || publicKeyDerLength == 0)
+            {
+                throw std::invalid_argument(
+                    "Update request, updater path and trust anchor are required.");
+            }
+            const auto request =
+                fluxora::installer::UpdateWorkflowRequestLoader::loadAndValidate(
+                    requestPath,
+                    updaterExecutablePath);
+            ScopedOperationContext operationContext(request.operationId);
+            const std::wstring expectedResult =
+                L"{\"schemaVersion\":1,\"operationId\":\"" +
+                jsonEscape(fromUtf8(request.operationId)) +
+                L"\",\"outcome\":\"succeeded\",\"targetVersion\":\"" +
+                jsonEscape(fromUtf8(request.targetVersion)) + L"\"}";
+            requireOutputBufferCapacity(
+                expectedResult,
+                jsonBuffer,
+                jsonBufferLength);
+
+            std::vector<std::byte> key(publicKeyDerLength);
+            std::memcpy(key.data(), publicKeyDer, publicKeyDerLength);
+            const auto result =
+                fluxora::installer::NativeUpdateWorkflow(
+                    std::move(key),
+                    updaterExecutablePath)
+                    .run(
+                        request,
+                        [&](const auto& progress) {
+                            emitWorkflowProgress(
+                                progressCallback,
+                                progressUserData,
+                                progress);
+                        });
+            return writeToBuffer(
+                serializeWorkflowResult(result),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::length_error& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBufferTooSmall);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const fluxora::installer::UpdateBusyError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBusy);
+        }
+        catch (const fluxora::installer::UpdateWorkflowRecoveryError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (const fluxora::installer::detail::InstallerRecoveryError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultWorkflowError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultWorkflowError);
+        }
+    }
+
+    int fluxora_installer_run_recovery(
+        const wchar_t* requestPath,
+        const wchar_t* updaterExecutablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(requestPath) || isBlank(updaterExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Recovery request and updater executable paths are required.");
+            }
+            const auto request =
+                fluxora::installer::UpdateWorkflowRequestLoader::loadAndValidate(
+                    requestPath,
+                    updaterExecutablePath,
+                    true);
+            ScopedOperationContext operationContext(request.operationId);
+            const std::wstring result =
+                L"{\"schemaVersion\":1,\"operationId\":\"" +
+                jsonEscape(fromUtf8(request.operationId)) +
+                L"\",\"outcome\":\"recovered\"}";
+            requireOutputBufferCapacity(result, jsonBuffer, jsonBufferLength);
+            fluxora::installer::NativeUpdateWorkflow(updaterExecutablePath)
+                .recover(request);
+            return writeToBuffer(result, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::length_error& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBufferTooSmall);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const fluxora::installer::UpdateBusyError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBusy);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultRecoveryError);
+        }
+    }
+
+    int fluxora_installer_run_recovery_watchdog(
+        const wchar_t* requestPath,
+        const wchar_t* updaterExecutablePath,
+        std::uint32_t ownerPid,
+        std::uint64_t ownerStartFileTime,
+        const wchar_t* readyEventName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        std::string operationId = "none";
+        try
+        {
+            lastError.clear();
+            if (isBlank(requestPath) || isBlank(updaterExecutablePath) ||
+                ownerPid == 0 || ownerStartFileTime == 0 ||
+                isBlank(readyEventName))
+            {
+                throw std::invalid_argument(
+                    "Complete recovery watchdog identity is required.");
+            }
+            const auto request =
+                fluxora::installer::UpdateWorkflowRequestLoader::loadAndValidate(
+                    requestPath,
+                    updaterExecutablePath,
+                    true);
+            operationId = request.operationId;
+            ScopedOperationContext operationContext(request.operationId);
+            const std::wstring result =
+                L"{\"schemaVersion\":1,\"operationId\":\"" +
+                jsonEscape(fromUtf8(request.operationId)) +
+                L"\",\"outcome\":\"recovered\"}";
+            requireOutputBufferCapacity(result, jsonBuffer, jsonBufferLength);
+            fluxora::installer::NativeUpdateWorkflow(updaterExecutablePath)
+                .runRecoveryWatchdog(
+                    request,
+                    ownerPid,
+                    ownerStartFileTime,
+                    readyEventName);
+            return writeToBuffer(result, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::length_error& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBufferTooSmall);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const fluxora::installer::UpdateBusyError& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultBusy);
+        }
+        catch (const std::exception& exception)
+        {
+            try
+            {
+                fluxora::installer::InstallerLogService().error(
+                    fluxora::installer::InstallerLogChannel::Crash,
+                    operationId,
+                    "recovery-watchdog-failed",
+                    "recovery-failed");
+            }
+            catch (...)
+            {
+            }
+            return mapException(exception, FluxoraInstallerResultRecoveryError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(FluxoraInstallerResultRecoveryError);
+        }
+    }
+
+    int fluxora_installer_configure_user_integration(
+        const wchar_t* applicationExecutablePath,
+        int createDesktopShortcut,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(applicationExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Fluxora application executable path is required.");
+            }
+            const bool createShortcut = requireBooleanArgument(
+                createDesktopShortcut,
+                "createDesktopShortcut");
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            fluxora::installer::ProtocolRegistrationService protocol(registry);
+            fluxora::installer::InstallationOwnershipService ownership(registry);
+            fluxora::installer::WindowsDesktopShortcutStore shortcut;
+            const auto result =
+                fluxora::installer::WindowsUserIntegrationService(
+                    protocol,
+                    shortcut,
+                    ownership)
+                    .configure(applicationExecutablePath, createShortcut);
+            return writeToBuffer(
+                serializeWindowsIntegrationResult(result),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(
+                exception,
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+    }
+
+    int fluxora_installer_repair_user_integration(
+        const wchar_t* applicationExecutablePath,
+        int createDesktopShortcut,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            return fluxora_installer_configure_user_integration(
+                applicationExecutablePath,
+                createDesktopShortcut,
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (...)
+        {
+            return mapUnknownException(
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+    }
+
+    int fluxora_installer_unregister_user_integration(
+        const wchar_t* applicationExecutablePath,
+        int removeDesktopShortcut,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(applicationExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Fluxora application executable path is required.");
+            }
+            const bool removeShortcut = requireBooleanArgument(
+                removeDesktopShortcut,
+                "removeDesktopShortcut");
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            fluxora::installer::ProtocolRegistrationService protocol(registry);
+            fluxora::installer::InstallationOwnershipService ownership(registry);
+            fluxora::installer::WindowsDesktopShortcutStore shortcut;
+            const auto result =
+                fluxora::installer::WindowsUserIntegrationService(
+                    protocol,
+                    shortcut,
+                    ownership)
+                    .unregisterOwned(
+                        applicationExecutablePath,
+                        removeShortcut);
+            if (!result.protocolRemoved)
+            {
+                throw std::runtime_error(
+                    "Fluxora protocol registration is not owned by this installation.");
+            }
+            return writeToBuffer(
+                serializeWindowsIntegrationResult(result),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(
+                exception,
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+    }
+
+    int fluxora_installer_repair_manager_protocol(
+        const wchar_t* applicationExecutablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(applicationExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Fluxora application executable path is required.");
+            }
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            fluxora::installer::ProtocolRegistrationService(registry)
+                .installOrRepair(applicationExecutablePath);
+            return writeToBuffer(
+                L"{\"schemaVersion\":1,\"protocolConfigured\":true}",
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(
+                exception,
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+    }
+
+    int fluxora_installer_unregister_manager_protocol(
+        const wchar_t* applicationExecutablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength) noexcept
+    {
+        try
+        {
+            lastError.clear();
+            if (isBlank(applicationExecutablePath))
+            {
+                throw std::invalid_argument(
+                    "Fluxora application executable path is required.");
+            }
+            fluxora::installer::WindowsCurrentUserRegistryStore registry;
+            if (!fluxora::installer::ProtocolRegistrationService(registry)
+                    .uninstall(applicationExecutablePath))
+            {
+                throw std::runtime_error(
+                    "Fluxora protocol registration is not owned by this installation.");
+            }
+            return writeToBuffer(
+                L"{\"schemaVersion\":1,\"protocolRemoved\":true}",
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(
+                exception,
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+        catch (...)
+        {
+            return mapUnknownException(
+                FluxoraInstallerResultWindowsIntegrationError);
+        }
+    }
+
+    int fluxora_installer_get_last_error(
+        wchar_t* messageBuffer,
+        int messageBufferLength) noexcept
+    {
+        try
+        {
+            return writeToBuffer(lastError, messageBuffer, messageBufferLength);
+        }
+        catch (...)
+        {
+            return FluxoraInstallerResultInstallError;
+        }
     }
 }

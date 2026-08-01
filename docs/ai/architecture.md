@@ -26,6 +26,13 @@ as stopped on the next launch.
 AI is opened from the selected build header. It is intentionally absent from
 the global title bar and from builds that are not selected.
 
+When the managed gateway status reports `connectionRequired`, the renderer
+replaces the entire agent workspace with the ModdingFlow account gate. Sign in
+uses the native ModdingFlow OAuth connection flow; account creation opens only
+the fixed public registration URL through the typed external-link facade. The
+gate is presentation, not authorization authority: removing it cannot grant a
+token, Premium eligibility, or quota at the server gateway.
+
 ## Ownership Boundaries
 
 - The Tauri renderer owns tabs, chat presentation, local persistence, context
@@ -174,24 +181,29 @@ Verified `inputTokenLimit` and `outputTokenLimit` values are cached; 1,048,576
 input and 65,536 output tokens are conservative fallbacks when metadata cannot
 be fetched.
 
-Fluxora-managed traffic uses the authenticated Supabase Edge Function
-`fluxora-ai-gemini`. The server-side Gemini key never reaches the renderer or
-desktop host. The desktop uses a public Supabase publishable key only to invoke
-the function; service-role and provider secrets remain server-side.
+Fluxora-managed traffic uses only the Website endpoint
+`https://moddingflow.com/api/fluxora/ai/gemini`. The server-side Gemini key
+never reaches the renderer, Tauri shell, C++ core, or desktop host. C++ obtains
+a short-lived OAuth access token restricted to `agent:run`; Tauri passes it to
+the sidecar only over the private stdin pipe. The renderer never receives it.
 
-Gateway protocol v2:
+Gateway protocol v3:
 
 - accepts only `gemini-3.1-flash-lite`;
 - allowlists `generateContent`, `countTokens`, and `getModel`;
-- forwards the bounded raw JSON request body without decoding and rebuilding it;
-- accepts at most 64 MiB of provider request data;
-- streams the provider response and provider error body back to the client;
-- enforces a 120-second upstream timeout;
-- uses no-store response headers and does not write prompts or build context to
-  application tables.
+- requires OAuth client `desktop_mod_manager`, scope `agent:run`, current access
+  revision, non-revoked token, and effective Premium;
+- accepts at most 32 MiB of provider request data;
+- requires a stable `Idempotency-Key` per logical generation and an explicit
+  `none`, `optional`, or `required` Search mode;
+- atomically reserves the maximum cost before Gemini and settles actual
+  input/output/thinking/Search usage afterward;
+- returns a typed normalized quota snapshot and stable server failure codes;
+- performs exactly one Tauri-owned refresh/retry on 401, with no direct-Gemini,
+  legacy-gateway, or publishable-key fallback.
 
-Protocol v1 remains temporarily accepted for rollout compatibility. The Edge
-Function must be deployed before a desktop client that selects v2.
+BYOK remains a separate direct Gemini path funded by the user's provider
+account and never consumes the managed Premium quota.
 
 ## Gemini Conversation Loop
 
@@ -515,7 +527,7 @@ is not exposed in chat.
 
 Sending a chat may transfer the prompt, the selected tab history or summary,
 system/skill/tool declarations, grounding requests, and explicitly requested
-bounded local fragments to Supabase and Google/Gemini. Tabs remain locally
+bounded local fragments to the Moddingflow Website and Google/Gemini. Tabs remain locally
 stored until the user closes/clears them or removes Fluxora application data.
 Closing a tab removes it from local AI session storage; provider-side handling
 is governed by the applicable provider terms.
