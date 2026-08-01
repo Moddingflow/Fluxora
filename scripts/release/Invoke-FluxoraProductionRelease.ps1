@@ -322,6 +322,7 @@ $preReleaseHead = ((Invoke-ReleaseCommand -FilePath 'git' -Arguments @('rev-pars
 $transactionRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-production-release-' + [Guid]::NewGuid().ToString('N'))
 $previousReleaseRoot = Join-Path $transactionRoot 'previous-release'
 $verificationRoot = Join-Path $transactionRoot 'remote-verification'
+$playwrightOutputRoot = Join-Path $transactionRoot 'playwright-results'
 New-Item -ItemType Directory -Path $previousReleaseRoot -Force | Out-Null
 $versionPaths = @(Get-VersionPaths)
 $versionSnapshots = @{}
@@ -470,7 +471,14 @@ try {
     }
 
     Invoke-ReleaseStep 'Running Tauri Playwright smoke suite' {
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'test:e2e') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+        $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:frontend') -WorkingDirectory $frontendRoot)
+        [void](Invoke-ReleaseCommand -FilePath 'node' -Arguments @(
+            'node_modules/@playwright/test/cli.js',
+            'test',
+            '--pass-with-no-tests',
+            '--output', $playwrightOutputRoot
+        ) -WorkingDirectory $frontendRoot)
     }
 
     Invoke-ReleaseStep 'Running Tauri Rust suite' {

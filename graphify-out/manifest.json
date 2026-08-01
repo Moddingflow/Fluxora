@@ -895,7 +895,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785568275.1876192,
+    "mtime": 1785570326.32994,
     "ast_hash": "b03e7fa8d25a293ad6ff7cccc6364b10",
     "semantic_hash": ""
   },
@@ -925,7 +925,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785568275.1876192,
+    "mtime": 1785570326.32994,
     "ast_hash": "89467c08ba71c0d40bca5d7566331142",
     "semantic_hash": ""
   },
@@ -1145,8 +1145,8 @@
     "semantic_hash": ""
   },
   "docs/tauri-migration/release-pipeline.md": {
-    "mtime": 1785564926.7312477,
-    "ast_hash": "7990c67b9fd9fc7984471016eb4762f2",
+    "mtime": 1785570546.6669545,
+    "ast_hash": "5834f724d61ce4da51052e15352baf79",
     "semantic_hash": ""
   },
   "docs/tauri-migration/tauri-design-system.md": {
@@ -6085,13 +6085,13 @@
     "semantic_hash": ""
   },
   "scripts/tests/Fluxora.Release.Tests.ps1": {
-    "mtime": 1785568445.6659737,
-    "ast_hash": "8d69dfaad3c4d5afb542783a3aba4ac0",
+    "mtime": 1785570508.0235498,
+    "ast_hash": "fbfa053004224c4c3590889f0d6f2821",
     "semantic_hash": ""
   },
   "scripts/release/Invoke-FluxoraProductionRelease.ps1": {
-    "mtime": 1785568489.5782743,
-    "ast_hash": "1ab5dd30add079c5e96da2165f014547",
+    "mtime": 1785570546.665954,
+    "ast_hash": "7b8ef2b658445a178cca66cb4a6f2bb5",
     "semantic_hash": ""
   },
   "scripts/release/New-FluxoraUpdateArtifacts.ps1": {
@@ -6465,7 +6465,7 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785568275.1876192,
+    "mtime": 1785570326.32994,
     "ast_hash": "793288c638388d225b8a0389f0994f97",
     "semantic_hash": ""
   },
@@ -6865,8 +6865,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1785527342.9305463,
-    "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
+    "mtime": 1785570483.1290934,
+    "ast_hash": "5970244f4baa12f805a34ee49fa86ab5",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/ai/AiQuotaIndicator.tsx": {
