@@ -473,6 +473,8 @@ try {
     Invoke-ReleaseStep 'Running Tauri Playwright smoke suite' {
         $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
         [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:frontend') -WorkingDirectory $frontendRoot)
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:setup:frontend') -WorkingDirectory $frontendRoot)
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:updater:frontend') -WorkingDirectory $frontendRoot)
         [void](Invoke-ReleaseCommand -FilePath 'node' -Arguments @(
             'node_modules/@playwright/test/cli.js',
             'test',

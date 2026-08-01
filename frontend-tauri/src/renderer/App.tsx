@@ -1870,119 +1870,129 @@ export const App = () => {
         operationId
       });
     },
-    onOperationProgress: (operation) => {
-      const previousOperation = installOperationsRef.current.get(operation.operationId);
-      installOperationsRef.current.set(operation.operationId, operation);
-      const workspaceDelta = operation.workspaceDelta;
-      if (workspaceDelta) {
-        void workspaceOrderMutationGate
-          .readStable(async () => workspaceDelta)
-          .then((stableDelta) => {
-            applyIncomingWorkspaceDeltaRef.current(
-              stableDelta,
-              operation.operationId,
-              true
-            );
-          })
-          .catch((error) => {
+    onOperationProgress: (operation, finalizePendingProjection) => {
+      const settleOperation = () => {
+        const previousOperation = installOperationsRef.current.get(operation.operationId);
+        installOperationsRef.current.set(operation.operationId, operation);
+        if (operation.state === 'committing' || operation.state === 'finalizing') {
+          installCommitOperationsRef.current.add(operation.operationId);
+        } else if (
+          operation.state === 'completed' ||
+          operation.state === 'failed' ||
+          operation.state === 'cancelled' ||
+          operation.state === 'needsReview'
+        ) {
+          installCommitOperationsRef.current.delete(operation.operationId);
+          if (
+            installCommitOperationsRef.current.size === 0 &&
+            deferredBuildContentRefreshRef.current
+          ) {
+            const refresh = deferredBuildContentRefreshRef.current;
+            deferredBuildContentRefreshRef.current = null;
             void window.fluxora.ui.log({
-              level: 'warning',
-              category: 'WorkspaceDelta',
-              message: `Could not apply the install workspace delta after order saves settled: ${errorMessage(error)}`,
+              level: 'info',
+              category: 'ModInstall',
+              message: 'Install commit gate released; running one deduplicated watcher reconciliation.',
               operationId: operation.operationId
             });
-          });
-      }
-      if (operation.state === 'committing' || operation.state === 'finalizing') {
-        installCommitOperationsRef.current.add(operation.operationId);
-      } else if (
-        operation.state === 'completed' ||
-        operation.state === 'failed' ||
-        operation.state === 'cancelled' ||
-        operation.state === 'needsReview'
-      ) {
-        installCommitOperationsRef.current.delete(operation.operationId);
-        if (
-          installCommitOperationsRef.current.size === 0 &&
-          deferredBuildContentRefreshRef.current
-        ) {
-          const refresh = deferredBuildContentRefreshRef.current;
-          deferredBuildContentRefreshRef.current = null;
-          void window.fluxora.ui.log({
-            level: 'info',
-            category: 'ModInstall',
-            message: 'Install commit gate released; running one deduplicated watcher reconciliation.',
-            operationId: operation.operationId
-          });
-          void buildContentRefreshCoordinator.schedule(refresh).catch(() => undefined);
+            void buildContentRefreshCoordinator.schedule(refresh).catch(() => undefined);
+          }
         }
-      }
-      if (
-        operation.state !== 'completed' &&
-        operation.state !== 'failed' &&
-        operation.state !== 'cancelled' &&
-        operation.state !== 'needsReview'
-      ) {
+        if (
+          operation.state !== 'completed' &&
+          operation.state !== 'failed' &&
+          operation.state !== 'cancelled' &&
+          operation.state !== 'needsReview'
+        ) {
+          return;
+        }
+        const sourcePath = installSourceByOperationRef.current.get(operation.operationId);
+        if (sourcePath && operation.state !== 'needsReview') {
+          installSubmitSourcesRef.current.delete(sourcePath);
+          installSourceByOperationRef.current.delete(operation.operationId);
+        }
+        if (operation.state === 'completed') {
+          const source = downloadsWorkspaceItemsRef.current.find(
+            (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+          );
+          if (source) {
+            dispatchDownloadsWorkspace({
+              type: 'items-upserted',
+              items: [{ ...source, buildStatus: 'Installed' }]
+            });
+          }
+          if (operation.result?.orderId) {
+            dispatchModsWorkspace({
+              type: 'item-reveal-requested',
+              orderId: operation.result.orderId
+            });
+          }
+          setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
+        } else if (operation.state === 'needsReview') {
+          const source = downloadsWorkspaceItemsRef.current.find(
+            (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+          );
+          if (source) {
+            dispatchDownloadsWorkspace({
+              type: 'items-upserted',
+              items: [{ ...source, buildStatus: 'Ready' }]
+            });
+          }
+          if (previousOperation?.state !== 'needsReview') {
+            reopenInstallForReview(operation);
+          }
+        } else if (operation.state === 'cancelled') {
+          setMessage(`Installation cancelled: ${operation.targetFolder}.`);
+          const source = downloadsWorkspaceItemsRef.current.find(
+            (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+          );
+          if (source) {
+            dispatchDownloadsWorkspace({
+              type: 'items-upserted',
+              items: [{ ...source, buildStatus: 'Ready' }]
+            });
+          }
+        } else {
+          setMessage(operation.errorMessage || `Could not install ${operation.targetFolder}.`);
+          const source = downloadsWorkspaceItemsRef.current.find(
+            (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+          );
+          if (source) {
+            dispatchDownloadsWorkspace({
+              type: 'items-upserted',
+              items: [{ ...source, buildStatus: 'Failed' }]
+            });
+          }
+        }
+      };
+
+      const workspaceDelta = operation.workspaceDelta;
+      if (!workspaceDelta) {
+        settleOperation();
         return;
       }
-      const sourcePath = installSourceByOperationRef.current.get(operation.operationId);
-      if (sourcePath && operation.state !== 'needsReview') {
-        installSubmitSourcesRef.current.delete(sourcePath);
-        installSourceByOperationRef.current.delete(operation.operationId);
-      }
-      if (operation.state === 'completed') {
-        const source = downloadsWorkspaceItemsRef.current.find(
-          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
-        );
-        if (source) {
-          dispatchDownloadsWorkspace({
-            type: 'items-upserted',
-            items: [{ ...source, buildStatus: 'Installed' }]
+
+      void workspaceOrderMutationGate
+        .readStable(async () => workspaceDelta)
+        .then((stableDelta) => {
+          finalizePendingProjection?.();
+          applyIncomingWorkspaceDeltaRef.current(
+            stableDelta,
+            operation.operationId,
+            true
+          );
+          settleOperation();
+        })
+        .catch((error) => {
+          finalizePendingProjection?.();
+          settleOperation();
+          void window.fluxora.ui.log({
+            level: 'warning',
+            category: 'WorkspaceDelta',
+            message: `Could not apply the install workspace delta after order saves settled: ${errorMessage(error)}`,
+            operationId: operation.operationId
           });
-        }
-        if (operation.result?.orderId) {
-          dispatchModsWorkspace({
-            type: 'item-reveal-requested',
-            orderId: operation.result.orderId
-          });
-        }
-        setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
-      } else if (operation.state === 'needsReview') {
-        const source = downloadsWorkspaceItemsRef.current.find(
-          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
-        );
-        if (source) {
-          dispatchDownloadsWorkspace({
-            type: 'items-upserted',
-            items: [{ ...source, buildStatus: 'Ready' }]
-          });
-        }
-        if (previousOperation?.state !== 'needsReview') {
-          reopenInstallForReview(operation);
-        }
-      } else if (operation.state === 'cancelled') {
-        setMessage(`Installation cancelled: ${operation.targetFolder}.`);
-        const source = downloadsWorkspaceItemsRef.current.find(
-          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
-        );
-        if (source) {
-          dispatchDownloadsWorkspace({
-            type: 'items-upserted',
-            items: [{ ...source, buildStatus: 'Ready' }]
-          });
-        }
-      } else {
-        setMessage(operation.errorMessage || `Could not install ${operation.targetFolder}.`);
-        const source = downloadsWorkspaceItemsRef.current.find(
-          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
-        );
-        if (source) {
-          dispatchDownloadsWorkspace({
-            type: 'items-upserted',
-            items: [{ ...source, buildStatus: 'Failed' }]
-          });
-        }
-      }
+        });
     }
   });
   const pluginOrderSaveSequenceRef = useRef(0);

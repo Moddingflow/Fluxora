@@ -4248,8 +4248,8 @@ const openSkyrimBuildWithDuplicateDecision = async (page: Page) => {
 const enableLargePostInstallRevealWorkspace = async (page: Page) => {
   await page.evaluate(() => {
     const scope = window as typeof window & { fluxora: any };
-    const expandWorkspace = (snapshot: { installedMods: any[]; modOrder: any[] }) => {
-      const sourceRows = structuredClone(snapshot.modOrder);
+    const expandModOrder = (rows: any[]) => {
+      const sourceRows = structuredClone(rows);
       const initialRows = sourceRows.slice(0, 3);
       const installedAfterStartup = sourceRows.slice(3);
       const template = initialRows.find((item: any) => item.isMod);
@@ -4260,12 +4260,15 @@ const enableLargePostInstallRevealWorkspace = async (page: Page) => {
         modUuid: `mod_reveal_fixture_${index}`,
         name: `Reveal fixture ${index}`
       }));
-      const modOrder = [
+      return [
         ...initialRows,
         ...fixtures.slice(0, 68),
         ...installedAfterStartup,
         ...fixtures.slice(68)
       ].map((item, index) => ({ ...item, order: index }));
+    };
+    const expandWorkspace = (snapshot: { installedMods: any[]; modOrder: any[] }) => {
+      const modOrder = expandModOrder(snapshot.modOrder);
 
       return {
         ...snapshot,
@@ -4279,6 +4282,22 @@ const enableLargePostInstallRevealWorkspace = async (page: Page) => {
       expandWorkspace(await getPersistedWorkspace(...args));
     scope.fluxora.mods.getWorkspace = async (...args: unknown[]) =>
       expandWorkspace(await getWorkspace(...args));
+    const getWorkspaceDelta = scope.fluxora.workspace.getDelta;
+    scope.fluxora.workspace.getDelta = async (...args: unknown[]) => {
+      const delta = await getWorkspaceDelta(...args);
+      if (args[2]) {
+        return delta;
+      }
+      const modOrder = expandModOrder(delta.mods.upserts);
+      return {
+        ...delta,
+        installedModUpserts: structuredClone(modOrder.filter((item: any) => item.isMod)),
+        mods: {
+          ...delta.mods,
+          upserts: modOrder
+        }
+      };
+    };
   });
 };
 
@@ -7393,6 +7412,10 @@ test('applies coalesced mod and plugin deltas only after cache invalidation fini
         pluginTemplate = delta.plugins.upserts.find(
           (item: any) => item.orderId === 'plugin_skyui'
         );
+        return delta;
+      }
+      const operationId = String((args[3] as { operationId?: string } | undefined)?.operationId ?? '');
+      if (!operationId.includes('_build_content_workspace_delta_')) {
         return delta;
       }
       scope.__watcherDeltaCallCount = (scope.__watcherDeltaCallCount ?? 0) + 1;
@@ -11852,7 +11875,7 @@ test('opens install controls immediately and keeps native installation non-modal
       ?.map((call) => call.method) ?? []
   );
   expect(preflightCalls).toContain('downloads.planInstall');
-  expect(preflightCalls).not.toContain('downloads.analyzeContentLayout');
+  expect(preflightCalls).toContain('downloads.analyzeContentLayout');
   expect(preflightCalls).not.toContain('downloads.install');
 
   const skyuiDialog = page.getByRole('dialog', { name: /SkyUI/ });
@@ -12062,7 +12085,10 @@ test('renders Settings Nexus status instantly while native auth status is delaye
   await page.goto(`${baseUrl}/?window=settings`);
 
   await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
-  await expect(page.getByText('Reconnecting')).toBeVisible();
+  const nexusRow = page.locator('.settings-service-row--connection').filter({
+    has: page.getByRole('switch', { name: 'Nexus Mods account' })
+  });
+  await expect(nexusRow.locator('.settings-service-copy').getByText('Reconnecting')).toBeVisible();
   await expect(page.getByText('Status not loaded')).toHaveCount(0);
   await expect(page.getByText('Loading settings')).toHaveCount(0);
   await expect(page.locator('.mod-busy-strip')).toHaveCount(0);
@@ -12100,8 +12126,9 @@ test('keeps secondary Settings connection recovery passive without starting OAut
 
   await page.goto(`${baseUrl}/?window=settings`);
 
-  await expect(page.getByText('Reconnecting')).toBeVisible();
   const nexusSwitch = page.getByRole('switch', { name: 'Nexus Mods account' });
+  const nexusRow = page.locator('.settings-service-row--connection').filter({ has: nexusSwitch });
+  await expect(nexusRow.locator('.settings-service-copy').getByText('Reconnecting')).toBeVisible();
   await expect(nexusSwitch).toBeDisabled();
 
   const callsBeforeRetry = await page.evaluate(() =>
@@ -12126,7 +12153,7 @@ test('shows the branded ModdingFlow account and disconnects it through the Setti
   await page.getByRole('button', { name: /Connections/ }).click();
 
   const moddingFlowRow = page.locator('.settings-service-row--connection').filter({
-    hasText: 'ModdingFlow'
+    has: page.locator('strong', { hasText: /^ModdingFlow$/ })
   });
   await expect(moddingFlowRow).toBeVisible();
   await expect(moddingFlowRow.locator('.settings-service-icon--moddingflow img')).toBeVisible();

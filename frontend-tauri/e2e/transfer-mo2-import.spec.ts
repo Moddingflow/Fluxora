@@ -160,6 +160,48 @@ test.beforeEach(async ({ page }) => {
           version: '0.0.0-test'
         })
       },
+      updates: {
+        getStatus: async () => ({ state: 'upToDate', currentVersion: '0.0.0-test' }),
+        rendererReady: async () => undefined,
+        check: async () => ({ state: 'upToDate', currentVersion: '0.0.0-test' }),
+        downloadAndInstall: async () => ({ state: 'upToDate', currentVersion: '0.0.0-test' }),
+        cancel: async (operation: { operationId?: string } | undefined) => ({
+          accepted: false,
+          state: 'upToDate',
+          operationId: operation?.operationId ?? 'op_update_cancel'
+        }),
+        onStatus: () => () => undefined
+      },
+      ai: {
+        resetFileRollbackCheckpoints: async () => undefined,
+        getFileRollbackStates: async () => [],
+        getStatus: async (operation: { operationId?: string } | undefined) => ({
+          ready: false,
+          operationId: operation?.operationId ?? 'op_ai_status',
+          health: 'unavailable',
+          providers: [],
+          models: [],
+          capabilities: {},
+          quota: {
+            schema: 'fluxora.ai.quota.v1',
+            availability: 'unavailable',
+            available: false,
+            eligibility: false,
+            reason: 'test',
+            periodStart: null,
+            resetAt: null,
+            rollover: false,
+            limit: 0,
+            used: 0,
+            reserved: 0,
+            remaining: 0,
+            remainingInputTokenEquivalent: 0,
+            search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+            model: 'gemini-3.1-flash-lite',
+            priceVersion: null
+          }
+        })
+      },
       apiLimits: {
         list: async (operation: any) => {
           calls.push({ method: 'apiLimits.list', payload: { operation } });
@@ -242,10 +284,19 @@ test.beforeEach(async ({ page }) => {
         install: async () => ({}),
         installFomod: async () => ({}),
         list: async () => [],
+        onChanged: () => () => undefined,
         onFolderChanged: () => () => undefined,
         resume: async () => ({}),
         unwatchFolder: async () => ({ accepted: true, operationId: 'op_unwatch' }),
         watchFolder: async () => ({ accepted: true, operationId: 'op_watch' })
+      },
+      installs: {
+        submit: async () => ({}),
+        cancel: async () => ({}),
+        restore: async () => [],
+        list: async () => [],
+        get: async () => ({}),
+        onProgress: () => () => undefined
       },
       executables: {
         getIcon: async () => ({ iconPath: '', operationId: 'op_icon' }),
@@ -450,6 +501,7 @@ test.beforeEach(async ({ page }) => {
         openModDetails: async () => undefined,
         openSettings: async () => undefined,
         openTextEditor: async () => undefined,
+        setTaskbarProgress: async () => undefined,
         toggleMaximize: async () => undefined
       }
     };

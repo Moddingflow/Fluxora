@@ -1,10 +1,4 @@
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   FluxoraInstallConflictSnapshot,
@@ -36,7 +30,10 @@ interface PendingInstallOrchestratorOptions {
   onItemsChanged: (items: FluxoraModOrderItem[]) => void;
   onWorkspaceRevision: () => void;
   onRebaseError?: (error: unknown, operationId: string) => void;
-  onOperationProgress?: (operation: FluxoraInstallOperation) => void;
+  onOperationProgress?: (
+    operation: FluxoraInstallOperation,
+    finalizePendingProjection?: () => boolean
+  ) => void;
 }
 
 interface BeginPendingInstallRequest extends PendingInstallDraft {
@@ -289,7 +286,7 @@ export const usePendingInstallOrchestrator = (
     sessionsRef.current.delete(operationId);
     projectDirectoriesRef.current.delete(operationId);
     progressStore.delete(operationId);
-    startTransition(publishSessions);
+    publishSessions();
     return true;
   }, [progressStore, publishSessions]);
 
@@ -393,6 +390,14 @@ export const usePendingInstallOrchestrator = (
 
   useEffect(() => window.fluxora.installs.onProgress((operation) => {
     progressStore.setOperation(operation);
+    const notifyProgress = (finalizePendingProjection?: () => boolean) => {
+      const onOperationProgress = optionsRef.current.onOperationProgress;
+      if (!onOperationProgress) {
+        finalizePendingProjection?.();
+        return;
+      }
+      onOperationProgress(operation, finalizePendingProjection);
+    };
     const session = sessionsRef.current.get(operation.operationId);
     if (session) {
       if (operation.state === 'completed') {
@@ -400,12 +405,14 @@ export const usePendingInstallOrchestrator = (
         if (installed) {
           const finalizeCompletedSession = () => {
             if (!sessionsRef.current.has(operation.operationId)) {
+              notifyProgress();
               return;
             }
             if (operation.workspaceDelta) {
-              finalizeForWorkspaceDelta(operation.operationId);
+              notifyProgress(() => finalizeForWorkspaceDelta(operation.operationId));
             } else {
               complete(installed);
+              notifyProgress();
             }
           };
           if (session.hasUserRebased) {
@@ -417,6 +424,7 @@ export const usePendingInstallOrchestrator = (
           } else {
             finalizeCompletedSession();
           }
+          return;
         } else {
           rollback(operation.operationId);
         }
@@ -424,7 +432,7 @@ export const usePendingInstallOrchestrator = (
         rollback(operation.operationId);
       }
     }
-    optionsRef.current.onOperationProgress?.(operation);
+    notifyProgress();
   }), [complete, finalizeForWorkspaceDelta, flushOperationRebase, progressStore, rollback]);
 
   const latestSession = [...sessions.values()].at(-1) ?? null;

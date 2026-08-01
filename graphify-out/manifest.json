@@ -895,7 +895,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785570326.32994,
+    "mtime": 1785572086.2364998,
     "ast_hash": "b03e7fa8d25a293ad6ff7cccc6364b10",
     "semantic_hash": ""
   },
@@ -925,13 +925,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785570326.32994,
+    "mtime": 1785572086.2375085,
     "ast_hash": "89467c08ba71c0d40bca5d7566331142",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1785560569.3371925,
-    "ast_hash": "e3fca732f634b0da06d41cf677ff25c7",
+    "mtime": 1785573239.2049818,
+    "ast_hash": "99db3a2c5dbdfcc46d8a628ddf89efab",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1145,8 +1145,8 @@
     "semantic_hash": ""
   },
   "docs/tauri-migration/release-pipeline.md": {
-    "mtime": 1785570546.6669545,
-    "ast_hash": "5834f724d61ce4da51052e15352baf79",
+    "mtime": 1785572558.585381,
+    "ast_hash": "5a3c4a4ba46322bac462e3156f33812f",
     "semantic_hash": ""
   },
   "docs/tauri-migration/tauri-design-system.md": {
@@ -1345,8 +1345,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/chrome-titlebar.spec.ts": {
-    "mtime": 1783949339.0428023,
-    "ast_hash": "0fb4cc9ff6fcd513c1875e6c2cfa22c3",
+    "mtime": 1785572558.5863807,
+    "ast_hash": "cbe0c53eda6820c07ba8397c7f251e74",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/components/chrome/AppTitlebar.tsx": {
@@ -1355,8 +1355,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1785511465.9253757,
-    "ast_hash": "624bff23e8fda2d9b548c878b8c1707b",
+    "mtime": 1785574386.5042844,
+    "ast_hash": "a9d12a5a7076a9aa6ba0ec7d15387aac",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -4030,8 +4030,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/transfer-mo2-import.spec.ts": {
-    "mtime": 1783949755.7854128,
-    "ast_hash": "c255ebe869bc0a16a7306245be5fad2b",
+    "mtime": 1785572967.674124,
+    "ast_hash": "54b244a3efa7837ad8c20caff1ee26b9",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mo2-transfer-facade-contract.test.ts": {
@@ -4755,8 +4755,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/mods/use-pending-install-orchestrator.ts": {
-    "mtime": 1785309582.8693948,
-    "ast_hash": "e14418a101b8cb22f92ed6290fd01d71",
+    "mtime": 1785573156.893365,
+    "ast_hash": "294e646203810e9db1df442f1b5cb053",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/pending-install-orchestrator-state.test.ts": {
@@ -6085,13 +6085,13 @@
     "semantic_hash": ""
   },
   "scripts/tests/Fluxora.Release.Tests.ps1": {
-    "mtime": 1785570508.0235498,
-    "ast_hash": "fbfa053004224c4c3590889f0d6f2821",
+    "mtime": 1785572518.6791418,
+    "ast_hash": "9b099e78ea72dc74ec2782685870a8e0",
     "semantic_hash": ""
   },
   "scripts/release/Invoke-FluxoraProductionRelease.ps1": {
-    "mtime": 1785570546.665954,
-    "ast_hash": "7b8ef2b658445a178cca66cb4a6f2bb5",
+    "mtime": 1785572558.585381,
+    "ast_hash": "872691febcafcf1bc66b21a2b9ae410d",
     "semantic_hash": ""
   },
   "scripts/release/New-FluxoraUpdateArtifacts.ps1": {
@@ -6465,7 +6465,7 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785570326.32994,
+    "mtime": 1785572086.2364998,
     "ast_hash": "793288c638388d225b8a0389f0994f97",
     "semantic_hash": ""
   },

@@ -235,10 +235,12 @@ Production mode is fail-closed and non-forceful:
    integration, API-contract and UI gates plus the ordinary local release build.
    Production treats a missing real native full/delta ABI test target as a hard
    failure; a clean machine may never silently skip it. Cargo lock enforcement
-   applies to direct Rust builds and the exact packaged Tauri binary. Playwright
-   writes screenshots, traces and last-run state under the disposable release
-   transaction directory, so test output cannot enter the release checkpoint or
-   trip the strict post-gate worktree allowlist.
+   applies to direct Rust builds and the exact packaged Tauri binary. Production
+   restages the Setup and updater renderers after the main Vite build so the same
+   Playwright pass covers all three shipped windows. Screenshots, traces and
+   last-run state are written under the disposable release transaction directory,
+   so test output cannot enter the release checkpoint or trip the strict post-gate
+   worktree allowlist.
 4. Produce and round-trip-verify the full `.flxupd`, eligible deltas and
    raw-byte-signed manifest, then generate the signed inventory over the exact
    unsigned Setup and machine-asset bytes. Fluxora does not require a paid

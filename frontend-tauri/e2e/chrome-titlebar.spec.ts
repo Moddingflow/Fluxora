@@ -103,7 +103,7 @@ test('keeps secondary window titles responsive with only the custom close contro
   await expect(title).toHaveCSS('white-space', 'nowrap');
   await expect(titlebar.getByLabel('Minimize')).toHaveCount(0);
   await expect(titlebar.getByLabel('Maximize')).toHaveCount(0);
-  await expect(closeButton.locator('svg')).toBeVisible();
+  await expect(closeButton.locator('.titlebar__custom-close-icon')).toBeVisible();
 
   const narrowTitleWidth = await title.evaluate((element) => element.clientWidth);
   expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
