@@ -63,6 +63,7 @@ trap {
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $modulePath = Join-Path $PSScriptRoot 'Fluxora.Release.psm1'
+$frontendDependenciesModulePath = Join-Path $PSScriptRoot 'Fluxora.FrontendDependencies.psm1'
 $artifactScript = Join-Path $PSScriptRoot 'New-FluxoraUpdateArtifacts.ps1'
 $repository = 'Moddingflow/Fluxora'
 $publicKeyPath = Join-Path $projectRoot 'frontend-tauri\src-tauri\resources\update\stable-public-key.der'
@@ -70,8 +71,10 @@ $protectedKeyPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationDat
 $outputDirectory = Join-Path $projectRoot 'output'
 $installerPath = Join-Path $projectRoot 'output-installer\FluxoraSetup.exe'
 $updateOutputRoot = Join-Path $projectRoot 'output-update'
+$frontendRoot = Join-Path $projectRoot 'frontend-tauri'
 
 Import-Module $modulePath -Force
+Import-Module $frontendDependenciesModulePath -Force
 
 function Invoke-ReleaseCommand {
     param(
@@ -219,10 +222,20 @@ if ($versionResolution.Cancelled) {
 $targetVersion = [string]$versionResolution.Version
 $tag = "v$targetVersion"
 
-foreach ($command in @('git', 'gh', 'cmake', 'ctest', 'cargo', 'pwsh')) {
+foreach ($command in @('git', 'gh', 'cmake', 'ctest', 'cargo', 'node', 'npm', 'pwsh')) {
     if ($null -eq (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Production release requires '$command' on PATH."
     }
+}
+$frontendPackageManager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $frontendRoot
+Invoke-ReleaseStep 'Preparing pinned frontend package manager' {
+    $versionArguments = @(Get-FluxoraFrontendPackageManagerArguments `
+        -PackageManager $frontendPackageManager `
+        -Arguments @('--version'))
+    [void](Invoke-ReleaseCommand `
+        -FilePath ([string]$frontendPackageManager.FilePath) `
+        -Arguments $versionArguments `
+        -WorkingDirectory $frontendRoot)
 }
 if (-not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
     throw "Embedded update public key is missing: '$publicKeyPath'."
@@ -437,6 +450,16 @@ try {
 
     Invoke-ReleaseStep "Applying product version $targetVersion" {
         Set-FluxoraProductVersion -ProjectRoot $projectRoot -Version $targetVersion
+    }
+
+    Invoke-ReleaseStep 'Restoring pinned frontend dependencies for release inventory' {
+        $installArguments = @(Get-FluxoraFrontendPackageManagerArguments `
+            -PackageManager $frontendPackageManager `
+            -Arguments @('install', '--frozen-lockfile'))
+        [void](Invoke-ReleaseCommand `
+            -FilePath ([string]$frontendPackageManager.FilePath) `
+            -Arguments $installArguments `
+            -WorkingDirectory $frontendRoot)
     }
 
     Invoke-ReleaseStep 'Refreshing deterministic dependency inventory for the release version' {

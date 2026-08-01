@@ -51,9 +51,11 @@ trap {
 $ProjectRoot = $PSScriptRoot
 $ReleaseModulePath = Join-Path $ProjectRoot 'scripts\release\Fluxora.Release.psm1'
 $NativeArtifactValidationModulePath = Join-Path $ProjectRoot 'scripts\release\Fluxora.NativeArtifactValidation.psm1'
+$FrontendDependenciesModulePath = Join-Path $ProjectRoot 'scripts\release\Fluxora.FrontendDependencies.psm1'
 $ProductionReleaseScript = Join-Path $ProjectRoot 'scripts\release\Invoke-FluxoraProductionRelease.ps1'
 Import-Module $ReleaseModulePath -Force
 Import-Module $NativeArtifactValidationModulePath -Force
+Import-Module $FrontendDependenciesModulePath -Force
 
 $hasExplicitBuildArguments = @(
     $PSBoundParameters.Keys | Where-Object { $_ -notin @('Mode') }
@@ -154,9 +156,8 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 }
 $FluxoraProductVersion = Get-FluxoraProductVersion -ProjectRoot $ProjectRoot
 Write-Host "Build mode: Local (product version: $FluxoraProductVersion)."
-$TauriUsesPnpm = Test-Path -LiteralPath (Join-Path $TauriProject 'pnpm-lock.yaml')
-$TauriPackageManager = if ($TauriUsesPnpm) { 'pnpm' } else { 'npm' }
-$TauriInstallArguments = if ($TauriUsesPnpm) {
+$TauriPackageManager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $TauriProject
+$TauriInstallArguments = if ($TauriPackageManager.Name -ceq 'pnpm') {
     @('install', '--frozen-lockfile')
 }
 else {
@@ -277,6 +278,21 @@ function Invoke-CheckedCommand {
         $commandLine = ($Arguments | ForEach-Object { "'$_'" }) -join ' '
         throw "Command '$FilePath $commandLine' failed with exit code $exitCode."
     }
+}
+
+function Invoke-TauriPackageManagerCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+
+    $invocationArguments = @(Get-FluxoraFrontendPackageManagerArguments `
+        -PackageManager $TauriPackageManager `
+        -Arguments $Arguments)
+    Invoke-CheckedCommand `
+        -FilePath ([string]$TauriPackageManager.FilePath) `
+        -Arguments $invocationArguments
 }
 
 function Get-NativeCorePath {
@@ -886,7 +902,7 @@ function New-FluxoraSetupManifest {
 
     $cargoVersion = (& cargo --version) -join ''
     $rustcVersion = (& rustc --version) -join ''
-    $packageManagerVersion = (& $TauriPackageManager --version) -join ''
+    $packageManagerVersion = (Invoke-TauriPackageManagerCommand -Arguments @('--version')) -join ''
     $hashInput = [System.Text.StringBuilder]::new()
     [void]$hashInput.AppendLine("FluxoraTauriSetupManifest|$BuildManifestVersion")
     [void]$hashInput.AppendLine("Payload|$PayloadSha256")
@@ -895,7 +911,7 @@ function New-FluxoraSetupManifest {
     [void]$hashInput.AppendLine("Runtime|$Runtime")
     [void]$hashInput.AppendLine("Cargo|$cargoVersion")
     [void]$hashInput.AppendLine("Rustc|$rustcVersion")
-    [void]$hashInput.AppendLine("PackageManager|$TauriPackageManager|$packageManagerVersion")
+    [void]$hashInput.AppendLine("PackageManager|$($TauriPackageManager.Name)|$packageManagerVersion")
     foreach ($arg in $BuildArgs) {
         [void]$hashInput.AppendLine("Arg|$arg")
     }
@@ -913,7 +929,7 @@ function New-FluxoraSetupManifest {
         Runtime = $Runtime
         CargoVersion = $cargoVersion
         RustcVersion = $rustcVersion
-        PackageManager = $TauriPackageManager
+        PackageManager = $TauriPackageManager.Name
         PackageManagerVersion = $packageManagerVersion
         BuildArgs = @($BuildArgs)
         Files = $fileEntries
@@ -1115,7 +1131,8 @@ Assert-Command 'ctest'
 Assert-Command 'cargo'
 Assert-Command 'rustc'
 Assert-Command 'pwsh'
-Assert-Command $TauriPackageManager
+Assert-Command 'node'
+Assert-Command 'npm'
 if ($Target -eq 'Release' -and [string]::IsNullOrWhiteSpace($Runtime)) {
     throw "Installer publish requires a runtime because FluxoraSetup.exe is self-contained. Example: -Runtime win-x64"
 }
@@ -1247,7 +1264,7 @@ if ($Runtime -like 'win-*') {
 Invoke-BuildStep "Installing Tauri dependencies" {
     Push-Location $TauriProject
     try {
-        Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments $TauriInstallArguments
+        Invoke-TauriPackageManagerCommand -Arguments $TauriInstallArguments
     }
     finally {
         Pop-Location
@@ -1275,7 +1292,7 @@ if ($Runtime -eq 'win-x64') {
         & (Join-Path $TauriProject 'scripts\ensure-libclang.ps1')
         Push-Location $TauriProject
         try {
-            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @(
+            Invoke-TauriPackageManagerCommand -Arguments @(
                 'run', 'build:updater:frontend'
             )
         }
@@ -1456,7 +1473,7 @@ if ($Runtime -like 'win-*') {
 Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.Arch))" {
         Push-Location $TauriProject
         try {
-            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @('run', 'build')
+            Invoke-TauriPackageManagerCommand -Arguments @('run', 'build')
         }
         finally {
             Pop-Location
@@ -1655,7 +1672,7 @@ if ($Target -eq 'Release') {
 
             Push-Location $TauriProject
             try {
-                Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @(
+                Invoke-TauriPackageManagerCommand -Arguments @(
                     'run', 'build:setup:frontend'
                 )
             }

@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$frontendDependenciesModulePath = Join-Path $PSScriptRoot 'Fluxora.FrontendDependencies.psm1'
 $legalRoot = Join-Path $repoRoot 'legal\desktop'
 $iconsRoot = Join-Path $repoRoot 'Icons'
 $inventoryPath = Join-Path $legalRoot 'dependency-inventory.json'
@@ -17,6 +18,8 @@ $policyPath = Join-Path $legalRoot 'license-policy.json'
 $manifestPath = Join-Path $legalRoot 'manifest.json'
 $failures = New-Object System.Collections.Generic.List[string]
 $checks = 0
+
+Import-Module $frontendDependenciesModulePath -Force
 
 function Add-Failure {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -133,13 +136,24 @@ function Expand-PnpmPackages {
 function New-PnpmInventory {
     param([Parameter(Mandatory = $true)][object]$Policy)
     $frontendRoot = Join-Path $repoRoot 'frontend-tauri'
-    $pnpmCommand = (Get-Command 'pnpm' -ErrorAction Stop).Source
-    $runtimeReport = Invoke-JsonCommand -WorkingDirectory $frontendRoot -Executable $pnpmCommand -Arguments @(
-        'licenses', 'list', '--prod', '--json'
-    )
-    $allReport = Invoke-JsonCommand -WorkingDirectory $frontendRoot -Executable $pnpmCommand -Arguments @(
-        'licenses', 'list', '--json'
-    )
+    $packageManager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $frontendRoot
+    if ($packageManager.Name -cne 'pnpm') {
+        throw 'Desktop dependency inventory requires the repository pnpm lockfile.'
+    }
+    $runtimeArguments = @(Get-FluxoraFrontendPackageManagerArguments `
+        -PackageManager $packageManager `
+        -Arguments @('licenses', 'list', '--prod', '--json'))
+    $allArguments = @(Get-FluxoraFrontendPackageManagerArguments `
+        -PackageManager $packageManager `
+        -Arguments @('licenses', 'list', '--json'))
+    $runtimeReport = Invoke-JsonCommand `
+        -WorkingDirectory $frontendRoot `
+        -Executable ([string]$packageManager.FilePath) `
+        -Arguments $runtimeArguments
+    $allReport = Invoke-JsonCommand `
+        -WorkingDirectory $frontendRoot `
+        -Executable ([string]$packageManager.FilePath) `
+        -Arguments $allArguments
     $runtime = @(Expand-PnpmPackages -LicenseReport $runtimeReport)
     $all = @(Expand-PnpmPackages -LicenseReport $allReport)
 

@@ -9,8 +9,12 @@ Set-StrictMode -Version Latest
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $modulePath = Join-Path $projectRoot 'scripts\release\Fluxora.Release.psm1'
 $nativeArtifactModulePath = Join-Path $projectRoot 'scripts\release\Fluxora.NativeArtifactValidation.psm1'
+$frontendDependenciesModulePath = Join-Path $projectRoot 'scripts\release\Fluxora.FrontendDependencies.psm1'
 Import-Module $modulePath -Force
 Import-Module $nativeArtifactModulePath -Force
+if (Test-Path -LiteralPath $frontendDependenciesModulePath -PathType Leaf) {
+    Import-Module $frontendDependenciesModulePath -Force
+}
 
 $script:passed = 0
 $script:failed = 0
@@ -73,6 +77,87 @@ function Invoke-Case {
         Write-Host "FAIL $Name"
         Write-Host "  $($_.Exception.Message)"
     }
+}
+
+Invoke-Case 'frontend dependency bootstrap uses the pinned pnpm through Corepack when pnpm is absent' {
+    $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
+    $package = Get-Content -LiteralPath (Join-Path $frontendRoot 'package.json') -Raw | ConvertFrom-Json
+    Assert-Equal `
+        ([string]$package.packageManager) `
+        'pnpm@11.9.0' `
+        'The frontend manifest must pin the exact pnpm release used by every build.'
+    Assert-True `
+        ($null -ne (Get-Command 'Resolve-FluxoraFrontendPackageManager' -ErrorAction SilentlyContinue)) `
+        'The focused frontend dependency bootstrap module must expose its resolver.'
+
+    $shimRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-corepack-shim-' + [Guid]::NewGuid().ToString('N'))
+    $previousPath = $env:PATH
+    try {
+        New-Item -ItemType Directory -Path $shimRoot -Force | Out-Null
+        "@echo off`r`nexit /b 0`r`n" |
+            Set-Content -LiteralPath (Join-Path $shimRoot 'corepack.cmd') -Encoding ascii
+        $env:PATH = $shimRoot
+
+        $manager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $frontendRoot
+        Assert-Equal $manager.Name 'pnpm' 'The pnpm lockfile must select pnpm.'
+        Assert-Equal $manager.Provider 'corepack' 'Corepack must provide pnpm without a global installation.'
+        Assert-Equal $manager.Version '11.9.0' 'Corepack must resolve the manifest-pinned pnpm version.'
+        Assert-Equal `
+            (@($manager.ArgumentPrefix) -join ' ') `
+            'pnpm' `
+            'Corepack must receive pnpm as the package-manager selector.'
+    }
+    finally {
+        $env:PATH = $previousPath
+        if (Test-Path -LiteralPath $shimRoot) {
+            Remove-Item -LiteralPath $shimRoot -Recurse -Force
+        }
+    }
+}
+
+Invoke-Case 'frontend dependency bootstrap replaces a mismatched global pnpm through npm exec' {
+    $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
+    $shimRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-pnpm-version-shim-' + [Guid]::NewGuid().ToString('N'))
+    $previousPath = $env:PATH
+    try {
+        New-Item -ItemType Directory -Path $shimRoot -Force | Out-Null
+        "@echo off`r`necho 10.0.0`r`nexit /b 0`r`n" |
+            Set-Content -LiteralPath (Join-Path $shimRoot 'pnpm.cmd') -Encoding ascii
+        "@echo off`r`nexit /b 0`r`n" |
+            Set-Content -LiteralPath (Join-Path $shimRoot 'npm.cmd') -Encoding ascii
+        $env:PATH = $shimRoot
+
+        $manager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $frontendRoot
+        Assert-Equal $manager.Provider 'npm-exec' 'A mismatched global pnpm must not bypass the pinned repository version.'
+        Assert-Equal `
+            (@(Get-FluxoraFrontendPackageManagerArguments `
+                -PackageManager $manager `
+                -Arguments @('install', '--frozen-lockfile')) -join ' ') `
+            'exec --yes --package=pnpm@11.9.0 -- pnpm install --frozen-lockfile' `
+            'npm exec must download and run the exact pnpm version before restoring the frozen lockfile.'
+    }
+    finally {
+        $env:PATH = $previousPath
+        if (Test-Path -LiteralPath $shimRoot) {
+            Remove-Item -LiteralPath $shimRoot -Recurse -Force
+        }
+    }
+}
+
+Invoke-Case 'local build and desktop compliance share the automatic frontend dependency bootstrap' {
+    $buildSource = Get-Content -LiteralPath (Join-Path $projectRoot 'Build.ps1') -Raw
+    $complianceSource = Get-Content -LiteralPath (
+        Join-Path $projectRoot 'scripts\release\Test-DesktopLegalAndAssetCompliance.ps1'
+    ) -Raw
+
+    Assert-True ($buildSource.Contains('Fluxora.FrontendDependencies.psm1')) 'Build.ps1 must import the focused dependency bootstrap module.'
+    Assert-True ($buildSource.Contains('Resolve-FluxoraFrontendPackageManager -FrontendRoot $TauriProject')) 'Local builds must resolve the pinned package manager instead of requiring global pnpm.'
+    Assert-True ($buildSource.Contains('Invoke-TauriPackageManagerCommand')) 'Every local pnpm call must retain the resolver argument prefix.'
+    Assert-True ($buildSource.Contains("Assert-Command 'node'")) 'Local builds must fail early when the Node.js runtime prerequisite is absent.'
+    Assert-True ($buildSource.Contains("Assert-Command 'npm'")) 'Local builds must retain npm as the final automatic pnpm fallback.'
+    Assert-True ($complianceSource.Contains('Fluxora.FrontendDependencies.psm1')) 'Desktop compliance must import the same dependency bootstrap module.'
+    Assert-True ($complianceSource.Contains('Resolve-FluxoraFrontendPackageManager -FrontendRoot $frontendRoot')) 'Desktop compliance must work without a global pnpm command.'
+    Assert-True (-not $complianceSource.Contains("Get-Command 'pnpm'")) 'Desktop compliance must not hard-require global pnpm.'
 }
 
 function Resolve-NativeInstallerStaticLibrary {
@@ -1778,8 +1863,10 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $versionMenuOffset = $source.IndexOf('Resolve-FluxoraProductionVersion', [StringComparison]::Ordinal)
     $recoveryOffset = $source.IndexOf('Restore-FluxoraVersionRecoveryJournal', [StringComparison]::Ordinal)
     $githubAuthOffset = $source.IndexOf('Authenticating GitHub release transport', [StringComparison]::Ordinal)
+    $packageManagerBootstrapOffset = $source.IndexOf('Preparing pinned frontend package manager', [StringComparison]::Ordinal)
     $versionApplyOffset = $source.IndexOf('Applying product version', [StringComparison]::Ordinal)
     $journalCreateOffset = $source.IndexOf('New-FluxoraVersionRecoveryJournal', [StringComparison]::Ordinal)
+    $dependencyRestoreOffset = $source.IndexOf('Restoring pinned frontend dependencies for release inventory', [StringComparison]::Ordinal)
     $dependencyInventoryRefreshOffset = $source.IndexOf('Refreshing deterministic dependency inventory for the release version', [StringComparison]::Ordinal)
     $buildOffset = $source.IndexOf('Building the complete local release', [StringComparison]::Ordinal)
     $strictContractOffset = $source.IndexOf('Running strict release contract tests against built native artifacts', [StringComparison]::Ordinal)
@@ -1797,8 +1884,10 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($signingOpenOffset -gt $lastGateOffset) 'DPAPI or in-memory signing identity must not be opened before repository-controlled gates finish.'
     Assert-True ($recoveryOffset -ge 0 -and $recoveryOffset -lt $versionMenuOffset) 'An interrupted version transaction must be recovered before the next version menu is shown.'
     Assert-True ($versionMenuOffset -ge 0 -and $versionMenuOffset -lt $githubAuthOffset) 'Version selection and cancellation must happen before remote release prerequisites.'
+    Assert-True ($packageManagerBootstrapOffset -ge 0 -and $packageManagerBootstrapOffset -lt $githubAuthOffset) 'Production must download or resolve the pinned frontend package manager before remote checks or checkpoint mutation.'
     Assert-True ($journalCreateOffset -gt $githubAuthOffset -and $journalCreateOffset -lt $versionApplyOffset) 'The durable recovery journal must be sealed before version files are edited.'
-    Assert-True ($versionApplyOffset -ge 0 -and $dependencyInventoryRefreshOffset -gt $versionApplyOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must refresh deterministic dependency evidence after changing version-owned inputs and before the full build.'
+    Assert-True ($versionApplyOffset -ge 0 -and $dependencyRestoreOffset -gt $versionApplyOffset -and $dependencyInventoryRefreshOffset -gt $dependencyRestoreOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must restore pinned frontend packages after changing version-owned inputs, then refresh deterministic dependency evidence before the full build.'
+    Assert-True ($source.Contains('Get-FluxoraFrontendPackageManagerArguments')) 'Production must preserve the package-manager bootstrap prefix for every pnpm invocation.'
     Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
     Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
     Assert-True ($buildOffset -ge 0 -and $strictContractOffset -gt $buildOffset) 'Production must build native artifacts before running the strict release contract suite.'

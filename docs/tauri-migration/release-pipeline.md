@@ -89,8 +89,10 @@ The Windows build path performs these steps in dependency order:
 - use the short ignored `build/vk` Cargo target for the Vulkan build so whisper.cpp's nested shader-generator paths remain below the Windows MSBuild/FileTracker path limit;
 - download the pinned Whisper `small-q5_1` and Silero VAD 6.2.0 assets only during the build into ignored `build/model-cache/speech`, validating revision, size where declared, and SHA-256 before staging;
 - collect `FluxoraBridgeHost.exe`, `FluxoraAIHost.exe`, both speech hosts, `FluxoraCore.dll` and `FluxoraVfs.dll` into `build/tauri-native/win32/x64`;
-- run `npm install` and the Tauri build with Cargo lock enforcement in
-  `frontend-tauri/` after staging native payloads into
+- resolve the exact `packageManager` version from `frontend-tauri/package.json`
+  through Corepack, an exact global `pnpm`, or the `npm exec` fallback; restore
+  the frozen pnpm lockfile before dependency inventory and run the Tauri build
+  with Cargo lock enforcement after staging native payloads into
   `frontend-tauri/src-tauri/resources/native`;
 - copy the built Tauri app from `frontend-tauri/src-tauri/target/release/Fluxora.exe` into `output/`;
 - verify `output/Fluxora.exe`, both speech-host files, all other native hosts/core/VFS, the speech manifest, glossary, licenses, and both model hashes under `output/resources/speech`;
@@ -238,6 +240,11 @@ Production mode is fail-closed and non-forceful:
    to a repository-private journal under `.git`. A normal failure or the next
    invocation after process termination restores both the original version files
    and inventory; a changed HEAD refuses recovery instead of overwriting work.
+   Before any remote check or checkpoint mutation, Production resolves and, when
+   necessary, downloads the pinned pnpm runtime. After applying the selected
+   version it restores the frozen frontend dependencies before regenerating the
+   inventory, so a clean checkout does not depend on a global pnpm installation
+   or pre-existing `node_modules`.
 3. Build the native updater ABI prerequisite, then run the full unit, component,
    integration, API-contract and UI gates plus the ordinary local release build.
    Production treats a missing real native full/delta ABI test target as a hard

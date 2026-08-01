@@ -71,14 +71,15 @@ Prerequisites for local development:
 - Windows development environment
 - Visual Studio C++ toolchain and CMake
 - Rust stable toolchain
-- Node.js and npm
+- Node.js and npm. A global `pnpm` installation is not required: the repository
+  pins its version and `Build.ps1` bootstraps it through Corepack or `npm exec`.
 
 Run the Tauri app in development:
 
 ```powershell
 cd frontend-tauri
-npm install
-npm run dev
+corepack pnpm install
+corepack pnpm run dev
 ```
 
 Build and test the native core:
@@ -94,8 +95,12 @@ ctest --test-dir build/backend --output-on-failure
 Create the Windows release payload and approved installer from the repository root:
 
 ```powershell
-./Build.ps1 -Configuration Release -Runtime win-x64
+./Build.ps1 -Mode Local -Configuration Release -Runtime win-x64
 ```
+
+The build resolves the exact repository-pinned package manager, downloads it
+when it is not already available, and restores frontend packages with the frozen
+lockfile before dependency compliance or compilation.
 
 The command above uses the current synchronized product version. To set a new
 stable SemVer and build every artifact with it, pass `-Version`:
