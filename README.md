@@ -157,4 +157,4 @@ When changing bridge contracts, update the shared DTOs, docs, tests and operatio
 
 ## License
 
-Fluxora is proprietary software and part of the ModdingFlow ecosystem. Access to this repository does not grant redistribution, reuse, sublicensing, modification or branding rights. See `LICENSE` for the full terms.
+Fluxora is proprietary software and part of the [ModdingFlow](https://www.moddingflow.com/) ecosystem. Access to this repository does not grant redistribution, reuse, sublicensing, modification or branding rights. See `LICENSE` for the full terms.
