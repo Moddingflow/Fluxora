@@ -895,7 +895,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785602172.5025363,
+    "mtime": 1785611704.7323747,
     "ast_hash": "aa0deb7f4f2ec93bb4ef921d6eb07ebe",
     "semantic_hash": ""
   },
@@ -925,7 +925,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785602172.5055766,
+    "mtime": 1785611704.731377,
     "ast_hash": "a912567396ca2567a3320a0e5d7ef910",
     "semantic_hash": ""
   },
@@ -6465,7 +6465,7 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785609756.6843996,
+    "mtime": 1785611704.7363749,
     "ast_hash": "dbfa664148eca647746d863df5a7c6b9",
     "semantic_hash": ""
   },
