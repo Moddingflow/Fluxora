@@ -6875,8 +6875,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/ai/AiAccountGate.tsx": {
-    "mtime": 1785526896.9260893,
-    "ast_hash": "ebca2e0d92945e125f9e7a0438c9d017",
+    "mtime": 1785563724.947083,
+    "ast_hash": "3473c9279edff5b5934a5006c40dec07",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/ai/ai-account-access.ts": {
