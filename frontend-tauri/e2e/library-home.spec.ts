@@ -13140,6 +13140,29 @@ test('keeps an automatic app-update check failure silent', async ({ page }) => {
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
+test('retries a failed app-update check explicitly from Settings', async ({ page }) => {
+  await page.goto(`${baseUrl}/?window=settings&testUpdate=automaticError`);
+  await page.getByRole('button', { name: /Для разработчиков/ }).click();
+
+  const updateRow = page.locator('.settings-service-row--app-update');
+  await expect(updateRow.getByText('GitHub is unavailable')).toBeVisible();
+  await updateRow.getByRole('button', { name: 'Повторить проверку' }).click();
+
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.check'
+      ).length
+    )))
+    .toBe(1);
+  const checkCall = await page.evaluate(() => (
+    ((window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>).find(
+      (call) => call.method === 'updates.check'
+    )
+  ));
+  expect(checkCall?.payload.operationId).toMatch(/^op_.*_app_update_manual_check_/);
+});
+
 test('does not acknowledge updater health from a secondary window', async ({ page }) => {
   await page.goto(`${baseUrl}/?window=settings`);
 

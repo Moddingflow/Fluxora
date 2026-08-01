@@ -218,24 +218,33 @@ Production mode is fail-closed and non-forceful:
 
 1. Select or explicitly provide the semantic version before GitHub/tooling
    prerequisites. Keeping the current version cancels because the updater never
-   installs a version less than or equal to the installed version.
+   installs a version less than or equal to the installed version. A repository-
+   private OS lock excludes concurrent publishers. Before showing this menu, a
+   stale version-recovery journal from an interrupted process is validated
+   against the unchanged Git HEAD and used to restore the exact original bytes.
 2. Verify the authenticated GitHub repository, default release branch, that the
    branch is not behind upstream, and absence of the version tag/release. If the
    worktree is dirty or local commits are unpublished, show the exact `git add
    --all --dry-run` plan and counts, require `PUBLISH` confirmation (or explicit
    `-PublishCurrentChanges`), reject likely secret/key paths, and create a
-   separate checkpoint commit. Existing local commits are allowed and are
+   separate checkpoint commit. Generated `node_modules`, build, target, test-
+   result and output trees are rejected as well. Existing local commits are allowed and are
    included in the later atomic push. The worktree must then be clean. Open the
    update-manifest signing key only after repository-controlled build/test gates.
    Update every owned version source and regenerate its deterministic dependency
    inventory as one recoverable local step. This refresh is required because the
-   inventory hashes version-owned package and Cargo inputs. A failure before
-   remote mutation restores both the original version files and inventory.
+   inventory hashes version-owned package and Cargo inputs. Before any version
+   edit, Production atomically writes the bounded original bytes and their hashes
+   to a repository-private journal under `.git`. A normal failure or the next
+   invocation after process termination restores both the original version files
+   and inventory; a changed HEAD refuses recovery instead of overwriting work.
 3. Build the native updater ABI prerequisite, then run the full unit, component,
    integration, API-contract and UI gates plus the ordinary local release build.
    Production treats a missing real native full/delta ABI test target as a hard
    failure; a clean machine may never silently skip it. Cargo lock enforcement
    applies to direct Rust builds and the exact packaged Tauri binary. Production
+   bounds every CTest case to 120 seconds and stops the suite on the first failure,
+   so a wedged test cannot leave the release running indefinitely. Production
    restages the Setup and updater renderers after the main Vite build so the same
    Playwright pass covers all three shipped windows. Screenshots, traces and
    last-run state are written under the disposable release transaction directory,
@@ -259,7 +268,8 @@ Production mode is fail-closed and non-forceful:
    becomes visible to clients only at this final publish step.
 
 There is no honest single transaction across Git, GitHub Releases and local
-files. Before a push, production mode restores local version edits on failure;
+files. Before a push, production mode restores local version edits on failure or
+on the next invocation after an externally terminated process;
 a successful checkpoint commit remains because it is the durable copy of the
 current changes the operator explicitly selected for publication.
 After a commit or tag has been pushed, it never rewrites remote history: it

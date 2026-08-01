@@ -2410,6 +2410,225 @@ function Assert-FluxoraFileSnapshots {
     }
 }
 
+function Resolve-FluxoraRecoveryFilePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [string] $ProjectRoot,
+        [Parameter(Mandatory = $true)] [string] $RelativePath
+    )
+
+    $root = [IO.Path]::GetFullPath($ProjectRoot)
+    if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+        [string]::IsNullOrWhiteSpace($RelativePath) -or
+        [IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Version recovery path '$RelativePath' is invalid."
+    }
+
+    $fullPath = [IO.Path]::GetFullPath((Join-Path $root $RelativePath))
+    $rootPrefix = $root.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Version recovery path '$RelativePath' is outside the repository."
+    }
+
+    $parent = Split-Path -Parent $fullPath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        throw "Version recovery parent directory is missing for '$RelativePath'."
+    }
+    $relativeParent = [IO.Path]::GetRelativePath($root, $parent)
+    $cursor = $root
+    if ($relativeParent -ne '.') {
+        foreach ($segment in $relativeParent.Split(
+            [IO.Path]::DirectorySeparatorChar,
+            [StringSplitOptions]::RemoveEmptyEntries)) {
+            $cursor = Join-Path $cursor $segment
+            $directory = Get-Item -LiteralPath $cursor -Force
+            if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Version recovery path '$RelativePath' crosses a reparse point."
+            }
+        }
+    }
+    if (Test-Path -LiteralPath $fullPath) {
+        $file = Get-Item -LiteralPath $fullPath -Force
+        if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Version recovery path '$RelativePath' is a reparse point."
+        }
+    }
+    return $fullPath
+}
+
+function New-FluxoraVersionRecoveryJournal {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [string] $ProjectRoot,
+        [Parameter(Mandatory = $true)] [string] $JournalPath,
+        [Parameter(Mandatory = $true)] [string[]] $RelativePaths,
+        [Parameter(Mandatory = $true)] [string] $PreReleaseHead,
+        [Parameter(Mandatory = $true)] [string] $TargetVersion
+    )
+
+    if ($PreReleaseHead -notmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z' -or
+        -not (Test-FluxoraSemVer -Version $TargetVersion)) {
+        throw 'Version recovery metadata contains an invalid Git head or target version.'
+    }
+    if (Test-Path -LiteralPath $JournalPath) {
+        throw "A version recovery journal already exists at '$JournalPath'."
+    }
+    if ($RelativePaths.Count -eq 0 -or $RelativePaths.Count -gt 32) {
+        throw 'Version recovery requires between 1 and 32 repository files.'
+    }
+
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $files = [Collections.Generic.List[object]]::new()
+    [uint64]$totalSize = 0
+    foreach ($relativePath in $RelativePaths) {
+        if (-not $seen.Add($relativePath)) {
+            throw "Version recovery path '$relativePath' is duplicated."
+        }
+        $fullPath = Resolve-FluxoraRecoveryFilePath -ProjectRoot $ProjectRoot -RelativePath $relativePath
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "Version recovery source file '$relativePath' is missing."
+        }
+        $bytes = [IO.File]::ReadAllBytes($fullPath)
+        $totalSize += [uint64]$bytes.Length
+        if ($bytes.Length -gt 8MB -or $totalSize -gt 32MB) {
+            throw 'Version recovery data exceeds its bounded size limit.'
+        }
+        $files.Add([ordered]@{
+            relativePath = $relativePath
+            size = [uint64]$bytes.Length
+            sha256 = [Convert]::ToHexString(
+                [Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+            bytesBase64 = [Convert]::ToBase64String($bytes)
+        })
+    }
+
+    $journal = [ordered]@{
+        schemaVersion = 1
+        preReleaseHead = $PreReleaseHead
+        targetVersion = $TargetVersion
+        files = @($files)
+    }
+    $journalBytes = [Text.UTF8Encoding]::new($false).GetBytes(
+        (($journal | ConvertTo-Json -Depth 5 -Compress) + "`n"))
+    Write-FluxoraAtomicBytes -Path $JournalPath -Bytes $journalBytes
+}
+
+function Restore-FluxoraVersionRecoveryJournal {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [string] $ProjectRoot,
+        [Parameter(Mandatory = $true)] [string] $JournalPath,
+        [Parameter(Mandatory = $true)] [string] $CurrentHead
+    )
+
+    if (-not (Test-Path -LiteralPath $JournalPath -PathType Leaf)) {
+        return $false
+    }
+    $journalFile = Get-Item -LiteralPath $JournalPath -Force
+    if (($journalFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $journalFile.Length -gt 48MB) {
+        throw "Version recovery journal '$JournalPath' is unsafe or oversized."
+    }
+
+    try {
+        $journal = Get-Content -LiteralPath $JournalPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+    }
+    catch {
+        throw "Version recovery journal '$JournalPath' is not valid JSON."
+    }
+    if ($null -eq $journal -or
+        -not $journal.ContainsKey('schemaVersion') -or [int]$journal.schemaVersion -ne 1 -or
+        -not $journal.ContainsKey('preReleaseHead') -or
+        -not $journal.ContainsKey('targetVersion') -or
+        -not $journal.ContainsKey('files')) {
+        throw "Version recovery journal '$JournalPath' has an unsupported schema."
+    }
+    $preReleaseHead = [string]$journal.preReleaseHead
+    if ($preReleaseHead -notmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z' -or
+        $CurrentHead -cne $preReleaseHead) {
+        throw "Version recovery journal belongs to Git head '$preReleaseHead', but the current head is '$CurrentHead'."
+    }
+    if (-not (Test-FluxoraSemVer -Version ([string]$journal.targetVersion))) {
+        throw "Version recovery journal '$JournalPath' has an invalid target version."
+    }
+
+    $entries = @($journal.files)
+    if ($entries.Count -eq 0 -or $entries.Count -gt 32) {
+        throw "Version recovery journal '$JournalPath' has an invalid file count."
+    }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $restores = [Collections.Generic.List[object]]::new()
+    [uint64]$totalSize = 0
+    foreach ($entry in $entries) {
+        if ($null -eq $entry -or
+            -not $entry.ContainsKey('relativePath') -or
+            -not $entry.ContainsKey('size') -or
+            -not $entry.ContainsKey('sha256') -or
+            -not $entry.ContainsKey('bytesBase64')) {
+            throw "Version recovery journal '$JournalPath' contains an invalid file entry."
+        }
+        $relativePath = [string]$entry.relativePath
+        if (-not $seen.Add($relativePath)) {
+            throw "Version recovery journal contains duplicate path '$relativePath'."
+        }
+        $fullPath = Resolve-FluxoraRecoveryFilePath -ProjectRoot $ProjectRoot -RelativePath $relativePath
+        try {
+            $bytes = [Convert]::FromBase64String([string]$entry.bytesBase64)
+            $declaredSize = [uint64]$entry.size
+        }
+        catch {
+            throw "Version recovery journal contains invalid bytes for '$relativePath'."
+        }
+        $totalSize += [uint64]$bytes.Length
+        $actualSha256 = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        if ($bytes.Length -gt 8MB -or $totalSize -gt 32MB -or
+            [uint64]$bytes.Length -ne $declaredSize -or
+            [string]$entry.sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+            $actualSha256 -cne [string]$entry.sha256) {
+            throw "Version recovery journal bytes failed validation for '$relativePath'."
+        }
+        $restores.Add([pscustomobject]@{
+            relativePath = $relativePath
+            fullPath = $fullPath
+            bytes = $bytes
+            size = $declaredSize
+            sha256 = $actualSha256
+        })
+    }
+
+    foreach ($restore in $restores) {
+        Write-FluxoraAtomicBytes -Path $restore.fullPath -Bytes $restore.bytes
+    }
+    foreach ($restore in $restores) {
+        $file = Get-Item -LiteralPath $restore.fullPath
+        if ([uint64]$file.Length -ne [uint64]$restore.size -or
+            (Get-FluxoraFileSha256Hex -Path $restore.fullPath) -cne [string]$restore.sha256) {
+            throw "Version recovery verification failed for '$($restore.relativePath)'."
+        }
+    }
+    Remove-Item -LiteralPath $JournalPath -Force
+    if (Test-Path -LiteralPath $JournalPath) {
+        throw "Version recovery journal '$JournalPath' could not be removed after recovery."
+    }
+    return $true
+}
+
+function Remove-FluxoraVersionRecoveryJournal {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)] [string] $JournalPath)
+
+    if (-not (Test-Path -LiteralPath $JournalPath)) {
+        return
+    }
+    $journalFile = Get-Item -LiteralPath $JournalPath -Force
+    if (($journalFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $journalFile.PSIsContainer) {
+        throw "Version recovery journal '$JournalPath' is not a regular file."
+    }
+    Remove-Item -LiteralPath $JournalPath -Force
+}
+
 function Assert-FluxoraCanonicalRepositoryIdentity {
     [CmdletBinding()]
     param(
@@ -2456,13 +2675,38 @@ function Assert-FluxoraReleaseStagedPaths {
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyCollection()]
-        [string[]] $Paths
+        [string[]] $Paths,
+
+        [AllowEmptyCollection()]
+        [string[]] $DeletedPaths = @()
     )
 
     $sensitivePathPattern = '(?i)(^|[\\/])(?:\.env(?:\.[^\\/]+)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|[^\\/]+\.(?:pfx|p12|pem|key|pk8|dpapi))$|(^|[\\/])secrets?([\\/]|$)'
+    $generatedPathPattern = '(?i)(^|[\\/])(?:node_modules|target|build|dist|coverage|test-results|playwright-report|output|output-installer|output-update)([\\/]|$)'
+    $staged = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($path in $Paths) {
-        if ([string]::IsNullOrWhiteSpace($path) -or $path -match $sensitivePathPattern) {
+        if ([string]::IsNullOrWhiteSpace($path) -or -not $staged.Add($path)) {
+            throw "Production checkpoint contains an invalid or duplicate staged path: '$path'."
+        }
+    }
+    $deleted = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $DeletedPaths) {
+        if ([string]::IsNullOrWhiteSpace($path) -or
+            -not $staged.Contains($path) -or
+            -not $deleted.Add($path)) {
+            throw "Deleted path '$path' is not present in the staged path set or is duplicated."
+        }
+    }
+
+    foreach ($path in $Paths) {
+        if ($deleted.Contains($path)) {
+            continue
+        }
+        if ($path -match $sensitivePathPattern) {
             throw "Production checkpoint contains a sensitive path that must be reviewed and committed separately: '$path'."
+        }
+        if ($path -match $generatedPathPattern) {
+            throw "Production checkpoint contains a generated path that must not be published from the worktree: '$path'."
         }
     }
 }
@@ -2519,6 +2763,9 @@ Export-ModuleMember -Function @(
     'Compare-FluxoraFileManifests',
     'Get-FluxoraFileSnapshots',
     'Assert-FluxoraFileSnapshots',
+    'New-FluxoraVersionRecoveryJournal',
+    'Restore-FluxoraVersionRecoveryJournal',
+    'Remove-FluxoraVersionRecoveryJournal',
     'Assert-FluxoraCanonicalRepositoryIdentity',
     'Assert-FluxoraPreviousReleaseLineage',
     'Assert-FluxoraReleaseChildEnvironment',

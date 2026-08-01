@@ -27,6 +27,7 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
 
 $signingSecretName = 'FLUXORA_UPDATE_SIGNING_KEY_PKCS8_BASE64'
 [byte[]]$capturedSigningKeyBytes = $null
+[IO.FileStream]$productionReleaseLock = $null
 $capturedSigningKeyBase64 = [Environment]::GetEnvironmentVariable($signingSecretName, 'Process')
 [Environment]::SetEnvironmentVariable($signingSecretName, $null, 'Process')
 try {
@@ -52,6 +53,10 @@ finally {
 trap {
     if ($null -ne $capturedSigningKeyBytes) {
         [Security.Cryptography.CryptographicOperations]::ZeroMemory($capturedSigningKeyBytes)
+    }
+    if ($null -ne $productionReleaseLock) {
+        $productionReleaseLock.Dispose()
+        $productionReleaseLock = $null
     }
     throw $_
 }
@@ -148,12 +153,67 @@ function Get-GitHubRepositorySpecifier {
     return $match.Groups['repository'].Value
 }
 
+function Get-ReleaseGitPath {
+    param([Parameter(Mandatory = $true)] [string] $Name)
+
+    $path = ((Invoke-ReleaseCommand -FilePath 'git' -Arguments @(
+        'rev-parse', '--git-path', $Name)) -join '').Trim()
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        throw "Git did not resolve its private release path '$Name'."
+    }
+    if (-not [IO.Path]::IsPathRooted($path)) {
+        $path = Join-Path $projectRoot $path
+    }
+    return [IO.Path]::GetFullPath($path)
+}
+
+function Close-ProductionReleaseLock {
+    if ($null -ne $script:productionReleaseLock) {
+        $script:productionReleaseLock.Dispose()
+        $script:productionReleaseLock = $null
+    }
+}
+
+if ($null -eq (Get-Command 'git' -ErrorAction SilentlyContinue)) {
+    throw "Production release requires 'git' on PATH."
+}
+$versionRecoveryJournalPath = Get-ReleaseGitPath -Name 'fluxora-production-version-recovery.json'
+$productionReleaseLockPath = Get-ReleaseGitPath -Name 'fluxora-production-release.lock'
+if (Test-Path -LiteralPath $productionReleaseLockPath) {
+    $lockItem = Get-Item -LiteralPath $productionReleaseLockPath -Force
+    if ($lockItem.PSIsContainer -or
+        ($lockItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Production release lock path is unsafe: '$productionReleaseLockPath'."
+    }
+}
+try {
+    $productionReleaseLock = [IO.File]::Open(
+        $productionReleaseLockPath,
+        [IO.FileMode]::OpenOrCreate,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::None)
+}
+catch {
+    throw 'Another Production release owns the repository release lock. Wait for it to finish or terminate that exact process before retrying.'
+}
+
+if (Test-Path -LiteralPath $versionRecoveryJournalPath -PathType Leaf) {
+    $recoveryHead = ((Invoke-ReleaseCommand -FilePath 'git' -Arguments @('rev-parse', 'HEAD')) -join '').Trim()
+    if (Restore-FluxoraVersionRecoveryJournal `
+        -ProjectRoot $projectRoot `
+        -JournalPath $versionRecoveryJournalPath `
+        -CurrentHead $recoveryHead) {
+        Write-Warning 'Recovered exact version-file bytes from an interrupted Production release before version selection.'
+    }
+}
+
 $currentVersion = Get-ProductVersion
 $versionResolution = Resolve-FluxoraProductionVersion `
     -CurrentVersion $currentVersion `
     -Version $Version
 if ($versionResolution.Cancelled) {
     Write-Host "Production publication cancelled. Fluxora remains at $currentVersion."
+    Close-ProductionReleaseLock
     return
 }
 $targetVersion = [string]$versionResolution.Version
@@ -257,6 +317,7 @@ if ($repositoryChangeCount -gt 0 -or $unpublishedCommitCount -gt 0) {
         $confirmation = Read-Host "Type PUBLISH to create a separate checkpoint commit and include all listed commits in $tag"
         if ($confirmation.Trim() -cne 'PUBLISH') {
             Write-Host 'Production publication cancelled before changing Git state.'
+            Close-ProductionReleaseLock
             return
         }
     }
@@ -284,7 +345,14 @@ if ($repositoryChangeCount -gt 0) {
             if ($stagedPaths.Count -eq 0) {
                 throw 'The production checkpoint did not contain any staged paths.'
             }
-            Assert-FluxoraReleaseStagedPaths -Paths $stagedPaths
+            $deletedStagedPaths = @(
+                Invoke-ReleaseCommand -FilePath 'git' -Arguments @(
+                    '-c', 'core.quotePath=false', 'diff', '--cached', '--diff-filter=D', '--name-only') |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            )
+            Assert-FluxoraReleaseStagedPaths `
+                -Paths $stagedPaths `
+                -DeletedPaths $deletedStagedPaths
             [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments @(
                 'commit', '--no-verify', '-m', "release: checkpoint current changes for $tag"))
             $checkpointCommitted = $true
@@ -325,13 +393,15 @@ $verificationRoot = Join-Path $transactionRoot 'remote-verification'
 $playwrightOutputRoot = Join-Path $transactionRoot 'playwright-results'
 New-Item -ItemType Directory -Path $previousReleaseRoot -Force | Out-Null
 $versionPaths = @(Get-VersionPaths)
-$versionSnapshots = @{}
-foreach ($relativePath in $versionPaths) {
-    $versionSnapshots[$relativePath] = [IO.File]::ReadAllBytes((Join-Path $projectRoot $relativePath))
-}
 $commitCreated = $false
 $remotePushed = $false
 $draftCreated = $false
+New-FluxoraVersionRecoveryJournal `
+    -ProjectRoot $projectRoot `
+    -JournalPath $versionRecoveryJournalPath `
+    -RelativePaths $versionPaths `
+    -PreReleaseHead $preReleaseHead `
+    -TargetVersion $targetVersion
 
 try {
     $previousManifestPath = $null
@@ -402,6 +472,8 @@ try {
         [void](Invoke-ReleaseCommand -FilePath 'ctest' -Arguments @(
             '--test-dir', (Join-Path $projectRoot 'build\backend'),
             '-C', $Configuration,
+            '--timeout', '120',
+            '--stop-on-failure',
             '--output-on-failure',
             '--no-tests=error'))
     }
@@ -650,6 +722,7 @@ try {
         if ($postCommitStatus.Count -ne 0) {
             throw 'Release commit hooks or concurrent processes changed the worktree after commit.'
         }
+        Remove-FluxoraVersionRecoveryJournal -JournalPath $versionRecoveryJournalPath
         [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments @('tag', '-a', $tag, '-m', "Fluxora $targetVersion"))
     }
 
@@ -729,12 +802,23 @@ try {
     }
 }
 catch {
+    $releaseFailure = $_
+    $recoveryFailure = $null
     if (-not $commitCreated) {
         if (-not (Test-ReleaseCommand -FilePath 'git' -Arguments (@('diff', '--cached', '--quiet', '--') + $versionPaths))) {
             [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments (@('restore', '--staged', '--') + $versionPaths))
         }
-        foreach ($relativePath in $versionSnapshots.Keys) {
-            [IO.File]::WriteAllBytes((Join-Path $projectRoot $relativePath), $versionSnapshots[$relativePath])
+        try {
+            $recoveryHead = ((Invoke-ReleaseCommand -FilePath 'git' -Arguments @('rev-parse', 'HEAD')) -join '').Trim()
+            if (Restore-FluxoraVersionRecoveryJournal `
+                -ProjectRoot $projectRoot `
+                -JournalPath $versionRecoveryJournalPath `
+                -CurrentHead $recoveryHead) {
+                Write-Warning 'Restored exact version-file bytes after the failed Production release.'
+            }
+        }
+        catch {
+            $recoveryFailure = $_
         }
     }
     if ($remotePushed) {
@@ -746,7 +830,10 @@ catch {
     elseif ($checkpointCommitCreated) {
         Write-Warning "The local checkpoint commit was preserved because it contains the selected current changes. No history was rewritten automatically. Resolve or retry '$tag' explicitly."
     }
-    throw
+    if ($null -ne $recoveryFailure) {
+        throw "Production release failed, and exact version recovery also failed. The recovery journal remains at '$versionRecoveryJournalPath'. Release error: $($releaseFailure.Exception.Message) Recovery error: $($recoveryFailure.Exception.Message)"
+    }
+    throw $releaseFailure
 }
 finally {
     if ($null -ne $capturedSigningKeyBytes) {
@@ -756,6 +843,7 @@ finally {
     if (Test-Path -LiteralPath $transactionRoot) {
         Remove-Item -LiteralPath $transactionRoot -Recurse -Force
     }
+    Close-ProductionReleaseLock
 }
 
 Write-Host ''

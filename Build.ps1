@@ -64,7 +64,47 @@ $resolvedBuildMode = Resolve-FluxoraBuildMode `
 
 if ($resolvedBuildMode -eq 'Production') {
     if ($PSVersionTable.PSVersion.Major -lt 7) {
-        throw 'Production releases require PowerShell 7 (pwsh) for cryptographic and UTF-8 guarantees.'
+        if ($null -ne $BuildCapturedSigningKeyBytes) {
+            [Array]::Clear($BuildCapturedSigningKeyBytes, 0, $BuildCapturedSigningKeyBytes.Length)
+            $BuildCapturedSigningKeyBytes = $null
+            throw "Production releases with $BuildSigningSecretName must be launched directly with pwsh so the signing key never crosses an extra process boundary."
+        }
+
+        $powerShell7 = Get-Command 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($null -eq $powerShell7) {
+            throw 'PowerShell 7 (pwsh) was not found on PATH. Install PowerShell 7 or run the Production release from an existing pwsh terminal.'
+        }
+
+        $powerShell7Arguments = @(
+            '-NoLogo',
+            '-NoProfile',
+            '-File', $PSCommandPath,
+            '-Mode', 'Production',
+            '-Configuration', $Configuration,
+            '-Runtime', $Runtime,
+            '-Target', $Target
+        )
+        if ($IncludeSymbols) {
+            $powerShell7Arguments += '-IncludeSymbols'
+        }
+        if ($NoClean) {
+            $powerShell7Arguments += '-NoClean'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Version)) {
+            $powerShell7Arguments += @('-Version', $Version)
+        }
+        if ($PublishCurrentChanges) {
+            $powerShell7Arguments += '-PublishCurrentChanges'
+        }
+
+        Write-Host 'Windows PowerShell detected. Continuing the Production release in PowerShell 7...'
+        & $powerShell7.Source @powerShell7Arguments
+        $powerShell7ExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+        if ($powerShell7ExitCode -ne 0) {
+            throw "The Production release running in PowerShell 7 failed with exit code $powerShell7ExitCode."
+        }
+        return
     }
     if ($NoClean) {
         throw 'Production releases cannot use -NoClean.'

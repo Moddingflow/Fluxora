@@ -14,6 +14,14 @@ frontend-tauri/src-tauri/resources/speech/
 obj/
 TestResults/
 
+# JavaScript / browser test artifacts
+node_modules/
+dist/
+target/
+test-results/
+playwright-report/
+coverage/
+
 # CMake / C++
 build/
 out/

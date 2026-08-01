@@ -1494,6 +1494,34 @@ Invoke-Case 'controlled release checkpoint rejects likely secrets before commit'
     }
 }
 
+Invoke-Case 'controlled release checkpoint rejects generated artifacts' {
+    Assert-FluxoraReleaseStagedPaths -Paths @(
+        'scripts/build-helpers/Test-Release.ps1',
+        'graphify-out/graph.json'
+    )
+    foreach ($generatedPath in @(
+        'node_modules/.vite/vitest/results.json',
+        'frontend-tauri/test-results/.last-run.json',
+        'frontend-tauri/src-tauri/target/release/Fluxora.exe',
+        'build/backend/Release/FluxoraCoreTests.exe',
+        'output-installer/FluxoraSetup.exe',
+        'output-update/0.0.2/fluxora-update-manifest.json'
+    )) {
+        Assert-Throws {
+            Assert-FluxoraReleaseStagedPaths -Paths @('Build.ps1', $generatedPath)
+        } '*generated path*'
+    }
+
+    Assert-FluxoraReleaseStagedPaths `
+        -Paths @('Build.ps1', 'node_modules/.vite/vitest/results.json') `
+        -DeletedPaths @('node_modules/.vite/vitest/results.json')
+    Assert-Throws {
+        Assert-FluxoraReleaseStagedPaths `
+            -Paths @('Build.ps1') `
+            -DeletedPaths @('node_modules/.vite/vitest/results.json')
+    } '*not present in the staged path set*'
+}
+
 Invoke-Case 'canonical repository identity must bind fetch and push transports' {
     Assert-FluxoraCanonicalRepositoryIdentity `
         -ExpectedRepository 'Moddingflow/Fluxora' `
@@ -1552,6 +1580,101 @@ Invoke-Case 'version transaction snapshots reject any later byte change' {
         Assert-Throws {
             Assert-FluxoraFileSnapshots -ProjectRoot $root -Snapshots $snapshots
         } '*changed after the version transaction*'
+    }
+    finally {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Invoke-Case 'durable version recovery restores exact bytes after an interrupted release' {
+    $root = New-TestRepository
+    try {
+        $paths = @(
+            'frontend-tauri\src-tauri\tauri.conf.json',
+            'frontend-tauri\package.json'
+        )
+        $journalPath = Join-Path $root '.release-state\version-recovery.json'
+        $head = '0123456789abcdef0123456789abcdef01234567'
+        $before = @{}
+        foreach ($relativePath in $paths) {
+            $before[$relativePath] = [Convert]::ToBase64String(
+                [IO.File]::ReadAllBytes((Join-Path $root $relativePath)))
+        }
+
+        New-FluxoraVersionRecoveryJournal `
+            -ProjectRoot $root `
+            -JournalPath $journalPath `
+            -RelativePaths $paths `
+            -PreReleaseHead $head `
+            -TargetVersion '1.2.4'
+        Set-Content `
+            -LiteralPath (Join-Path $root $paths[0]) `
+            -Value '{"version":"9.9.9"}' `
+            -Encoding utf8NoBOM
+        Set-Content `
+            -LiteralPath (Join-Path $root $paths[1]) `
+            -Value '{"version":"9.9.9"}' `
+            -Encoding utf8NoBOM
+
+        Assert-True (Restore-FluxoraVersionRecoveryJournal `
+            -ProjectRoot $root `
+            -JournalPath $journalPath `
+            -CurrentHead $head) 'An interrupted transaction must be recovered.'
+        foreach ($relativePath in $paths) {
+            $actual = [Convert]::ToBase64String(
+                [IO.File]::ReadAllBytes((Join-Path $root $relativePath)))
+            Assert-Equal $actual $before[$relativePath] "Recovery must restore exact bytes for '$relativePath'."
+        }
+        Assert-True (-not (Test-Path -LiteralPath $journalPath)) 'A successful recovery must remove its journal.'
+    }
+    finally {
+        Remove-Item -LiteralPath $root -Recurse -Force
+    }
+}
+
+Invoke-Case 'durable version recovery fails closed before changing any file' {
+    $root = New-TestRepository
+    try {
+        $paths = @(
+            'frontend-tauri\src-tauri\tauri.conf.json',
+            'frontend-tauri\package.json'
+        )
+        $journalPath = Join-Path $root '.release-state\version-recovery.json'
+        $head = '0123456789abcdef0123456789abcdef01234567'
+        New-FluxoraVersionRecoveryJournal `
+            -ProjectRoot $root `
+            -JournalPath $journalPath `
+            -RelativePaths $paths `
+            -PreReleaseHead $head `
+            -TargetVersion '1.2.4'
+        foreach ($relativePath in $paths) {
+            Set-Content `
+                -LiteralPath (Join-Path $root $relativePath) `
+                -Value '{"version":"9.9.9"}' `
+                -Encoding utf8NoBOM
+        }
+
+        Assert-Throws {
+            Restore-FluxoraVersionRecoveryJournal `
+                -ProjectRoot $root `
+                -JournalPath $journalPath `
+                -CurrentHead 'ffffffffffffffffffffffffffffffffffffffff'
+        } '*belongs to Git head*'
+        $journal = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json -AsHashtable
+        $journal.files[1].bytesBase64 = [Convert]::ToBase64String([byte[]](0))
+        ($journal | ConvertTo-Json -Depth 5 -Compress) | Set-Content -LiteralPath $journalPath -Encoding utf8NoBOM
+        Assert-Throws {
+            Restore-FluxoraVersionRecoveryJournal `
+                -ProjectRoot $root `
+                -JournalPath $journalPath `
+                -CurrentHead $head
+        } '*bytes failed validation*'
+        foreach ($relativePath in $paths) {
+            Assert-True ((Get-Content -LiteralPath (Join-Path $root $relativePath) -Raw).Contains('9.9.9')) 'Invalid recovery data must not partially restore files.'
+        }
+        Assert-True (Test-Path -LiteralPath $journalPath -PathType Leaf) 'Failed recovery must preserve the journal for diagnosis.'
+        Remove-FluxoraVersionRecoveryJournal -JournalPath $journalPath
+        Assert-True (-not (Test-Path -LiteralPath $journalPath)) 'Explicit retirement must remove a regular journal file.'
     }
     finally {
         Remove-Item -LiteralPath $root -Recurse -Force
@@ -1653,8 +1776,10 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $lastGateOffset = $source.IndexOf("Running Tauri Rust suite", [StringComparison]::Ordinal)
     $signingOpenOffset = $source.IndexOf("Opening isolated signing identity after all repository gates", [StringComparison]::Ordinal)
     $versionMenuOffset = $source.IndexOf('Resolve-FluxoraProductionVersion', [StringComparison]::Ordinal)
+    $recoveryOffset = $source.IndexOf('Restore-FluxoraVersionRecoveryJournal', [StringComparison]::Ordinal)
     $githubAuthOffset = $source.IndexOf('Authenticating GitHub release transport', [StringComparison]::Ordinal)
     $versionApplyOffset = $source.IndexOf('Applying product version', [StringComparison]::Ordinal)
+    $journalCreateOffset = $source.IndexOf('New-FluxoraVersionRecoveryJournal', [StringComparison]::Ordinal)
     $dependencyInventoryRefreshOffset = $source.IndexOf('Refreshing deterministic dependency inventory for the release version', [StringComparison]::Ordinal)
     $buildOffset = $source.IndexOf('Building the complete local release', [StringComparison]::Ordinal)
     $strictContractOffset = $source.IndexOf('Running strict release contract tests against built native artifacts', [StringComparison]::Ordinal)
@@ -1670,7 +1795,9 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $inventoryOffset = $source.IndexOf('Creating signed release inventory', [StringComparison]::Ordinal)
     Assert-True ($secretClearOffset -ge 0 -and $secretClearOffset -lt $moduleImportOffset) 'The CI signing secret must be cleared before repository release code is imported.'
     Assert-True ($signingOpenOffset -gt $lastGateOffset) 'DPAPI or in-memory signing identity must not be opened before repository-controlled gates finish.'
+    Assert-True ($recoveryOffset -ge 0 -and $recoveryOffset -lt $versionMenuOffset) 'An interrupted version transaction must be recovered before the next version menu is shown.'
     Assert-True ($versionMenuOffset -ge 0 -and $versionMenuOffset -lt $githubAuthOffset) 'Version selection and cancellation must happen before remote release prerequisites.'
+    Assert-True ($journalCreateOffset -gt $githubAuthOffset -and $journalCreateOffset -lt $versionApplyOffset) 'The durable recovery journal must be sealed before version files are edited.'
     Assert-True ($versionApplyOffset -ge 0 -and $dependencyInventoryRefreshOffset -gt $versionApplyOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must refresh deterministic dependency evidence after changing version-owned inputs and before the full build.'
     Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
     Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
@@ -1685,11 +1812,16 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True (-not $source.Contains('Authenticode')) 'Production must not require paid Authenticode code signing.'
     Assert-True (-not $source.Contains('signtool')) 'Production must not discover or invoke signtool.'
     Assert-True ($source.Contains("'-RequireNativeAbi'")) 'Production must make a missing native update ABI a fatal release-test failure.'
+    Assert-True ($source.Contains("'--timeout', '120'")) 'The complete CTest gate must have a bounded per-test timeout.'
+    Assert-True ($source.Contains("'--stop-on-failure'")) 'The complete CTest gate must stop after its first failure.'
+    Assert-True ($source.Contains('[IO.FileShare]::None')) 'Concurrent production publishers must be excluded by an OS-owned lock.'
+    Assert-True ($source.Contains('Remove-FluxoraVersionRecoveryJournal')) 'A verified release commit must retire its recovery journal.'
     Assert-True (([regex]::Matches($source, 'Assert-FluxoraReleaseChildEnvironment')).Count -eq 2) 'Both production child-command helpers must fail closed if the signing environment reappears.'
     Assert-True ($source.Contains("'remote', 'get-url', '--all', 'origin'")) 'Fetch origin must be resolved and pinned through GitHub.'
     Assert-True ($source.Contains("'remote', 'get-url', '--push', '--all', 'origin'")) 'Push origin must be resolved independently and pinned through GitHub.'
     Assert-True ($source.Contains("'add', '--all', '--dry-run'")) 'Dirty production releases must preview the exact checkpoint before staging it.'
     Assert-True ($source.Contains('Assert-FluxoraReleaseStagedPaths')) 'The controlled checkpoint must reject likely secret material before commit.'
+    Assert-True ($source.Contains("'--diff-filter=D'")) 'The controlled checkpoint must distinguish generated-file deletion from generated content publication.'
     Assert-True ($source.Contains('release: checkpoint current changes for')) 'Working-tree changes must use a separate checkpoint commit from version metadata.'
     Assert-True ($source.Contains("'push', '--atomic'")) 'Release commit and tag must be pushed atomically.'
     Assert-True ($source.Contains("'--draft'")) 'GitHub release must begin as a draft.'
@@ -1731,6 +1863,56 @@ Invoke-Case 'Build.ps1 exposes safe local and production entry modes' {
     Assert-True (-not $source.Contains('AuthenticodeCertificateThumbprint')) 'Build.ps1 must not expose paid Authenticode certificate inputs.'
     Assert-True (-not $source.Contains('Invoke-FluxoraAuthenticodeSign')) 'Build.ps1 must not sign Fluxora executables through Authenticode.'
     Assert-True (-not $source.Contains('signtool')) 'Build.ps1 must not discover signtool.'
+}
+
+Invoke-Case 'Build.ps1 hands an interactive Production choice from Windows PowerShell to pwsh' {
+    $windowsPowerShell = Get-Command 'powershell.exe' -CommandType Application -ErrorAction SilentlyContinue
+    Assert-True ($null -ne $windowsPowerShell) 'The Windows release bootstrap test requires Windows PowerShell.'
+
+    $shimRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-pwsh-shim-' + [Guid]::NewGuid().ToString('N'))
+    $capturePath = Join-Path $shimRoot 'arguments.txt'
+    $pwshShimPath = Join-Path $shimRoot 'pwsh.cmd'
+    $previousPath = $env:PATH
+    $previousCapturePath = $env:FLUXORA_BUILD_REENTRY_CAPTURE
+    try {
+        New-Item -ItemType Directory -Path $shimRoot -Force | Out-Null
+        $env:PATH = $shimRoot
+        $missingPwshOutput = @(
+            '2' | & $windowsPowerShell.Source -NoLogo -NoProfile -File (Join-Path $projectRoot 'Build.ps1') 2>&1
+        )
+        Assert-True ($LASTEXITCODE -ne 0) 'A missing pwsh executable must fail the Windows PowerShell bootstrap.'
+        Assert-True (
+            (($missingPwshOutput | ForEach-Object { $_.ToString() }) -join "`n").Contains('PowerShell 7 (pwsh) was not found on PATH.')
+        ) 'A missing pwsh executable must produce an actionable error instead of an indexing failure.'
+
+        @'
+@echo off
+> "%FLUXORA_BUILD_REENTRY_CAPTURE%" echo %*
+exit /b 0
+'@ | Set-Content -LiteralPath $pwshShimPath -Encoding ascii
+        $env:FLUXORA_BUILD_REENTRY_CAPTURE = $capturePath
+        $env:PATH = "$shimRoot;$previousPath"
+
+        '2' | & $windowsPowerShell.Source -NoLogo -NoProfile -File (Join-Path $projectRoot 'Build.ps1')
+        Assert-Equal $LASTEXITCODE 0 'The Windows PowerShell bootstrap must return the successful pwsh exit code.'
+        Assert-True (Test-Path -LiteralPath $capturePath -PathType Leaf) 'Production choice 2 must invoke pwsh instead of failing in Windows PowerShell.'
+        $capturedArguments = Get-Content -LiteralPath $capturePath -Raw
+        Assert-True ($capturedArguments.Contains('-NoLogo -NoProfile -File')) 'The pwsh handoff must use a deterministic profile-free file invocation.'
+        Assert-True ($capturedArguments.Contains('-Mode Production')) 'The resolved interactive mode must be forwarded explicitly to avoid a second build-mode prompt.'
+        Assert-True ($capturedArguments.Contains('-Configuration Release -Runtime win-x64 -Target Release')) 'The effective release build contract must survive the pwsh handoff.'
+    }
+    finally {
+        $env:PATH = $previousPath
+        if ($null -eq $previousCapturePath) {
+            Remove-Item -LiteralPath 'Env:FLUXORA_BUILD_REENTRY_CAPTURE' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:FLUXORA_BUILD_REENTRY_CAPTURE = $previousCapturePath
+        }
+        if (Test-Path -LiteralPath $shimRoot) {
+            Remove-Item -LiteralPath $shimRoot -Recurse -Force
+        }
+    }
 }
 
 Invoke-Case 'Build.ps1 builds native Tauri Setup and a statically linked updater' {
