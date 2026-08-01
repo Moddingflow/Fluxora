@@ -11,7 +11,7 @@ default = []
 custom-protocol = ["tauri/custom-protocol"]
 native-ai-integration-fixture = []
 speech-vulkan = ["whisper-rs/vulkan"]
-installer-native = []
+installer-native = ["dep:flate2"]
 setup-production-assets = []
 
 [lib]
@@ -60,6 +60,7 @@ sha2 = "0.10"
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flate2 = { version = "1", optional = true }
 keyring = "4.1.2"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }

@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -50,8 +51,27 @@ namespace
         const std::filesystem::path& left,
         const std::filesystem::path& right)
     {
-        const std::wstring leftValue = std::filesystem::absolute(left).lexically_normal().wstring();
-        const std::wstring rightValue = std::filesystem::absolute(right).lexically_normal().wstring();
+        const auto comparisonValue = [](const std::filesystem::path& path) {
+            std::wstring value =
+                std::filesystem::absolute(path).lexically_normal().wstring();
+            constexpr std::wstring_view extendedUncPrefix = LR"(\\?\UNC\)";
+            constexpr std::wstring_view extendedPrefix = LR"(\\?\)";
+            if (value.starts_with(extendedUncPrefix))
+            {
+                value = LR"(\\)" + value.substr(extendedUncPrefix.size());
+            }
+            else if (value.starts_with(extendedPrefix))
+            {
+                value.erase(0, extendedPrefix.size());
+            }
+            while (!value.empty() && (value.back() == L'\\' || value.back() == L'/'))
+            {
+                value.pop_back();
+            }
+            return value;
+        };
+        const std::wstring leftValue = comparisonValue(left);
+        const std::wstring rightValue = comparisonValue(right);
         return CompareStringOrdinal(
             leftValue.c_str(),
             static_cast<int>(leftValue.size()),

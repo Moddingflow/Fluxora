@@ -624,7 +624,9 @@ function Test-IsPayloadPathExcluded {
 
     $normalized = $RelativePath.Replace('\', '/').Trim('/')
     return [string]::Equals($normalized, 'Downloads', [System.StringComparison]::OrdinalIgnoreCase) -or
-        $normalized.StartsWith('Downloads/', [System.StringComparison]::OrdinalIgnoreCase)
+        $normalized.StartsWith('Downloads/', [System.StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($normalized, 'logs', [System.StringComparison]::OrdinalIgnoreCase) -or
+        $normalized.StartsWith('logs/', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function New-FluxoraPayloadManifest {

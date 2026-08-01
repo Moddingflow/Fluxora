@@ -209,8 +209,26 @@ namespace
         const std::filesystem::path& left,
         const std::filesystem::path& right)
     {
-        const std::wstring leftValue = canonicalAbsolutePath(left, "path").wstring();
-        const std::wstring rightValue = canonicalAbsolutePath(right, "path").wstring();
+        const auto comparisonValue = [](const std::filesystem::path& path) {
+            std::wstring value = canonicalAbsolutePath(path, "path").wstring();
+            constexpr std::wstring_view extendedUncPrefix = LR"(\\?\UNC\)";
+            constexpr std::wstring_view extendedPrefix = LR"(\\?\)";
+            if (value.starts_with(extendedUncPrefix))
+            {
+                value = LR"(\\)" + value.substr(extendedUncPrefix.size());
+            }
+            else if (value.starts_with(extendedPrefix))
+            {
+                value.erase(0, extendedPrefix.size());
+            }
+            while (!value.empty() && (value.back() == L'\\' || value.back() == L'/'))
+            {
+                value.pop_back();
+            }
+            return value;
+        };
+        const std::wstring leftValue = comparisonValue(left);
+        const std::wstring rightValue = comparisonValue(right);
         return CompareStringOrdinal(
             leftValue.c_str(),
             static_cast<int>(leftValue.size()),
@@ -247,8 +265,22 @@ namespace
     void rejectReparseAncestors(const std::filesystem::path& input)
     {
         std::filesystem::path current = canonicalAbsolutePath(input, "update path");
+        std::array<wchar_t, MAX_PATH + 1> volumeRoot{};
+        if (!GetVolumePathNameW(
+                current.c_str(),
+                volumeRoot.data(),
+                static_cast<DWORD>(volumeRoot.size())))
+        {
+            throw std::invalid_argument("Update volume root could not be inspected.");
+        }
+        const std::filesystem::path root(volumeRoot.data());
         for (;;)
         {
+            const bool atVolumeRoot = pathEquals(current, root);
+            if (atVolumeRoot)
+            {
+                current = root;
+            }
             const DWORD attributes = GetFileAttributesW(current.c_str());
             if (attributes != INVALID_FILE_ATTRIBUTES)
             {
@@ -264,6 +296,11 @@ namespace
                 {
                     throw std::invalid_argument("Update path could not be inspected.");
                 }
+            }
+
+            if (atVolumeRoot)
+            {
+                break;
             }
 
             const std::filesystem::path parent = current.parent_path();

@@ -1,6 +1,9 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use chrono::{SecondsFormat, Utc};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::contracts::{
@@ -16,6 +19,111 @@ pub struct UpdaterRuntimeState {
     summary: UpdateRequestSummary,
     active: Mutex<bool>,
     renderer_ready: Mutex<bool>,
+}
+
+fn sanitize_log_detail(detail: &str) -> String {
+    let mut safe = detail
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+
+    for scheme in ["https://", "http://"] {
+        let mut offset = 0;
+        while let Some(relative) = safe[offset..].find(scheme) {
+            let begin = offset + relative;
+            let end = safe[begin..]
+                .find(|character: char| character.is_whitespace() || character == '"')
+                .map(|relative| begin + relative)
+                .unwrap_or(safe.len());
+            safe.replace_range(begin..end, "<redacted-url>");
+            offset = begin + "<redacted-url>".len();
+        }
+    }
+
+    for key in ["token=", "authorization=", "signature=", "nonce="] {
+        let mut offset = 0;
+        while let Some(relative) = safe[offset..].find(key) {
+            let value_begin = offset + relative + key.len();
+            let value_end = safe[value_begin..]
+                .find(|character: char| {
+                    character.is_whitespace() || character == ',' || character == '"'
+                })
+                .map(|relative| value_begin + relative)
+                .unwrap_or(safe.len());
+            safe.replace_range(value_begin..value_end, "<redacted>");
+            offset = value_begin + "<redacted>".len();
+        }
+    }
+
+    let mut offset = 0;
+    while offset < safe.len() {
+        let remainder = &safe[offset..];
+        let bytes = remainder.as_bytes();
+        let drive_path = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/');
+        let unc_path = bytes.len() >= 2 && bytes[0] == b'\\' && bytes[1] == b'\\';
+        if !drive_path && !unc_path {
+            offset += remainder.chars().next().map(char::len_utf8).unwrap_or(1);
+            continue;
+        }
+        let end = remainder
+            .find(|character: char| {
+                character.is_whitespace() || character == ',' || character == '"'
+            })
+            .map(|relative| offset + relative)
+            .unwrap_or(safe.len());
+        safe.replace_range(offset..end, "<redacted-path>");
+        offset += "<redacted-path>".len();
+    }
+
+    const MAX_DETAIL_BYTES: usize = 2_048;
+    if safe.len() > MAX_DETAIL_BYTES {
+        let mut end = MAX_DETAIL_BYTES;
+        while !safe.is_char_boundary(end) {
+            end -= 1;
+        }
+        safe.truncate(end);
+        safe.push_str("...");
+    }
+    safe
+}
+
+fn append_updater_failure_log(operation_id: &str, failure: &NativeFailure) {
+    let Some(app_data) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let log_directory = PathBuf::from(app_data).join("Fluxora").join("logs");
+    if fs::create_dir_all(&log_directory).is_err() {
+        return;
+    }
+    let path = log_directory.join(format!(
+        "fluxora-updater-shell-{}.log",
+        Utc::now().format("%Y%m%d")
+    ));
+    let Ok(mut output) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let detail = failure
+        .technical_detail
+        .as_deref()
+        .map(sanitize_log_detail)
+        .unwrap_or_else(|| "unavailable".to_string());
+    let _ = writeln!(
+        output,
+        "{} [ERROR] operationId={} errorCode={} detail={}",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        operation_id,
+        failure.code,
+        detail
+    );
 }
 
 fn updater_window(app: &AppHandle) -> Result<tauri::WebviewWindow, NativeFailure> {
@@ -132,14 +240,20 @@ async fn fluxora_updater_start_update(
     })
     .await;
     *state.active.lock().map_err(|_| updater_state_failure())? = false;
-    let result = joined.map_err(|error| {
-        NativeFailure::new(
+    let native_result = joined.map_err(|error| {
+        let failure = NativeFailure::new(
             "updater.nativeTaskFailed",
             "updater.error.workflowFailed",
             false,
         )
-        .with_detail(error.to_string())
-    })??;
+        .with_detail(error.to_string());
+        append_updater_failure_log(&operation_id, &failure);
+        failure
+    })?;
+    let result = native_result.map_err(|failure| {
+        append_updater_failure_log(&operation_id, &failure);
+        failure
+    })?;
     if result.operation_id != state.summary.operation_id
         || result.target_version != state.summary.target_version
     {
@@ -275,6 +389,22 @@ pub fn run_updater(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn updater_diagnostic_log_redacts_paths_urls_and_secret_like_values() {
+        let sanitized = super::sanitize_log_detail(
+            "failed at C:\\Users\\name\\package.flxupd from https://example.invalid/a token=secret nonce=abcdef",
+        );
+
+        assert!(!sanitized.contains("C:\\Users"));
+        assert!(!sanitized.contains("https://example.invalid"));
+        assert!(!sanitized.contains("secret"));
+        assert!(!sanitized.contains("abcdef"));
+        assert!(sanitized.contains("<redacted-path>"));
+        assert!(sanitized.contains("<redacted-url>"));
+        assert!(sanitized.contains("token=<redacted>"));
+        assert!(sanitized.contains("nonce=<redacted>"));
+    }
+
     #[test]
     fn updater_context_is_isolated_from_the_maximized_desktop_dev_window() {
         let context: tauri::Context<tauri::Wry> =

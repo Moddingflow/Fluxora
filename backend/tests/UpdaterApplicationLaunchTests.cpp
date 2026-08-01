@@ -7,6 +7,17 @@
 #include <chrono>
 #include <filesystem>
 
+namespace
+{
+    std::filesystem::path extendedPath(const std::filesystem::path& path)
+    {
+        const std::wstring absolute = std::filesystem::absolute(path).wstring();
+        return absolute.starts_with(LR"(\\?\)")
+            ? std::filesystem::path(absolute)
+            : std::filesystem::path(LR"(\\?\)" + absolute);
+    }
+}
+
 TEST(ApplicationLaunchServiceTests, UpdatedLaunchUsesOnlyOpaqueHealthHandoff)
 {
     const std::wstring commandLine =
@@ -65,6 +76,34 @@ TEST(ApplicationLaunchServiceTests, JobContainsAndTerminatesImmediatelySpawnedDe
     EXPECT_TRUE(fluxora::tests::processHasExited(
         childPid,
         std::chrono::seconds(5)));
+    EXPECT_TRUE(launched.hasExited());
+}
+
+TEST(ApplicationLaunchServiceTests, UpdatedLaunchAcceptsExtendedInstallNamespace)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path install = temporary.path() / L"extended-install";
+    std::filesystem::create_directories(install);
+    std::filesystem::copy_file(
+        fluxora::tests::currentTestExecutable(),
+        install / L"Fluxora.exe",
+        std::filesystem::copy_options::overwrite_existing);
+    const std::filesystem::path childPidPath = temporary.path() / L"extended-child.pid";
+    fluxora::tests::ScopedProbeEnvironment probe(L"spawn-descendant", childPidPath);
+    fluxora::installer::UpdateWorkflowRequest request;
+    request.operationId = "op_extended_launch_abcdef12";
+    request.handoffNonce = std::string(64, 'b');
+    request.installDirectory = extendedPath(install);
+    request.applicationExecutable = L"Fluxora.exe";
+
+    auto launched =
+        fluxora::installer::ApplicationLaunchService().launchUpdated(request);
+    ASSERT_TRUE(fluxora::tests::waitForFile(childPidPath, std::chrono::seconds(10)));
+    const std::uint32_t childPid = fluxora::tests::readProbeProcessId(childPidPath);
+
+    launched.terminateIfRunning();
+
+    EXPECT_TRUE(fluxora::tests::processHasExited(childPid, std::chrono::seconds(5)));
     EXPECT_TRUE(launched.hasExited());
 }
 

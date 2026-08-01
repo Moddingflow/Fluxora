@@ -20,15 +20,15 @@
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.toml",
-      "sha256": "693849725df533552bf05041bdd745d06b186de9c24afa02bb9d4e351c400b2b"
+      "sha256": "f412aaddeace454b0e140c4d2ec59c45e2d143262050b0be3ad23c8708605877"
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.lock",
-      "sha256": "398ed5e48c827f6a68471275136657b9992ba7b9024675d7db52726c0443b1bc"
+      "sha256": "ef663e158e56deb42887fe8556e750b1ca53b3d70c1b3dfa003c14740ed399ff"
     },
     {
       "path": "Build.ps1",
-      "sha256": "d8e312e364017b02c3717ae469617fd5b720e6cfb8fab52b2a10e7d6de1bb2a1"
+      "sha256": "ff3bd6cc7ef89389bd74adb9456bab505b1ff3f7d816d6787ee4cfc45dcf567c"
     },
     {
       "path": "backend/CMakeLists.txt",

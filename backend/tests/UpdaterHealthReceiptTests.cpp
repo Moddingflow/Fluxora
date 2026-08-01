@@ -145,6 +145,34 @@ TEST(HealthAcknowledgementServiceTests, AcceptsOnlyExactLiveProcessAcknowledgeme
     EXPECT_FALSE(std::filesystem::exists(service.acknowledgementPath(request)));
 }
 
+TEST(HealthAcknowledgementServiceTests, AcceptsExtendedInstallNamespaceForExactLiveProcess)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path install = temporary.path() / L"install";
+    const std::filesystem::path appData = temporary.path() / L"appdata";
+    const std::filesystem::path extendedInstall =
+        std::filesystem::path(L"\\\\?\\" + install.wstring());
+    const fluxora::installer::UpdateWorkflowRequest request = healthRequest(extendedInstall);
+    const FakeApplication application(
+        4242,
+        knownStartFileTime(),
+        install / L"Fluxora.exe");
+    fluxora::installer::HealthAcknowledgementService service(
+        appData,
+        std::chrono::milliseconds(1));
+    service.prepare(request);
+    writeFile(
+        service.acknowledgementPath(request),
+        "{\"schemaVersion\":1,"
+        "\"operationId\":\"op_health_abcdef12\","
+        "\"nonce\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+        "\"appVersion\":\"1.1.0\","
+        "\"pid\":4242,"
+        "\"processStartTimeUtc\":\"2026-07-31T08:12:13.1234567Z\"}");
+
+    EXPECT_NO_THROW(service.wait(request, application, std::chrono::seconds(1)));
+}
+
 TEST(HealthAcknowledgementServiceTests, RejectsWrongPidUnknownAndDuplicateFields)
 {
     fluxora::tests::TempDirectory temporary;

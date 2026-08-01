@@ -591,6 +591,54 @@ TEST(UpdateEngineTests, ExplicitRollbackRestoresRetainedBackupAndOldApplication)
     EXPECT_FALSE(hasTransactionSibling(install, L"backup-"));
 }
 
+TEST(UpdateEngineTests, RecoveryCompletesRollbackAfterRetiredDirectoryCleanupWasInterrupted)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path install = temp.path() / L"install";
+    const fluxora::installer::UpdateRequest request = writeSimpleDeltaFixture(temp.path(), install);
+    fluxora::installer::UpdateEngine engine{
+        [](std::span<const std::byte>, std::string_view) { return true; }};
+    (void)engine.apply(request);
+
+    std::filesystem::path backup;
+    const std::wstring backupPrefix =
+        L"." + install.filename().wstring() + L".fluxora-backup-";
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(install.parent_path()))
+    {
+        if (entry.path().filename().wstring().starts_with(backupPrefix))
+        {
+            backup = entry.path();
+            break;
+        }
+    }
+    ASSERT_FALSE(backup.empty());
+
+    std::wstring stagingName = backup.filename().wstring();
+    const std::size_t roleOffset = stagingName.find(L"backup-");
+    ASSERT_NE(std::wstring::npos, roleOffset);
+    stagingName.replace(roleOffset, std::wstring_view(L"backup-").size(), L"staging-");
+    const std::filesystem::path staging = install.parent_path() / stagingName;
+    std::filesystem::rename(install, staging);
+    std::filesystem::rename(backup, install);
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(staging))
+    {
+        const std::wstring name = entry.path().filename().wstring();
+        if (name.starts_with(L".fluxora-commit-") && name.ends_with(L".pending"))
+        {
+            ASSERT_TRUE(std::filesystem::remove(entry.path()));
+        }
+    }
+
+    fluxora::installer::detail::recoverApplicationDirectory(install);
+
+    EXPECT_EQ("old executable", fluxora::tests::readTextFile(install / L"Fluxora.exe"));
+    EXPECT_FALSE(hasTransactionSibling(install, L"transaction"));
+    EXPECT_FALSE(hasTransactionSibling(install, L"backup-"));
+    EXPECT_FALSE(hasTransactionSibling(install, L"staging-"));
+}
+
 TEST(UpdateEngineTests, CrashRecoveryPrefersRollbackWithoutHealthConfirmation)
 {
     fluxora::tests::TempDirectory temp;

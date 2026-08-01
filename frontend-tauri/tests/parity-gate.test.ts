@@ -224,7 +224,7 @@ describe('Tauri parity gate', () => {
     expect(vfsService).not.toContain('Fluxora was built without VFS support for this platform');
   });
 
-  it('preserves the global Downloads catalog across clean builds and excludes it from payloads', () => {
+  it('preserves user-owned output and excludes protected directories from installer payloads', () => {
     const buildScript = readText('Build.ps1');
 
     expect(buildScript).toContain("$OutputDownloadsDir = Join-Path $OutputDir 'Downloads'");
@@ -232,7 +232,20 @@ describe('Tauri parity gate', () => {
     expect(buildScript).toContain('Move-Item -LiteralPath $PreservedDownloadsStagingDir -Destination $OutputDownloadsDir');
     expect(buildScript).toContain('Test-IsPayloadPathExcluded');
     expect(buildScript).toContain("$normalized.StartsWith('Downloads/'");
+    expect(buildScript).toContain("$normalized.StartsWith('logs/'");
     expect(buildScript).toContain('Refusing to preserve output Downloads because it is a reparse point');
+  });
+
+  it('finalizes Setup commits through general transaction recovery instead of update health confirmation', () => {
+    const installerApi = readText('backend', 'src', 'Installer', 'FluxoraInstallerApi.cpp');
+    const setupStart = installerApi.indexOf('int fluxora_installer_install_setup_payload_stream(');
+    const setupEnd = installerApi.indexOf('int fluxora_installer_apply_update(', setupStart);
+    const setupContract = installerApi.slice(setupStart, setupEnd);
+
+    expect(setupContract).toContain(
+      '(void)validateInstallDirectory(validation.normalizedInstallDirectory);'
+    );
+    expect(setupContract).not.toContain('finalizePendingApplicationUpdate(');
   });
 
   it('keeps MO2 transfer handoff in the Rust shell and closes Settings on launch', () => {

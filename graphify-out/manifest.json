@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "Build.ps1": {
-    "mtime": 1785560109.0206287,
-    "ast_hash": "ae1a5a0a8720618798b85b230c19bcdc",
+    "mtime": 1785585501.7563465,
+    "ast_hash": "2494bee6365442a4228fc55cf69e443c",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Core.hpp": {
@@ -285,8 +285,8 @@
     "semantic_hash": ""
   },
   "backend/src/Installer/FluxoraInstallerApi.cpp": {
-    "mtime": 1785487773.3159494,
-    "ast_hash": "c4dd13845ff0f32b411afcbe2a009f75",
+    "mtime": 1785591208.5159705,
+    "ast_hash": "3ce991bf021a93796ccc24f9e1ed78a3",
     "semantic_hash": ""
   },
   "backend/src/Services/AppSettingsService.cpp": {
@@ -895,8 +895,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/package.json": {
-    "mtime": 1785577920.2107248,
-    "ast_hash": "b03e7fa8d25a293ad6ff7cccc6364b10",
+    "mtime": 1785593341.5309825,
+    "ast_hash": "aa0deb7f4f2ec93bb4ef921d6eb07ebe",
     "semantic_hash": ""
   },
   "frontend-tauri/playwright.config.ts": {
@@ -925,8 +925,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1785577920.2107248,
-    "ast_hash": "89467c08ba71c0d40bca5d7566331142",
+    "mtime": 1785593341.5254734,
+    "ast_hash": "a912567396ca2567a3320a0e5d7ef910",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
@@ -1060,8 +1060,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/parity-gate.test.ts": {
-    "mtime": 1785169067.6030889,
-    "ast_hash": "f3e210d87581064595ea0aadc8275364",
+    "mtime": 1785586824.6089299,
+    "ast_hash": "163cf033b12008b81fe577cd44ec7aaa",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/plugin-workspace-state.test.ts": {
@@ -6030,8 +6030,8 @@
     "semantic_hash": ""
   },
   "backend/tests/UpdaterEngineTests.cpp": {
-    "mtime": 1785486872.872808,
-    "ast_hash": "2db255509a5f227971a076a9c2131605",
+    "mtime": 1785591166.1997788,
+    "ast_hash": "f39c1ad0b153b5b519aa529c72202fac",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/update_manifest.rs": {
@@ -6200,13 +6200,13 @@
     "semantic_hash": ""
   },
   "backend/src/Installer/ApplicationLaunchService.cpp": {
-    "mtime": 1785485312.8818893,
-    "ast_hash": "4a441b2007ab2b5e79c3730c464bd6e7",
+    "mtime": 1785589789.8362832,
+    "ast_hash": "b24fe16bb3ef706b92ecc7eb3b0a73c3",
     "semantic_hash": ""
   },
   "backend/src/Installer/HealthAcknowledgementService.cpp": {
-    "mtime": 1785485417.8188913,
-    "ast_hash": "ee89fe7553d5f5399a92ca99445006a7",
+    "mtime": 1785593084.4370158,
+    "ast_hash": "5d2d67b84ca2368b8c202ea4cfa3edf6",
     "semantic_hash": ""
   },
   "backend/src/Installer/InstallerLogService.cpp": {
@@ -6240,8 +6240,8 @@
     "semantic_hash": ""
   },
   "backend/src/Installer/UpdateWorkflowRequest.cpp": {
-    "mtime": 1785486668.1145158,
-    "ast_hash": "691600e91ecc9b0782ff53028927f076",
+    "mtime": 1785588351.9704194,
+    "ast_hash": "1de7421d60e022587ae4d67850b338c7",
     "semantic_hash": ""
   },
   "backend/src/Installer/UpdateWorkflowService.cpp": {
@@ -6270,13 +6270,13 @@
     "semantic_hash": ""
   },
   "backend/tests/UpdaterApplicationLaunchTests.cpp": {
-    "mtime": 1785487060.716724,
-    "ast_hash": "58ecfc51af1f35b82b96ddba1932da8a",
+    "mtime": 1785589764.8333118,
+    "ast_hash": "330a78f404af524625d3ccd77052ddda",
     "semantic_hash": ""
   },
   "backend/tests/UpdaterHealthReceiptTests.cpp": {
-    "mtime": 1785485438.0154247,
-    "ast_hash": "0b270b354045bc14378a0484c9ffc80d",
+    "mtime": 1785593055.9375944,
+    "ast_hash": "ba6e525bfa5ed3d85e340de205b12758",
     "semantic_hash": ""
   },
   "backend/tests/UpdaterProcessSafetyTests.cpp": {
@@ -6290,8 +6290,8 @@
     "semantic_hash": ""
   },
   "backend/tests/UpdaterWorkflowRequestTests.cpp": {
-    "mtime": 1785486909.8115926,
-    "ast_hash": "74ec147722aef45e6e0c2e44135781ea",
+    "mtime": 1785587626.3772655,
+    "ast_hash": "ec0a08cefacf33d3a45e9b31addb9219",
     "semantic_hash": ""
   },
   "backend/tests/UpdaterWorkflowServiceTests.cpp": {
@@ -6320,7 +6320,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/bin/fluxora_updater.rs": {
-    "mtime": 1785507874.2910323,
+    "mtime": 1785588368.2269275,
     "ast_hash": "4849918fd74a81d4381a0817a31d5480",
     "semantic_hash": ""
   },
@@ -6335,18 +6335,18 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/installer_shell/native.rs": {
-    "mtime": 1785487896.1217551,
-    "ast_hash": "da532f01e9b0eb93765d07e3f03f7008",
+    "mtime": 1785584704.9398942,
+    "ast_hash": "48412f55509734855ec9e20548078193",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/installer_shell/setup_runtime.rs": {
-    "mtime": 1785509105.5884128,
+    "mtime": 1785585501.7573462,
     "ast_hash": "793ac6d5e053e8c4a62de79308e9e792",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/installer_shell/updater_runtime.rs": {
-    "mtime": 1785509090.0014038,
-    "ast_hash": "2a8e9ccc9b20524175ddb82f6487ae50",
+    "mtime": 1785592865.8581622,
+    "ast_hash": "dc169048458faf3289cd50a29ac267b8",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/installer_shell/webview2_bootstrap.rs": {
@@ -6465,8 +6465,8 @@
     "semantic_hash": ""
   },
   "legal/desktop/dependency-inventory.json": {
-    "mtime": 1785577920.2117252,
-    "ast_hash": "793288c638388d225b8a0389f0994f97",
+    "mtime": 1785593356.5351384,
+    "ast_hash": "7e021686a6fe6761e591afbf32de34e9",
     "semantic_hash": ""
   },
   "legal/desktop/license-policy.json": {

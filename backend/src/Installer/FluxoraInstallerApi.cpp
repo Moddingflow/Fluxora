@@ -1623,6 +1623,66 @@ namespace
 #endif
     }
 
+    void completeRolledBackApplicationUpdateCleanup(
+        const InstallerTransactionMarker& marker)
+    {
+        std::string deferredCleanup;
+        const auto rememberDeferredCleanup = [&](const std::exception& error) {
+            if (!deferredCleanup.empty())
+            {
+                deferredCleanup += " ";
+            }
+            deferredCleanup += error.what();
+        };
+
+        try
+        {
+            removeOwnedTransactionDirectory(
+                marker.paths.stagingDirectory,
+                "unhealthy update directory");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            rememberDeferredCleanup(cleanupError);
+        }
+
+        try
+        {
+            removeDurableTransactionFile(
+                installTransactionConfirmationPath(marker.paths),
+                "health confirmation");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            rememberDeferredCleanup(cleanupError);
+        }
+
+        try
+        {
+            removeDurableTransactionFile(
+                marker.paths.markerPath,
+                "rolled-back update marker");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            rememberDeferredCleanup(cleanupError);
+            writeLog(
+                "WARNING",
+                "Update rollback restored the previous version, but transaction cleanup "
+                "could not be completed. " + deferredCleanup);
+            throw;
+        }
+
+        if (!deferredCleanup.empty())
+        {
+            writeLog(
+                "WARNING",
+                "Update rollback restored the previous version; retired-file cleanup was "
+                "deferred without retaining a blocking transaction marker. " +
+                    deferredCleanup);
+        }
+    }
+
     bool directoryHasTransactionSentinel(
         const std::filesystem::path& directory,
         const TransactionId& transactionId)
@@ -1845,23 +1905,7 @@ namespace
             throw;
         }
 
-        try
-        {
-            removeOwnedTransactionDirectory(
-                marker.paths.stagingDirectory,
-                "unhealthy update directory");
-            removeDurableTransactionFile(
-                installTransactionConfirmationPath(marker.paths),
-                "health confirmation");
-            removeDurableTransactionFile(marker.paths.markerPath, "rolled-back update marker");
-        }
-        catch (const std::exception& cleanupError)
-        {
-            writeLog(
-                "WARNING",
-                std::string("Update rollback restored the previous version; cleanup was deferred. ") +
-                    cleanupError.what());
-        }
+        completeRolledBackApplicationUpdateCleanup(marker);
         writeLog("INFO", "Unhealthy Fluxora update rolled back to the retained backup.");
     }
 
@@ -1963,6 +2007,17 @@ namespace
             removeOwnedTransactionDirectory(marker.paths.stagingDirectory, "staging directory");
             removeDurableTransactionFile(marker.paths.markerPath, "marker");
             writeLog("INFO", "Cleaned an abandoned staging directory before the live-directory swap.");
+            return;
+        }
+
+        if (marker.requiresHealthConfirmation && liveExists && marker.hadExistingInstall &&
+            stagingExists && !stagingHasSentinel && !backupExists &&
+            isVerifiedInstalledDirectory(installDirectory))
+        {
+            completeRolledBackApplicationUpdateCleanup(marker);
+            writeLog(
+                "INFO",
+                "Recovered cleanup after the previous installation had already been restored.");
             return;
         }
 
@@ -4118,8 +4173,10 @@ extern "C"
             {
                 throw SetupWindowsIntegrationError(exception.what());
             }
-            fluxora::installer::detail::finalizePendingApplicationUpdate(
-                validation.normalizedInstallDirectory);
+            // Setup commits are finalized immediately after Windows integration.
+            // The general recovery path handles both first installs and repairs;
+            // update health confirmation is reserved for the external updater.
+            (void)validateInstallDirectory(validation.normalizedInstallDirectory);
 
             emitProgress(
                 progressCallback,

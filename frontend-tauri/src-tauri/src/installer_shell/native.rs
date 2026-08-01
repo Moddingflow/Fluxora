@@ -1,8 +1,13 @@
 use std::ffi::c_void;
+#[cfg(feature = "installer-native")]
+use std::io::{Read, Result as IoResult};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc,
 };
+
+#[cfg(feature = "installer-native")]
+use flate2::read::GzDecoder;
 
 use crate::contracts::{
     normalize_setup_progress, normalize_updater_progress, validate_schema, InstallOptions,
@@ -27,6 +32,35 @@ fn bounded_setup_read_length(remaining: usize, requested: u64) -> usize {
 fn cancelled_install_failure(result: i32) -> Option<NativeFailure> {
     (result == INSTALLER_RESULT_CANCELLED)
         .then(|| NativeFailure::new("setup.cancelled", "setup.error.cancelled", true))
+}
+
+#[cfg(feature = "installer-native")]
+struct SetupPayloadReader<'a> {
+    decoder: GzDecoder<&'a [u8]>,
+}
+
+#[cfg(feature = "installer-native")]
+impl<'a> SetupPayloadReader<'a> {
+    fn new(payload: &'a [u8]) -> Result<Self, NativeFailure> {
+        if !payload.starts_with(&[0x1f, 0x8b]) {
+            return Err(NativeFailure::new(
+                "setup.invalidPayloadEncoding",
+                "setup.error.installFailed",
+                false,
+            )
+            .with_detail("Embedded setup payload is not a gzip stream."));
+        }
+        Ok(Self {
+            decoder: GzDecoder::new(payload),
+        })
+    }
+}
+
+#[cfg(feature = "installer-native")]
+impl Read for SetupPayloadReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> IoResult<usize> {
+        self.decoder.read(buffer)
+    }
 }
 
 #[derive(Default)]
@@ -322,8 +356,7 @@ impl NativeInstaller {
         #[cfg(all(feature = "installer-native", windows))]
         {
             struct InstallContext {
-                payload: &'static [u8],
-                offset: usize,
+                payload: SetupPayloadReader<'static>,
                 operation_id: String,
                 cancellation: Arc<InstallCancellation>,
                 on_progress: Box<dyn Fn(InstallProgress) + Send>,
@@ -339,20 +372,14 @@ impl NativeInstaller {
                         return 0_i64;
                     }
                     let context = unsafe { &mut *(user_data as *mut InstallContext) };
-                    let remaining = context.payload.len().saturating_sub(context.offset);
-                    let length = bounded_setup_read_length(remaining, byte_count);
+                    let length = bounded_setup_read_length(usize::MAX, byte_count);
                     if length == 0 {
                         return 0;
                     }
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            context.payload.as_ptr().add(context.offset),
-                            destination.cast::<u8>(),
-                            length,
-                        );
-                    }
-                    context.offset += length;
-                    length as i64
+                    let destination = unsafe {
+                        std::slice::from_raw_parts_mut(destination.cast::<u8>(), length)
+                    };
+                    context.payload.read(destination).map(|read| read as i64).unwrap_or(-1)
                 }));
                 run.unwrap_or(-1)
             }
@@ -404,8 +431,7 @@ impl NativeInstaller {
             let operation_id = to_wide(&options.operation_id);
             let install_directory = to_wide(&options.install_directory);
             let mut context = InstallContext {
-                payload,
-                offset: 0,
+                payload: SetupPayloadReader::new(payload)?,
                 operation_id: options.operation_id.clone(),
                 cancellation: cancellation.clone(),
                 on_progress: Box::new(on_progress),
@@ -729,6 +755,24 @@ impl NativeInstaller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "installer-native")]
+    #[test]
+    fn setup_payload_reader_expands_gzip_before_the_native_parser() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::{Read, Write};
+
+        let package = b"FLXPKG1\0\x02\0\0\0";
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(package).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let mut reader = SetupPayloadReader::new(&compressed).unwrap();
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+
+        assert_eq!(decoded, package);
+    }
 
     #[cfg(all(feature = "installer-native", windows))]
     #[test]

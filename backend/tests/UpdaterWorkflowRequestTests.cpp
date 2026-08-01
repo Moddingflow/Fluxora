@@ -96,6 +96,14 @@ namespace
             }
             return result;
         }
+
+        static std::filesystem::path extended(const std::filesystem::path& path)
+        {
+            const std::wstring absolute = std::filesystem::absolute(path).wstring();
+            return absolute.starts_with(LR"(\\?\)")
+                ? std::filesystem::path(absolute)
+                : std::filesystem::path(LR"(\\?\)" + absolute);
+        }
     };
 }
 
@@ -117,6 +125,23 @@ TEST(UpdateWorkflowRequestLoaderTests, AcceptsCompleteStrictlyScopedRequest)
     EXPECT_NE(std::wstring::npos, summary.find(L"\"targetVersion\":\"1.1.0\""));
     EXPECT_EQ(std::wstring::npos, summary.find(fixture.runtime.wstring()));
     EXPECT_EQ(std::wstring::npos, summary.find(L"bbbbbbbb"));
+}
+
+TEST(UpdateWorkflowRequestLoaderTests, AcceptsExtendedLengthWindowsPaths)
+{
+    RequestFixture fixture;
+    fixture.install = RequestFixture::extended(fixture.install);
+    fixture.runtime = RequestFixture::extended(fixture.runtime);
+    fixture.updater = fixture.runtime / L"FluxoraUpdater.exe";
+    fixture.request = fixture.runtime / L"request.json";
+    fixture.writeRequest();
+
+    const fluxora::installer::UpdateWorkflowRequest request =
+        fluxora::installer::UpdateWorkflowRequestLoader::loadAndValidate(
+            fixture.request,
+            fixture.updater);
+
+    EXPECT_EQ("1.1.0", request.targetVersion);
 }
 
 TEST(UpdateWorkflowRequestLoaderTests, RejectsUnknownAndDuplicateFields)
