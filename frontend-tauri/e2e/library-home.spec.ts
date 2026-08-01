@@ -13091,6 +13091,13 @@ test('cancels an in-progress app update from the keyboard before updater commit'
   await page.goto(`${baseUrl}/?testUpdate=available`);
   const updateButton = page.locator('[data-update-control]');
   await updateButton.click();
+  await expect
+    .poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+        (call) => call.method === 'updates.downloadAndInstall'
+      ).length
+    )))
+    .toBe(1);
   await page.evaluate(() => (window as any).__emitFluxoraUpdateStatus({
     state: 'downloading',
     downloadedBytes: 10,
