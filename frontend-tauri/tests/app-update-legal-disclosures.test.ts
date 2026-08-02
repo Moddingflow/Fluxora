@@ -18,7 +18,12 @@ describe('automatic application update legal disclosure parity', () => {
       'en',
       [
         'github releases',
+        'persistent supabase websocket',
+        'public release metadata',
         'public ip address',
+        'tls/websocket protocol metadata',
+        'no telemetry, account, project, mod, archive, or ai data',
+        'github startup, focus, and 15-minute polling remains the fallback',
         'etag',
         'last-modified',
         'two further automatic background attempts',
@@ -32,7 +37,12 @@ describe('automatic application update legal disclosure parity', () => {
       'de',
       [
         'github releases',
+        'dauerhafte supabase-websocket-verbindung',
+        'öffentlichen release-metadaten',
         'öffentliche ip-adresse',
+        'tls-/websocket-protokollmetadaten',
+        'keine telemetrie-, konto-, projekt-, mod-, archiv- oder ai-daten',
+        'github-abfragen beim start, fokus und im 15-minuten-intervall bleiben der fallback',
         'etag',
         'last-modified',
         'zwei weitere automatische hintergrundversuche',
@@ -46,7 +56,12 @@ describe('automatic application update legal disclosure parity', () => {
       'ru',
       [
         'github releases',
+        'постоянное websocket-соединение с supabase',
+        'публичные метаданные релиза',
         'публичный ip-адрес',
+        'метаданные протоколов tls/websocket',
+        'не содержит telemetry, данных аккаунта, проекта, мода, архива или ai',
+        'github polling при запуске, возврате фокуса и каждые 15 минут остаётся fallback',
         'etag',
         'last-modified',
         'двух дополнительных автоматических фоновых попыток',
@@ -110,4 +125,21 @@ describe('automatic application update legal disclosure parity', () => {
       }
     }
   );
+
+  it.each([
+    ['en', 'request a check in settings', 'manual settings action'],
+    ['de', 'in den einstellungen', 'manuelle aktion in den einstellungen'],
+    ['ru', 'в настройках', 'вручную из настроек']
+  ] as const)('%s documents no longer advertise a manual Settings check', (
+    locale,
+    privacyManualText,
+    secondaryPrivacyManualText
+  ) => {
+    const privacy = readLegal(locale, 'privacy');
+    const terms = readLegal(locale, 'terms');
+
+    expect(privacy).not.toContain(privacyManualText);
+    expect(privacy).not.toContain(secondaryPrivacyManualText);
+    expect(terms).not.toContain(privacyManualText);
+  });
 });

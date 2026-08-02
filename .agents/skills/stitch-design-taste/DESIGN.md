@@ -144,6 +144,7 @@ Never default to:
 ### Buttons and actions
 
 - Use `Button` and `IconButton` before creating feature-specific controls.
+- Application-update discovery has no Settings row or manual check button. Only a native-verified available update may reveal the existing compact titlebar update action; background signal, reconnect, checking, current, and automatic-error states remain visually silent.
 - Primary buttons use the accent only for the main safe action in the current context.
 - Secondary and ghost actions remain neutral. Destructive actions must be explicit and cannot borrow the premium accent.
 - Icon-only actions require an accessible name and a discoverable tooltip where the meaning is not universal.

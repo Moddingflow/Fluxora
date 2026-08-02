@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   acknowledgeRendererReady,
-  appUpdateSettingsView,
   appUpdateToolbarView,
   createAppUpdateCoordinator,
   rendererReadyWorstCaseBudgetMs
@@ -87,30 +86,6 @@ describe('app update coordinator', () => {
         activate
       )
     ).toEqual({ state: 'hidden' });
-  });
-
-  it('keeps manual update checking visible in settings across success and failure', () => {
-    const check = vi.fn();
-
-    expect(appUpdateSettingsView(status('checking'), check)).toEqual({
-      state: 'checking',
-      currentVersion: '2.3.0',
-      onCheck: check
-    });
-    expect(appUpdateSettingsView(status('upToDate'), check)).toEqual({
-      state: 'upToDate',
-      currentVersion: '2.3.0',
-      onCheck: check
-    });
-    expect(appUpdateSettingsView({
-      ...status('error'),
-      error: { code: 'manifest-http-failed', message: 'temporary\n404', retryable: true }
-    }, check)).toEqual({
-      state: 'error',
-      currentVersion: '2.3.0',
-      errorMessage: 'temporary 404',
-      onCheck: check
-    });
   });
 
   it('projects available and in-progress snapshots into one stable toolbar action', () => {
@@ -268,11 +243,12 @@ describe('app update coordinator', () => {
     });
     await coordinator.start();
 
-    await coordinator.check(true);
+    await expect(coordinator.check(true)).resolves.toEqual(available);
 
     expect(api.check).toHaveBeenCalledOnce();
     expect(api.check).toHaveBeenCalledWith({ operationId: 'op_app_update_manual_check' });
     expect(onStatus).toHaveBeenLastCalledWith(available, true);
+    expect(coordinator.getStatus()).toEqual(available);
   });
 
   it('deduplicates overlapping automatic checks', async () => {

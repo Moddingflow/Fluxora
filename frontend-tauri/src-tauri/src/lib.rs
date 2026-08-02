@@ -3784,7 +3784,7 @@ fn fluxora_security_state(allowed_channels: Vec<String>) -> Value {
         "sandbox": true,
         "remoteModule": false,
         "allowedIpcChannels": allowed_channels,
-        "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self'; connect-src 'self' https://tpciohumwahlctpeuduv.supabase.co wss://tpciohumwahlctpeuduv.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'"
     })
 }
 

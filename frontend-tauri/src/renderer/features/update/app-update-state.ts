@@ -33,11 +33,3 @@ export type AppUpdateToolbarViewState =
       errorMessage: string;
       retryable: false;
     };
-
-export interface AppUpdateSettingsViewState {
-  state: 'idle' | 'checking' | 'upToDate' | 'available' | 'busy' | 'error';
-  currentVersion: string;
-  availableVersion?: string;
-  errorMessage?: string;
-  onCheck: () => void | Promise<void>;
-}

@@ -1619,6 +1619,107 @@ Invoke-Case 'release preconditions fail closed' {
         -ExistingRelease $false
 }
 
+Invoke-Case 'post-checkpoint drift allows only tracked Graphify modifications' {
+    $allowed = @(Assert-FluxoraPostCheckpointStatus -StatusLines @(
+        ' M graphify-out/.graphify_labels.json',
+        ' M graphify-out/GRAPH_REPORT.md',
+        ' M graphify-out/graph.json'
+    ))
+    Assert-Equal $allowed.Count 3 'All tracked Graphify drift paths must be returned for preservation.'
+    Assert-True ($allowed -contains 'graphify-out/graph.json') 'The graph file must remain explicitly preserved.'
+
+    foreach ($blockedStatus in @(
+        'M  graphify-out/graph.json',
+        '?? graphify-out/new.json',
+        ' D graphify-out/graph.json',
+        ' M frontend-tauri/src/renderer/App.tsx',
+        '?? .env.production',
+        ' M secrets/release.key'
+    )) {
+        Assert-Throws {
+            Assert-FluxoraPostCheckpointStatus -StatusLines @($blockedStatus)
+        } '*post-checkpoint drift*'
+    }
+}
+
+Invoke-Case 'release signal public configuration fails before long production work' {
+    Assert-FluxoraReleaseSignalPublicConfiguration `
+        -SupabaseUrl 'https://tpciohumwahlctpeuduv.supabase.co' `
+        -PublishableKey 'sb_publishable_fixture'
+
+    Assert-Throws {
+        Assert-FluxoraReleaseSignalPublicConfiguration `
+            -SupabaseUrl '' `
+            -PublishableKey 'sb_publishable_fixture'
+    } '*configuration is incomplete*'
+    Assert-Throws {
+        Assert-FluxoraReleaseSignalPublicConfiguration `
+            -SupabaseUrl 'https://attacker.supabase.co' `
+            -PublishableKey 'do-not-print-this-key'
+    } '*project URL is invalid*'
+    try {
+        Assert-FluxoraReleaseSignalPublicConfiguration `
+            -SupabaseUrl 'https://attacker.supabase.co' `
+            -PublishableKey 'do-not-print-this-key'
+        throw 'Expected invalid public configuration to fail.'
+    }
+    catch {
+        Assert-True (-not $_.Exception.Message.Contains('do-not-print-this-key')) 'Configuration failures must never print the publishable key.'
+    }
+}
+
+Invoke-Case 'published release postflight waits for latest signed manifest and public announcement' {
+    $script:postflightClock = [DateTimeOffset]::Parse('2026-08-02T12:00:00Z')
+    $script:manifestAttempts = 0
+    $script:announcementAttempts = 0
+    $result = Wait-FluxoraReleasePublicationPostflight `
+        -ExpectedVersion '1.2.3' `
+        -TimeoutSeconds 30 `
+        -PollIntervalSeconds 5 `
+        -ReadLatestSignedManifestVersion {
+            $script:manifestAttempts++
+            if ($script:manifestAttempts -eq 1) { return '1.2.2' }
+            return '1.2.3'
+        } `
+        -ReadPublicAnnouncement {
+            $script:announcementAttempts++
+            if ($script:announcementAttempts -eq 1) { return $null }
+            return [pscustomobject]@{
+                github_release_id = 123456789
+                channel = 'stable'
+                version = '1.2.3'
+                tag_name = 'v1.2.3'
+                published_at = '2026-08-02T12:00:00Z'
+            }
+        } `
+        -Now { $script:postflightClock } `
+        -Sleep {
+            param([int] $Milliseconds)
+            $script:postflightClock = $script:postflightClock.AddMilliseconds($Milliseconds)
+        }
+
+    Assert-Equal ([string]$result.version) '1.2.3' 'Postflight must return only the matching stable announcement.'
+    Assert-Equal $script:manifestAttempts 2 'Latest alias must be polled until it serves the published signed version.'
+    Assert-Equal $script:announcementAttempts 2 'Public metadata must be polled after the latest alias is confirmed.'
+}
+
+Invoke-Case 'published release postflight fails closed when announcement stays unconfirmed' {
+    $script:postflightTimeoutClock = [DateTimeOffset]::Parse('2026-08-02T12:00:00Z')
+    Assert-Throws {
+        Wait-FluxoraReleasePublicationPostflight `
+            -ExpectedVersion '1.2.3' `
+            -TimeoutSeconds 10 `
+            -PollIntervalSeconds 5 `
+            -ReadLatestSignedManifestVersion { '1.2.3' } `
+            -ReadPublicAnnouncement { $null } `
+            -Now { $script:postflightTimeoutClock } `
+            -Sleep {
+                param([int] $Milliseconds)
+                $script:postflightTimeoutClock = $script:postflightTimeoutClock.AddMilliseconds($Milliseconds)
+            }
+    } '*announcement unconfirmed*'
+}
+
 Invoke-Case 'controlled release checkpoint rejects likely secrets before commit' {
     Assert-FluxoraReleaseStagedPaths -Paths @(
         'Build.ps1',
@@ -1975,6 +2076,11 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True (-not $source.Contains("'dotnet'")) 'Production release must not depend on dotnet after the native migration.'
     Assert-True (-not $source.Contains('Fluxora.Updater.Tests')) 'Production release must not route validation through removed C# updater tests.'
     Assert-True ($source.Contains("'--draft=false'")) 'Only the verified draft may be published.'
+    Assert-True ($source.Contains('Assert-FluxoraPostCheckpointStatus')) 'Post-checkpoint Graphify drift must use the narrow tracked-file allowlist.'
+    Assert-True ($source.Contains('Wait-FluxoraReleasePublicationPostflight')) 'A published release must wait for latest-alias and public announcement confirmation.'
+    Assert-True ($source.Contains('$releasePublished = $false')) 'Publisher recovery must distinguish publication from pre-publication failure.'
+    Assert-True ($source.Contains('published, announcement unconfirmed')) 'Post-publication failure must report the irreversible published state precisely.'
+    Assert-True ($source.Contains('Do not retry or reuse this SemVer')) 'Post-publication recovery must forbid same-SemVer retry guidance.'
     Assert-True (-not $source.Contains('--clobber')) 'Production release must never overwrite an existing asset.'
     Assert-True (-not $source.Contains('--force')) 'Production release must never force-push or force-rewrite a release.'
 

@@ -138,6 +138,28 @@ https://github.com/Moddingflow/Fluxora/releases/latest/download/fluxora-update-m
 https://github.com/Moddingflow/Fluxora/releases/latest/download/fluxora-update-manifest.sig
 ```
 
+Realtime is a latency hint, not a second update authority. A signed GitHub
+`release.published` webhook for the exact `Moddingflow/Fluxora` repository is
+accepted by the Website Node route
+`POST /api/webhooks/github/fluxora-release/`. The route reads a bounded raw
+body, verifies `X-Hub-Signature-256` with HMAC-SHA256 and constant-time byte
+comparison using the server-only
+`FLUXORA_GITHUB_RELEASE_WEBHOOK_SECRET`, accepts a signed `ping` without a
+write, and rejects drafts, prereleases, non-`published` actions, non-strict
+`vMAJOR.MINOR.PATCH` tags, and releases missing the signed manifest assets. It
+upserts by GitHub release id through a service-role client and never logs the
+body, signature, secret, key, or sender payload.
+
+Migration `20260802170000_fluxora_desktop_release_signals.sql` creates the
+durable `public.fluxora_desktop_releases` stable-only metadata table. `anon` and
+`authenticated` receive RLS-constrained `SELECT` only; browser DML and RPC
+paths do not exist, while service role owns the webhook upsert. The migration
+adds the table to `supabase_realtime` and aborts if publication membership
+cannot be proven. Desktop clients subscribe before snapshot, snapshot after
+every reconnect, and still authenticate the fixed GitHub manifest before any
+toolbar state changes. Startup/focus/15-minute GitHub polling remains the
+fallback.
+
 The manifest must use the strict v1 schema defined in
 `docs/tauri-migration/architecture.md`. It is signed over its exact UTF-8 bytes
 with ECDSA P-256/SHA-256, and the detached `.sig` is Base64 of the 64-byte
@@ -252,6 +274,9 @@ Production mode is fail-closed and non-forceful:
    private OS lock excludes concurrent publishers. Before showing this menu, a
    stale version-recovery journal from an interrupted process is validated
    against the unchanged Git HEAD and used to restore the exact original bytes.
+   Production also requires the exact public Supabase URL and a non-empty
+   publishable key before package-manager bootstrap, remote checks, checkpoint
+   mutation, or the long build. Values are never printed.
 2. Verify the authenticated GitHub repository, default release branch, that the
    branch is not behind upstream, and absence of the version tag/release. If the
    worktree is dirty or local commits are unpublished, show the exact `git add
@@ -259,9 +284,13 @@ Production mode is fail-closed and non-forceful:
    `-PublishCurrentChanges`), reject likely secret/key paths, and create a
    separate checkpoint commit. Generated `node_modules`, build, target, test-
    result and output trees are rejected as well. Existing local commits are allowed and are
-   included in the later atomic push. The worktree must then be clean. Open the
-   update-manifest signing key only after repository-controlled build and
-   integrity gates.
+   included in the later atomic push. After that checkpoint, hooks may leave
+   only unstaged modifications to already tracked files below `graphify-out/`.
+   Those files are preserved and are never staged, reset, deleted, or included
+   in the version commit. Staged/deleted/untracked Graphify entries and every
+   source, untracked, generated, or sensitive path still block the release.
+   Open the update-manifest signing key only after repository-controlled build
+   and integrity gates.
    Update every owned version source and regenerate its deterministic dependency
    inventory as one recoverable local step. This refresh is required because the
    inventory hashes version-owned package and Cargo inputs. Before any version
@@ -302,15 +331,27 @@ Production mode is fail-closed and non-forceful:
    set, names, sizes, SHA-256 values, detached signatures and manifest/package
    linkage, and publish only after every check succeeds. The `latest` alias
    becomes visible to clients only at this final publish step.
+7. After publication, poll the public GitHub `latest/download` manifest and
+   signature, verify their detached signature with the embedded public key and
+   require the exact target version. Then poll the public Supabase REST read
+   until the matching stable announcement row is visible. Success is reported
+   only after both postflights. Once `gh release edit --draft=false` succeeds
+   (or a probe proves it succeeded), `$releasePublished` makes failure
+   irreversible: the script reports `published, announcement unconfirmed`,
+   forbids retrying or reusing that SemVer, and directs the owner to repair the
+   latest alias, webhook, or announcement rather than pretending the release is
+   unpublished.
 
 There is no honest single transaction across Git, GitHub Releases and local
 files. Before a push, production mode restores local version edits on failure or
 on the next invocation after an externally terminated process;
 a successful checkpoint commit remains because it is the durable copy of the
 current changes the operator explicitly selected for publication.
-After a commit or tag has been pushed, it never rewrites remote history: it
-leaves any release as an unpublished draft, prints the exact remote state and
-requires an owner to resume or intentionally supersede it. If a published asset
+After a commit or tag has been pushed, it never rewrites remote history. Before
+publication it leaves any release as an unpublished draft, prints the exact
+remote state and requires an owner to resume or intentionally supersede it.
+After publication it never suggests a same-version retry even when the public
+announcement postflight is unconfirmed. If a published asset
 is later found unsafe, remove the affected release from discovery, investigate
 the signing/repository credentials, publish a fixed higher version, and use the
 approved installer as the recovery path; never silently replace an immutable
@@ -488,8 +529,13 @@ Phase 15 reviewed these data-processing surfaces for German/EU transparency expe
 - Fluxora application update checks: every launch performs a silent conditional
   request to the public GitHub Releases manifest/signature endpoints, then the
   running primary window repeats it every 15 minutes and when focus returns at
-  least five minutes after the previous attempt; Settings also offers a manual
-  retry. The request
+  least five minutes after the previous attempt. The primary renderer also
+  keeps a persistent public Supabase WebSocket for stable release signals and
+  snapshots after every reconnect. Supabase sees the ordinary public IP,
+  connection time and TLS/WebSocket metadata; rows contain only public release
+  id/channel/version/tag/publication time and no telemetry, account, project,
+  mod, archive or AI data. The signal only triggers the signed GitHub check;
+  GitHub polling remains the fallback. The GitHub request
   necessarily exposes network metadata such as the public IP address and normal
   HTTP/TLS headers to GitHub and its download infrastructure; it does not include
   project, mod, archive, account, AI, path, credential or log content. Only the

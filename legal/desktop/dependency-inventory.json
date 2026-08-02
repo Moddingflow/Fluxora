@@ -4,19 +4,19 @@
   "inputs": [
     {
       "path": "legal/desktop/manifest.json",
-      "sha256": "8a3e76a23871f3b81982686d659a3c74adb341db307e86070d235774695b8646"
+      "sha256": "b10c03ee158d510d7fc168e18450438341a34797440da7a124e7d119a7aa968e"
     },
     {
       "path": "legal/desktop/license-policy.json",
-      "sha256": "78497f2abf086b08dc17c20453632e7cf82cc4b5e1004e9be8f00714cdf4c87b"
+      "sha256": "2c4aace4bb3ef3e15da5776fad93a199101540f3fddaf470e6ff26282a0e536e"
     },
     {
       "path": "frontend-tauri/package.json",
-      "sha256": "21001e83acfcc1d23a6f0f43a1b124ec63241602f71266ace28aa8af878995c3"
+      "sha256": "26758baf447d866bed26136a79ffa7744ee588a85f029586f7ffcb90051bda9a"
     },
     {
       "path": "frontend-tauri/pnpm-lock.yaml",
-      "sha256": "803b1e7964838240191f9c291992e5841c5ee54cc88b84b955932a8a012a6b4b"
+      "sha256": "84602daa589966ad7c12c11868ccc151c9b98b4bdd3827678d6262451bacf715"
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.toml",
@@ -123,13 +123,61 @@
     "pnpm": {
       "platform": "win32-x64",
       "runtimeDistributed": {
-        "count": 9,
-        "packageSetSha256": "28c210a9e614338058b91dd271e04fd791a7449106d7b713bb22a91ab96d5daa",
+        "count": 22,
+        "packageSetSha256": "c036ac0ecbf9902310d21fa2c68f95c5d6e465a245ddda63743b5215177bad50",
         "packages": [
+          {
+            "name": "@supabase/auth-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/functions-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/phoenix",
+            "version": "0.4.5",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/postgrest-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/realtime-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/storage-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@supabase/supabase-js",
+            "version": "2.104.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
           {
             "name": "@tauri-apps/api",
             "version": "2.11.1",
             "license": "Apache-2.0 OR MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "@types/node",
+            "version": "26.1.1",
+            "license": "MIT",
             "source": "npm-registry"
           },
           {
@@ -139,9 +187,21 @@
             "source": "npm-registry"
           },
           {
+            "name": "@types/ws",
+            "version": "8.18.1",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
             "name": "dompurify",
             "version": "3.2.7",
             "license": "(MPL-2.0 OR Apache-2.0)",
+            "source": "npm-registry"
+          },
+          {
+            "name": "iceberg-js",
+            "version": "0.8.1",
+            "license": "MIT",
             "source": "npm-registry"
           },
           {
@@ -179,12 +239,30 @@
             "version": "0.185.1",
             "license": "MIT",
             "source": "npm-registry"
+          },
+          {
+            "name": "tslib",
+            "version": "2.8.1",
+            "license": "0BSD",
+            "source": "npm-registry"
+          },
+          {
+            "name": "undici-types",
+            "version": "8.3.0",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
+            "name": "ws",
+            "version": "8.21.1",
+            "license": "MIT",
+            "source": "npm-registry"
           }
         ]
       },
       "buildTestOnly": {
-        "count": 106,
-        "packageSetSha256": "ab26e48a436a4792b0ee17cb19d8714a0f2a787dea5d8d83f2aa3ef7a2323f8b",
+        "count": 104,
+        "packageSetSha256": "65290e44dd4a2a7f5917ac72d9d5da524a7cfbeb8fc4f9ab5defaef774a33540",
         "packages": [
           {
             "name": "@babel/code-frame",
@@ -429,12 +507,6 @@
           {
             "name": "@types/estree",
             "version": "1.0.9",
-            "license": "MIT",
-            "source": "npm-registry"
-          },
-          {
-            "name": "@types/node",
-            "version": "26.1.1",
             "license": "MIT",
             "source": "npm-registry"
           },
@@ -784,12 +856,6 @@
             "name": "typescript",
             "version": "6.0.3",
             "license": "Apache-2.0",
-            "source": "npm-registry"
-          },
-          {
-            "name": "undici-types",
-            "version": "8.3.0",
-            "license": "MIT",
             "source": "npm-registry"
           },
           {

@@ -1,5 +1,5 @@
 import type { FluxoraApi, FluxoraUpdateStatus } from '../../../shared/fluxora-api';
-import type { AppUpdateSettingsViewState, AppUpdateToolbarViewState } from './app-update-state';
+import type { AppUpdateToolbarViewState } from './app-update-state';
 
 export interface AppUpdateCoordinatorOptions {
   api: FluxoraApi['updates'];
@@ -9,7 +9,8 @@ export interface AppUpdateCoordinatorOptions {
 
 export interface AppUpdateCoordinator {
     start: () => Promise<void>;
-    check: (userInitiated?: boolean) => Promise<void>;
+    check: (userInitiated?: boolean) => Promise<FluxoraUpdateStatus | null>;
+    getStatus: () => FluxoraUpdateStatus;
     activate: () => Promise<void>;
     cancel: () => Promise<void>;
     stop: () => void;
@@ -75,7 +76,7 @@ export const createAppUpdateCoordinator = ({
   let unsubscribe: (() => void) | null = null;
   let currentStatus: FluxoraUpdateStatus = { state: 'idle', currentVersion: '' };
   let downloadPromise: Promise<void> | null = null;
-  let checkPromise: Promise<void> | null = null;
+  let checkPromise: Promise<FluxoraUpdateStatus> | null = null;
   let cancelPromise: Promise<void> | null = null;
   let userInitiatedOperation = false;
 
@@ -118,7 +119,7 @@ export const createAppUpdateCoordinator = ({
           currentStatus.state
         )
       ) {
-        return Promise.resolve();
+        return Promise.resolve(started ? currentStatus : null);
       }
 
       const operationId = createOperationId(
@@ -134,9 +135,10 @@ export const createAppUpdateCoordinator = ({
       checkPromise = request
         .then((status) => {
           acceptStatus(status, userInitiated);
+          return status;
         })
         .catch((error) => {
-          acceptStatus({
+          const status: FluxoraUpdateStatus = {
             ...currentStatus,
             state: 'error',
             operationId,
@@ -145,7 +147,9 @@ export const createAppUpdateCoordinator = ({
               message: updateErrorMessage(error),
               retryable: true
             }
-          }, userInitiated);
+          };
+          acceptStatus(status, userInitiated);
+          return status;
         })
         .finally(() => {
           checkPromise = null;
@@ -153,6 +157,7 @@ export const createAppUpdateCoordinator = ({
         });
       return checkPromise;
     },
+    getStatus: () => currentStatus,
     activate: () => {
       if (downloadPromise) {
         return downloadPromise;
@@ -299,38 +304,4 @@ export const appUpdateToolbarView = (
   }
 
   return { state: 'hidden' };
-};
-
-export const appUpdateSettingsView = (
-  status: FluxoraUpdateStatus,
-  onCheck: () => void | Promise<void>
-): AppUpdateSettingsViewState => {
-  const base = {
-    currentVersion: status.currentVersion,
-    onCheck
-  };
-  if (
-    status.state === 'downloading'
-    || status.state === 'waitingForOperations'
-    || status.state === 'readyToInstall'
-    || status.state === 'launchingUpdater'
-  ) {
-    return { ...base, state: 'busy', availableVersion: status.availableVersion };
-  }
-  if (status.state === 'available') {
-    return { ...base, state: 'available', availableVersion: status.availableVersion };
-  }
-  if (status.state === 'checking' || status.state === 'upToDate') {
-    return { ...base, state: status.state };
-  }
-  if (status.state === 'error') {
-    return {
-      ...base,
-      state: 'error',
-      errorMessage: sanitizeUpdateErrorMessage(
-        status.error?.message ?? 'Не удалось проверить обновления'
-      )
-    };
-  }
-  return { ...base, state: 'idle' };
 };

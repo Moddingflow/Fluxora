@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Effective date: 1 August 2026
+Effective date: 2 August 2026
 
 Engineering review status: this document is a release candidate, not final legal advice. Public distribution is blocked until the operator has confirmed the facts and a qualified German lawyer has reviewed the German original and the English and Russian translations.
 
@@ -21,7 +21,7 @@ Legal contact: legal@moddingflow.com
 
 This policy covers Fluxora Setup, Fluxora Updater, the Fluxora desktop application, its Rust/Tauri native shell, the native C++ core, and the optional online integrations described below.
 
-Fluxora is designed primarily as a local desktop application. The product does not include advertising analytics, behavioural tracking, or an automatic upload of logs or crash reports. Local application state is not sent to the operator merely because it is stored on the device. Network processing occurs for automatic and manually requested update checks and when you request another online feature.
+Fluxora is designed primarily as a local desktop application. The product does not include advertising analytics, behavioural tracking, or an automatic upload of logs or crash reports. Local application state is not sent to the operator merely because it is stored on the device. Network processing occurs for automatic release discovery and when you request another online feature.
 
 The Windows renderer uses the Microsoft Edge WebView2 Runtime installed on the system. Fluxora does not ship a separate portable browser. The renderer is restricted to product UI and does not provide general browser-history collection.
 
@@ -37,11 +37,13 @@ Repair and removal inspect the durable ownership record, installed executable an
 
 ## 4. Automatic update discovery, Setup authorisation, and in-app installation
 
-At application startup Fluxora requests the public signed update manifest and signature from the fixed Fluxora assets on GitHub Releases. While the primary application window remains running, Fluxora repeats the check every 15 minutes and when that window regains focus if at least five minutes have passed since the preceding check. You can also request a check in Settings. These checks do not require a GitHub account. GitHub and its delivery providers receive ordinary connection data, including the public IP address, request time, TLS and HTTP headers, and network/device data inferred by GitHub. Conditional request validators (`ETag` and `Last-Modified`) and the two newest verified manifest cache records may be stored locally. If the startup check fails with a retryable error, Fluxora makes up to two further automatic background attempts after short delays; those attempts disclose the same ordinary connection data. A missing first-release manifest is treated as retryable so a running application can recover after the first release appears.
+At application startup Fluxora requests the public signed update manifest and signature from the fixed Fluxora assets on GitHub Releases. While the primary application window remains running, Fluxora repeats the check every 15 minutes and when that window regains focus if at least five minutes have passed since the preceding check. These checks do not require a GitHub account. GitHub and its delivery providers receive ordinary connection data, including the public IP address, request time, TLS and HTTP headers, and network/device data inferred by GitHub. Conditional request validators (`ETag` and `Last-Modified`) and the two newest verified manifest cache records may be stored locally. If the startup check fails with a retryable error, Fluxora makes up to two further automatic background attempts after short delays; those attempts disclose the same ordinary connection data. A missing first-release manifest is treated as retryable so a running application can recover after the first release appears.
 
-After a successful Setup install, repair, or update, Setup performs the same signed check as part of the Install action. If a newer stable version exists, Setup automatically downloads the signed full package from GitHub Releases, stores resumable package and verification data under `%APPDATA%\Fluxora\updates`, and hands it to the isolated Updater. If the check or download fails, Setup starts the successfully installed bundled version and Fluxora can check again through its automatic schedule or the manual Settings action. GitHub and its delivery providers receive the ordinary connection metadata described above. Fluxora adds no project, mod, archive, account, AI-chat, credential, log, signature, or authorisation-header content to those requests, and this flow adds no telemetry.
+The primary renderer also keeps a persistent Supabase WebSocket connection to the fixed public Fluxora release project. It subscribes only to stable release insert/update signals and requests the latest stable snapshot after every connection or reconnect. Supabase and its infrastructure providers receive ordinary connection data, including the public IP address, connection times, and TLS/WebSocket protocol metadata. The public release metadata contains only the GitHub release identifier, stable channel, version, tag, and publication time; it contains no telemetry, account, project, mod, archive, or AI data. A signal is untrusted and can only trigger the same signed GitHub manifest check; it cannot expose the update action by itself. GitHub startup, focus, and 15-minute polling remains the fallback if Realtime delivery is late or unavailable.
 
-Outside Setup, automatic and manual checks only discover an available update. The package is downloaded, installed, and followed by a restart only after you choose the in-app update action.
+After a successful Setup install, repair, or update, Setup performs the same signed check as part of the Install action. If a newer stable version exists, Setup automatically downloads the signed full package from GitHub Releases, stores resumable package and verification data under `%APPDATA%\Fluxora\updates`, and hands it to the isolated Updater. If the check or download fails, Setup starts the successfully installed bundled version and Fluxora can check again through its automatic schedule. GitHub and its delivery providers receive the ordinary connection metadata described above. Fluxora adds no project, mod, archive, account, AI-chat, credential, log, signature, or authorisation-header content to those requests, and this flow adds no telemetry.
+
+Outside Setup, background discovery only identifies an available update. The package is downloaded, installed, and followed by a restart only after you choose the in-app update action.
 
 Fluxora verifies the manifest signature and file/package hashes. Full and delta packages, manifests, signatures, and inventories are machine-consumed public release data, not executable portable distributions. Local staging, backup, health acknowledgement, rollback, and recovery data are used to make the requested update reliable.
 
@@ -107,7 +109,7 @@ The local storage and access needed to provide explicitly requested desktop func
 
 ## 10. Recipients and international transfers
 
-Depending on the action, recipients can include Microsoft for WebView2 delivery; GitHub and its content-delivery providers for update checks and downloads; ModdingFlow and its infrastructure providers for account, catalogue, API, and download functions; Nexus Mods for its account and API functions; Google/Gemini and the managed AI gateway for submitted AI requests and web research; and a download host or website that you expressly open.
+Depending on the action, recipients can include Microsoft for WebView2 delivery; GitHub and its content-delivery providers for update checks and downloads; Supabase and its infrastructure providers for the public release-signal WebSocket and snapshot; ModdingFlow and its infrastructure providers for account, catalogue, API, and download functions; Nexus Mods for its account and API functions; Google/Gemini and the managed AI gateway for submitted AI requests and web research; and a download host or website that you expressly open.
 
 These providers act under their own terms and privacy notices. GitHub states that it can process data in the United States and other countries and generally relies on recognised transfer mechanisms such as the EU Standard Contractual Clauses for transfers to locations without an adequacy decision. The exact roles, providers, and safeguards must be confirmed before public release.
 

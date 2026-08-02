@@ -2740,6 +2740,178 @@ function Assert-FluxoraReleasePreconditions {
     }
 }
 
+function Assert-FluxoraPostCheckpointStatus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]] $StatusLines
+    )
+
+    $preservedPaths = [Collections.Generic.List[string]]::new()
+    foreach ($statusLine in $StatusLines) {
+        if ([string]::IsNullOrWhiteSpace($statusLine) -or
+            $statusLine.Length -lt 4 -or
+            $statusLine.Substring(0, 2) -cne ' M') {
+            throw "Production release post-checkpoint drift must contain only unstaged tracked Graphify modifications. Blocked entry: '$statusLine'."
+        }
+        $path = $statusLine.Substring(3).Replace('\', '/')
+        if ([string]::IsNullOrWhiteSpace($path) -or
+            $path.StartsWith('"', [StringComparison]::Ordinal) -or
+            $path.Contains(' -> ', [StringComparison]::Ordinal) -or
+            -not $path.StartsWith('graphify-out/', [StringComparison]::Ordinal) -or
+            $path.Contains('/../', [StringComparison]::Ordinal) -or
+            $path.EndsWith('/..', [StringComparison]::Ordinal)) {
+            throw "Production release post-checkpoint drift is outside the tracked Graphify allowlist. Blocked entry: '$statusLine'."
+        }
+        $preservedPaths.Add($path)
+    }
+
+    return @($preservedPaths)
+}
+
+function Assert-FluxoraReleaseSignalPublicConfiguration {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string] $SupabaseUrl,
+
+        [AllowEmptyString()]
+        [string] $PublishableKey
+    )
+
+    $url = if ($null -eq $SupabaseUrl) { '' } else { $SupabaseUrl.Trim() }
+    $keyPresent = -not [string]::IsNullOrWhiteSpace($PublishableKey)
+    if ([string]::IsNullOrWhiteSpace($url) -and -not $keyPresent) {
+        throw 'Fluxora release signal public configuration is required for Production.'
+    }
+    if ([string]::IsNullOrWhiteSpace($url) -or -not $keyPresent) {
+        throw 'Fluxora release signal public configuration is incomplete for Production.'
+    }
+    if ($url -cne 'https://tpciohumwahlctpeuduv.supabase.co') {
+        throw 'Fluxora release signal project URL is invalid for Production.'
+    }
+}
+
+function Test-FluxoraPublicReleaseAnnouncement {
+    param(
+        [AllowNull()]
+        [object] $Row,
+
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedVersion
+    )
+
+    if ($null -eq $Row) {
+        return $false
+    }
+    $properties = $Row.PSObject.Properties
+    foreach ($name in @('github_release_id', 'channel', 'version', 'tag_name', 'published_at')) {
+        if ($null -eq $properties[$name]) {
+            return $false
+        }
+    }
+    $releaseId = 0L
+    if (-not [long]::TryParse(
+        [string]$properties['github_release_id'].Value,
+        [Globalization.NumberStyles]::None,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [ref]$releaseId) -or $releaseId -le 0) {
+        return $false
+    }
+    if ([string]$properties['channel'].Value -cne 'stable' -or
+        [string]$properties['version'].Value -cne $ExpectedVersion -or
+        [string]$properties['tag_name'].Value -cne "v$ExpectedVersion") {
+        return $false
+    }
+    $publishedAt = [DateTimeOffset]::MinValue
+    return [DateTimeOffset]::TryParse(
+        [string]$properties['published_at'].Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal,
+        [ref]$publishedAt)
+}
+
+function Wait-FluxoraReleasePublicationPostflight {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedVersion,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $ReadLatestSignedManifestVersion,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $ReadPublicAnnouncement,
+
+        [ValidateRange(1, 900)]
+        [int] $TimeoutSeconds = 120,
+
+        [ValidateRange(1, 60)]
+        [int] $PollIntervalSeconds = 5,
+
+        [scriptblock] $Now = { [DateTimeOffset]::UtcNow },
+
+        [scriptblock] $Sleep = {
+            param([int] $Milliseconds)
+            Start-Sleep -Milliseconds $Milliseconds
+        }
+    )
+
+    if ($ExpectedVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+        throw "Invalid Fluxora postflight version '$ExpectedVersion'."
+    }
+    $deadline = [DateTimeOffset](& $Now).AddSeconds($TimeoutSeconds)
+    $latestManifestConfirmed = $false
+    do {
+        if (-not $latestManifestConfirmed) {
+            try {
+                $manifestVersions = @(& $ReadLatestSignedManifestVersion)
+                if ($manifestVersions.Count -eq 1 -and
+                    [string]$manifestVersions[0] -ceq $ExpectedVersion) {
+                    $latestManifestConfirmed = $true
+                }
+            }
+            catch {
+                # The bounded postflight retries transient CDN and latest-alias propagation.
+            }
+        }
+
+        if ($latestManifestConfirmed) {
+            try {
+                $announcementRows = @(& $ReadPublicAnnouncement)
+                foreach ($row in $announcementRows) {
+                    if (Test-FluxoraPublicReleaseAnnouncement `
+                        -Row $row `
+                        -ExpectedVersion $ExpectedVersion) {
+                        return $row
+                    }
+                }
+            }
+            catch {
+                # The public read path is retried without disclosing its API key.
+            }
+        }
+
+        $current = [DateTimeOffset](& $Now)
+        if ($current -ge $deadline) {
+            break
+        }
+        $remainingMilliseconds = [Math]::Max(
+            1,
+            [int][Math]::Floor(($deadline - $current).TotalMilliseconds))
+        $sleepMilliseconds = [Math]::Min(
+            $PollIntervalSeconds * 1000,
+            $remainingMilliseconds)
+        & $Sleep $sleepMilliseconds
+    } while ($true)
+
+    if (-not $latestManifestConfirmed) {
+        throw "Fluxora $ExpectedVersion is published, but the GitHub latest signed manifest is unconfirmed."
+    }
+    throw "Fluxora $ExpectedVersion is published, announcement unconfirmed in the public release signal table."
+}
+
 Export-ModuleMember -Function @(
     'Resolve-FluxoraBuildMode',
     'Get-FluxoraNextPatchVersion',
@@ -2770,5 +2942,8 @@ Export-ModuleMember -Function @(
     'Assert-FluxoraPreviousReleaseLineage',
     'Assert-FluxoraReleaseChildEnvironment',
     'Assert-FluxoraReleaseStagedPaths',
-    'Assert-FluxoraReleasePreconditions'
+    'Assert-FluxoraReleasePreconditions',
+    'Assert-FluxoraPostCheckpointStatus',
+    'Assert-FluxoraReleaseSignalPublicConfiguration',
+    'Wait-FluxoraReleasePublicationPostflight'
 )

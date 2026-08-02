@@ -1,6 +1,6 @@
 # Nutzungsbedingungen
 
-Gültig ab: 1. August 2026
+Gültig ab: 2. August 2026
 
 Prüfstatus: Diese Bedingungen sind ein technischer Entwurf für die Freigabe und keine abschließende Rechtsberatung. Eine öffentliche Veröffentlichung ist gesperrt, bis der Betreiber die Tatsachen genehmigt und ein qualifizierter deutscher Rechtsanwalt die deutsche Originalfassung sowie die englische und russische Übersetzung geprüft hat.
 
@@ -36,7 +36,7 @@ Verändern Sie keine Transaktions-, Backup-, Watchdog-, Beleg- oder Recovery-Dat
 
 ## 6. Aktualisierungen
 
-Fluxora prüft festgelegte öffentliche GitHub-Releaseassets beim Anwendungsstart, alle 15 Minuten während das primäre Fenster läuft, beim erneuten Fokussieren dieses Fensters nach mindestens fünf Minuten und auf Ihre Anforderung in den Einstellungen. Diese Prüfungen stellen nur fest, ob eine neuere signierte Version vorhanden ist; Paketdownload, Installation, Beendigung und Neustart beginnen erst nach Auswahl der Update-Aktion. In Setup umfasst Installieren ausdrücklich die automatische signierte Prüfung nach der Installation und, wenn eine neuere Version vorhanden ist, Vollpaketdownload, Übergabe an den isolierten Updater, Installation, Zustandsprüfung und Neustart.
+Fluxora prüft festgelegte öffentliche GitHub-Releaseassets beim Anwendungsstart, alle 15 Minuten während das primäre Fenster läuft und beim erneuten Fokussieren dieses Fensters nach mindestens fünf Minuten. Eine dauerhafte öffentliche Supabase-WebSocket-Verbindung kann früher ein Releasesignal liefern; dieses Signal ist jedoch keine Update-Autorität und muss über das signierte GitHub-Manifest bestätigt werden. Die Hintergrund-Erkennung stellt nur fest, ob eine neuere signierte Version vorhanden ist; Paketdownload, Installation, Beendigung und Neustart beginnen erst nach Auswahl der Update-Aktion. In Setup umfasst Installieren ausdrücklich die automatische signierte Prüfung nach der Installation und, wenn eine neuere Version vorhanden ist, Vollpaketdownload, Übergabe an den isolierten Updater, Installation, Zustandsprüfung und Neustart.
 
 Aktualisierungen können signierte Vollpakete oder Deltas für eine exakt passende Vorversion sein. Ein Vollpaket wird verwendet, wenn kein sicheres Delta verfügbar ist oder die Installation keinen geeigneten Beleg besitzt. Fluxora prüft das signierte Manifest, den Pakethash und das Zieldateiinventar vor dem Commit. Der Updater wartet auf die Anwendung, verwendet eine isolierte Laufzeit, staged Änderungen, startet die neue Version in einer Bewährungsphase, verlangt eine frische Zustandsbestätigung und finalisiert oder rollt zurück.
 

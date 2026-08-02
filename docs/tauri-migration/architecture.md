@@ -1,6 +1,6 @@
 # Fluxora Tauri + C++ bridge architecture
 
-Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16; automatic application update contract: 2026-07-30
+Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16; automatic application update contract: 2026-07-30; Realtime release signal contract: 2026-08-02
 
 Статус: Phase 14 Bridge/API surface and cross-platform capability model implemented on top of the Phase 1 decision. This document is the bridge/source-of-truth companion to `docs/tauri-migration/wpf-ui-inventory.md` and `docs/tauri-migration/cross-platform-support.md`.
 
@@ -637,11 +637,36 @@ renderer into a network, process or filesystem authority.
   the previous attempt. A GitHub `404 Not Found` remains retryable so a running
   first-install session can discover the first published Release. Automatic
   success, `304 Not Modified`, offline, timeout and invalid-response outcomes do
-  not open a dialog or notification. Settings exposes a manual check/retry
-  action with explicit result text.
+  not open a dialog or notification. Settings contains no application-update
+  status, error, or manual check action.
   The renderer receives only typed update state and shows the green vector
   download action when a newer, fully authenticated Windows release is
   available.
+- The primary renderer also owns a small background release-signal service. It
+  creates an ephemeral `@supabase/supabase-js` client with session persistence,
+  token refresh and URL-session detection disabled, using only
+  `VITE_FLUXORA_RELEASES_SUPABASE_URL` and
+  `VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY`. Production accepts exactly
+  `https://tpciohumwahlctpeuduv.supabase.co`; its CSP permits only that HTTPS
+  origin and the matching `wss://tpciohumwahlctpeuduv.supabase.co` origin.
+  Missing, partial, or wrong-project Production configuration fails before a
+  release build. The publishable key is public capability material constrained
+  by grants and RLS; no service-role or webhook secret enters the renderer.
+- The service subscribes before reading state to `INSERT` and `UPDATE` Postgres
+  Changes for `public.fluxora_desktop_releases` with
+  `channel=eq.stable`. Every `SUBSCRIBED` transition, including reconnect,
+  triggers a latest-stable snapshot, closing the subscribe/snapshot race. Rows
+  carry only GitHub release id, stable channel, strict SemVer, matching tag and
+  publication time. Invalid, duplicate, older and already-installed rows are
+  ignored. A newer row is an untrusted wake-up signal only: it immediately asks
+  the existing native updater to fetch and authenticate the fixed signed GitHub
+  manifest, then retries at 2, 5, 15, 30 and 60 seconds while propagation is
+  unconfirmed. A signed available/current result, download/install/drain state,
+  a newer announcement, or service shutdown cancels the burst. The payload
+  cannot create toolbar state; only native `FluxoraUpdateStatus.state ===
+  available` exposes the existing green action. Startup, focus and 15-minute
+  GitHub polling remain the delivery fallback because Realtime is not treated
+  as guaranteed release authority.
 - The fixed discovery endpoints are
   `https://github.com/Moddingflow/Fluxora/releases/latest/download/fluxora-update-manifest.json`
   and the adjacent `fluxora-update-manifest.sig`. Conditional requests use

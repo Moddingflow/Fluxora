@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "effectiveDate": "2026-08-01",
+  "effectiveDate": "2026-08-02",
   "fallbackLanguage": "en",
   "documents": [
     {
       "language": "en",
       "kind": "privacy",
       "path": "en/privacy.md",
-      "sha256": "69b340bb01e9a145cca9ff1c8ef6665497316e569303ca7fab52185a50b95c3f",
+      "sha256": "06af4ce8780b72f94695d10baafdcfd7566b9c9819b1acf64a06d2799d69e226",
       "title": "Privacy Policy"
     },
     {
       "language": "en",
       "kind": "terms",
       "path": "en/terms.md",
-      "sha256": "1011225f5ebc413117dc4401c167f01a06ceee89006fa311c004bb9030b5dbe8",
+      "sha256": "dee8f3af818785159d546ca30edfa2e5b74d3a2f00e6368c1c982614a04407ab",
       "title": "Terms of Use"
     },
     {
@@ -35,14 +35,14 @@
       "language": "de",
       "kind": "privacy",
       "path": "de/privacy.md",
-      "sha256": "26f238eb1ab21e5f1827245451bf49b23361da711fba6ecb6dd62b3fa4d30b7a",
+      "sha256": "5d97b881d2befc21b3e38f81f90f26d42bbfaa17233292c918de4bc9a5913f2b",
       "title": "Datenschutzerklärung"
     },
     {
       "language": "de",
       "kind": "terms",
       "path": "de/terms.md",
-      "sha256": "c77b71daaec2152653b1d80d5c28cb533dcac40ded259f41a36570b883f4512c",
+      "sha256": "83d03f99a315fcb259bff9f68f838a98d1aebe4a57e30afb8712aec1810c6fa5",
       "title": "Nutzungsbedingungen"
     },
     {
@@ -63,14 +63,14 @@
       "language": "ru",
       "kind": "privacy",
       "path": "ru/privacy.md",
-      "sha256": "adc9d25c35c900f7a859168748871af281f25206610d8d143e81708a02b77c25",
+      "sha256": "b4d412125e1946c7994dd4232e46d195cc563fafe34b37aaede01111af43d833",
       "title": "Политика конфиденциальности"
     },
     {
       "language": "ru",
       "kind": "terms",
       "path": "ru/terms.md",
-      "sha256": "c819ed5c7b3379791acae7fd548f4b8d6e38a765726eae79769c6bcefa36b726",
+      "sha256": "6d949c75041b447d4d41ffa4d0ac139bdaf06501bc70f69ad6dfcf20f41f36ad",
       "title": "Условия использования"
     },
     {

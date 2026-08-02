@@ -1,6 +1,6 @@
 # Terms of Use
 
-Effective date: 1 August 2026
+Effective date: 2 August 2026
 
 Engineering review status: these terms are a release candidate, not final legal advice. Public distribution is blocked until the operator has approved the facts and a qualified German lawyer has reviewed the German original and the English and Russian translations.
 
@@ -36,7 +36,7 @@ Do not alter transaction, backup, watchdog, receipt, or recovery files while Set
 
 ## 6. Updates
 
-Fluxora checks fixed public GitHub Release assets at application startup, every 15 minutes while the primary window is running, when that window regains focus after at least five minutes, and when you request a check in Settings. These checks only discover a newer signed version; package download, installation, application shutdown, and restart begin only after you choose the available update action. In Setup, the Install action expressly includes the automatic post-install signed check and, when a newer version is available, full-package download, isolated Updater handoff, installation, health verification, and restart described above.
+Fluxora checks fixed public GitHub Release assets at application startup, every 15 minutes while the primary window is running, and when that window regains focus after at least five minutes. A persistent public Supabase WebSocket may provide a release signal sooner, but that signal is not update authority and must be confirmed through the signed GitHub manifest. Background discovery only identifies a newer signed version; package download, installation, application shutdown, and restart begin only after you choose the available update action. In Setup, the Install action expressly includes the automatic post-install signed check and, when a newer version is available, full-package download, isolated Updater handoff, installation, health verification, and restart described above.
 
 Updates can be signed full packages or deltas for an exact previous version. A full package is used when a safe delta is unavailable or the installation has no suitable receipt. Fluxora verifies the signed manifest, package hash, and target-file inventory before commit. Updater waits for the application, uses an isolated runtime, stages changes, launches the new version under probation, requires a fresh health acknowledgement, and finalises or rolls back.
 

@@ -1328,7 +1328,8 @@ export const App = () => {
     api: window.fluxora.updates,
     enabled: !isBuildSettingsWindow && !isModDetailsWindow && !isFilePreviewWindow,
     automaticChecks: !isSecondaryWindow,
-    acknowledgeRendererHealth: !isSecondaryWindow
+    acknowledgeRendererHealth: !isSecondaryWindow,
+    releaseSignals: !isSecondaryWindow
   });
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
@@ -16178,7 +16179,6 @@ export const App = () => {
       apiLimitProviders={apiLimitProviders}
       apiLimitsBusy={apiLimitsBusy}
       appInfo={appInfo}
-      appUpdate={appUpdate.settings}
       bridgeStatus={bridgeStatus}
       developerModeEnabled={developerModeEnabled}
       isTransferRunning={isTransferRunning}

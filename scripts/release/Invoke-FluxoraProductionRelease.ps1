@@ -277,6 +277,15 @@ if ($versionResolution.Cancelled) {
 }
 $targetVersion = [string]$versionResolution.Version
 $tag = "v$targetVersion"
+$releaseSignalSupabaseUrl = [Environment]::GetEnvironmentVariable(
+    'VITE_FLUXORA_RELEASES_SUPABASE_URL',
+    'Process')
+$releaseSignalPublishableKey = [Environment]::GetEnvironmentVariable(
+    'VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY',
+    'Process')
+Assert-FluxoraReleaseSignalPublicConfiguration `
+    -SupabaseUrl $releaseSignalSupabaseUrl `
+    -PublishableKey $releaseSignalPublishableKey
 
 foreach ($command in @('git', 'gh', 'cmake', 'cargo', 'node', 'npm', 'pwsh')) {
     if ($null -eq (Get-Command $command -ErrorAction SilentlyContinue)) {
@@ -450,10 +459,11 @@ if ($repositoryChangeCount -gt 0) {
     )
 }
 
+[void](Assert-FluxoraPostCheckpointStatus -StatusLines $statusLines)
 Assert-FluxoraReleasePreconditions `
     -Branch $branch `
     -DefaultBranch $script:defaultBranch `
-    -StatusLines $statusLines `
+    -StatusLines @() `
     -Behind ([int]$counts[0]) `
     -Ahead ([int]$counts[1]) `
     -ExistingTag $false `
@@ -468,6 +478,7 @@ $versionPaths = @(Get-VersionPaths)
 $commitCreated = $false
 $remotePushed = $false
 $draftCreated = $false
+$releasePublished = $false
 New-FluxoraVersionRecoveryJournal `
     -ProjectRoot $projectRoot `
     -JournalPath $versionRecoveryJournalPath `
@@ -655,10 +666,21 @@ try {
 
     Assert-FluxoraFileSnapshots -ProjectRoot $projectRoot -Snapshots $expectedVersionSnapshots
 
-    $changedPaths = @(
+    $transactionStatusLines = @(
         Invoke-ReleaseCommand -FilePath 'git' -Arguments @('status', '--porcelain=v1', '--untracked-files=all') |
-            ForEach-Object { if ($_.Length -ge 4) { $_.Substring(3).Replace('/', '\') } }
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     )
+    $graphifyStatusLines = @($transactionStatusLines | Where-Object {
+        $_.Length -ge 4 -and
+        $_.Substring(3).Replace('\', '/').StartsWith('graphify-out/', [StringComparison]::Ordinal)
+    })
+    [void](Assert-FluxoraPostCheckpointStatus -StatusLines $graphifyStatusLines)
+    $releaseStatusLines = @($transactionStatusLines | Where-Object {
+        $_ -notin $graphifyStatusLines
+    })
+    $changedPaths = @($releaseStatusLines | ForEach-Object {
+        if ($_.Length -ge 4) { $_.Substring(3).Replace('/', '\') }
+    })
     $unexpectedChanges = @($changedPaths | Where-Object { $_ -notin $versionPaths })
     $missingChanges = @($versionPaths | Where-Object { $_ -notin $changedPaths })
     if ($unexpectedChanges.Count -ne 0 -or $missingChanges.Count -ne 0) {
@@ -718,9 +740,7 @@ try {
             Invoke-ReleaseCommand -FilePath 'git' -Arguments @('status', '--porcelain=v1', '--untracked-files=all') |
                 Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         )
-        if ($postCommitStatus.Count -ne 0) {
-            throw 'Release commit hooks or concurrent processes changed the worktree after commit.'
-        }
+        [void](Assert-FluxoraPostCheckpointStatus -StatusLines $postCommitStatus)
         Remove-FluxoraVersionRecoveryJournal -JournalPath $versionRecoveryJournalPath
         [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments @('tag', '-a', $tag, '-m', "Fluxora $targetVersion"))
     }
@@ -793,19 +813,85 @@ try {
     }
 
     Invoke-ReleaseStep 'Publishing verified GitHub release' {
-        [void](Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
-            'release', 'edit', $tag,
-            '--repo', $repository,
-            '--draft=false',
-            '--latest') `
-            -LiveOutput `
-            -Activity "Publishing verified release $tag")
+        try {
+            [void](Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
+                'release', 'edit', $tag,
+                '--repo', $repository,
+                '--draft=false',
+                '--latest') `
+                -LiveOutput `
+                -Activity "Publishing verified release $tag")
+            $script:releasePublished = $true
+        }
+        catch {
+            try {
+                $publicationProbe = (Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
+                    'release', 'view', $tag, '--repo', $repository,
+                    '--json', 'isDraft,tagName')) -join "`n" | ConvertFrom-Json
+                if (-not [bool]$publicationProbe.isDraft -and
+                    [string]$publicationProbe.tagName -ceq $tag) {
+                    $script:releasePublished = $true
+                }
+            }
+            catch {
+                # Preserve the original publication failure when the probe is inconclusive.
+            }
+            throw
+        }
         $published = (Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
             'release', 'view', $tag, '--repo', $repository, '--json', 'isDraft,tagName,url')) -join "`n" | ConvertFrom-Json
         if ([bool]$published.isDraft -or [string]$published.tagName -cne $tag) {
             throw 'GitHub release did not reach the published state.'
         }
         Write-Host "Published $($published.url)"
+    }
+
+    Invoke-ReleaseStep 'Confirming public latest alias and release announcement' {
+        $publishedPostflightRoot = Join-Path $transactionRoot 'published-postflight'
+        New-Item -ItemType Directory -Path $publishedPostflightRoot -Force | Out-Null
+        $latestManifestPath = Join-Path $publishedPostflightRoot 'fluxora-update-manifest.json'
+        $latestSignaturePath = Join-Path $publishedPostflightRoot 'fluxora-update-manifest.sig'
+        $manifestUri = "https://github.com/$repository/releases/latest/download/fluxora-update-manifest.json"
+        $signatureUri = "https://github.com/$repository/releases/latest/download/fluxora-update-manifest.sig"
+        $readLatestSignedManifestVersion = {
+            Remove-Item -LiteralPath $latestManifestPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $latestSignaturePath -Force -ErrorAction SilentlyContinue
+            $null = Invoke-WebRequest `
+                -Uri $manifestUri `
+                -OutFile $latestManifestPath `
+                -MaximumRedirection 5 `
+                -TimeoutSec 20
+            $null = Invoke-WebRequest `
+                -Uri $signatureUri `
+                -OutFile $latestSignaturePath `
+                -MaximumRedirection 5 `
+                -TimeoutSec 20
+            $latestManifest = Read-FluxoraSignedUpdateManifest `
+                -ManifestPath $latestManifestPath `
+                -SignaturePath $latestSignaturePath `
+                -PublicKeyPath $publicKeyPath
+            return [string]$latestManifest.version
+        }.GetNewClosure()
+        $readPublicAnnouncement = {
+            $encodedVersion = [Uri]::EscapeDataString($targetVersion)
+            $announcementUri = "$releaseSignalSupabaseUrl/rest/v1/fluxora_desktop_releases?select=github_release_id,channel,version,tag_name,published_at&channel=eq.stable&version=eq.$encodedVersion&limit=1"
+            $rows = @(Invoke-RestMethod `
+                -Method Get `
+                -Uri $announcementUri `
+                -Headers @{ apikey = $releaseSignalPublishableKey } `
+                -TimeoutSec 20)
+            if ($rows.Count -eq 0) {
+                return $null
+            }
+            return $rows[0]
+        }.GetNewClosure()
+        $announcement = Wait-FluxoraReleasePublicationPostflight `
+            -ExpectedVersion $targetVersion `
+            -ReadLatestSignedManifestVersion $readLatestSignedManifestVersion `
+            -ReadPublicAnnouncement $readPublicAnnouncement `
+            -TimeoutSeconds 120 `
+            -PollIntervalSeconds 5
+        Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$announcement.version)."
     }
 }
 catch {
@@ -828,7 +914,10 @@ catch {
             $recoveryFailure = $_
         }
     }
-    if ($remotePushed) {
+    if ($releasePublished) {
+        Write-Warning "Fluxora $tag is published, announcement unconfirmed. Do not retry or reuse this SemVer; repair the latest alias, webhook, or public announcement postflight."
+    }
+    elseif ($remotePushed) {
         Write-Warning "The release commit/tag were already pushed. They were not rewritten. Draft created: $draftCreated. Resolve or resume '$tag' explicitly."
     }
     elseif ($commitCreated) {
@@ -839,6 +928,9 @@ catch {
     }
     if ($null -ne $recoveryFailure) {
         throw "Production release failed, and exact version recovery also failed. The recovery journal remains at '$versionRecoveryJournalPath'. Release error: $($releaseFailure.Exception.Message) Recovery error: $($recoveryFailure.Exception.Message)"
+    }
+    if ($releasePublished) {
+        throw "Production release $tag is published, announcement unconfirmed. Do not retry or reuse this SemVer. Postflight error: $($releaseFailure.Exception.Message)"
     }
     throw $releaseFailure
 }

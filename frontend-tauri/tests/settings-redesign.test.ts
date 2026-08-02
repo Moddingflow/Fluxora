@@ -53,11 +53,6 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   apiLimitProviders: [],
   apiLimitsBusy: false,
   appInfo,
-  appUpdate: {
-    state: 'upToDate',
-    currentVersion: appInfo.version,
-    onCheck: () => undefined
-  },
   bridgeStatus: null,
   developerModeEnabled: false,
   isTransferRunning: false,

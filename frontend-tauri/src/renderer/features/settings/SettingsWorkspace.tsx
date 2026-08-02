@@ -34,8 +34,6 @@ import { Icon as DesignIcon } from '../../design-system/icons';
 import { LanguageSelect } from './LanguageSelect';
 import { managerHandoffSettingsCopy } from './manager-handoff-settings-copy';
 import { LegalDocumentsPanel } from '../legal/LegalDocumentsPanel';
-import { AppUpdateSettingsControl } from '../update/AppUpdateSettingsControl';
-import type { AppUpdateSettingsViewState } from '../update/app-update-state';
 import { legalLanguageFromAppLanguage } from '../legal/legal-documents';
 import type { LegalDocumentKind } from '../../../installer/setup/setup-flow';
 import type {
@@ -51,7 +49,6 @@ interface SettingsWorkspaceProps {
   apiLimitProviders: FluxoraApiLimitProvider[];
   apiLimitsBusy: boolean;
   appInfo: FluxoraAppInfo | null;
-  appUpdate: AppUpdateSettingsViewState;
   bridgeStatus: NativeBridgeStatus | null;
   developerModeEnabled: boolean;
   isTransferRunning: boolean;
@@ -79,7 +76,6 @@ export function SettingsWorkspace({
   apiLimitProviders,
   apiLimitsBusy,
   appInfo,
-  appUpdate,
   bridgeStatus,
   developerModeEnabled,
   isTransferRunning,
@@ -384,7 +380,6 @@ export function SettingsWorkspace({
   const renderDeveloperSettings = () => (
     <div className="settings-panel settings-panel--developer" aria-label="Developer settings">
       <div className="settings-connections-list">
-        <AppUpdateSettingsControl update={appUpdate} />
         <div
           className="settings-service-row settings-service-row--connection settings-service-row--developer"
           data-status={developerModeEnabled ? 'ready' : 'checking'}

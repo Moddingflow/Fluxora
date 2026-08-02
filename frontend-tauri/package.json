@@ -29,6 +29,7 @@
     "test:e2e": "npm run build:frontend && node node_modules/@playwright/test/cli.js test --pass-with-no-tests"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.104.0",
     "@tauri-apps/api": "^2.11.1",
     "monaco-editor": "0.55.1",
     "react": "^19.2.7",

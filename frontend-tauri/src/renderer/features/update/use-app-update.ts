@@ -2,26 +2,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { FluxoraApi, FluxoraUpdateStatus } from '../../../shared/fluxora-api';
 import { createRendererOperationId } from '../../services/renderer-operation-service';
-import type { AppUpdateSettingsViewState, AppUpdateToolbarViewState } from './app-update-state';
+import type { AppUpdateToolbarViewState } from './app-update-state';
 import {
   acknowledgeRendererReady,
-  appUpdateSettingsView,
   appUpdateToolbarView,
   createAppUpdateCoordinator,
   type AppUpdateCoordinator
 } from './app-update-coordinator';
 import { createAppUpdateScheduler } from './app-update-scheduler';
+import { releaseSignalConfigFromImportMeta } from './release-signal-config';
+import { createFluxoraReleaseSignalService } from './release-signal-service';
+import { createSupabaseFluxoraReleaseSignalSource } from './supabase-release-signal-client';
+
+const releaseSignalConfig = releaseSignalConfigFromImportMeta();
 
 export interface UseAppUpdateOptions {
   api: FluxoraApi['updates'];
   enabled: boolean;
   automaticChecks?: boolean;
   acknowledgeRendererHealth?: boolean;
+  releaseSignals?: boolean;
 }
 
 export interface UseAppUpdateResult {
   toolbar: AppUpdateToolbarViewState;
-  settings: AppUpdateSettingsViewState;
 }
 
 interface AppUpdateRendererState {
@@ -38,7 +42,8 @@ export const useAppUpdate = ({
   api,
   enabled,
   automaticChecks = true,
-  acknowledgeRendererHealth = true
+  acknowledgeRendererHealth = true,
+  releaseSignals = true
 }: UseAppUpdateOptions): UseAppUpdateResult => {
   const [rendererState, setRendererState] = useState<AppUpdateRendererState>(initialState);
   const coordinatorRef = useRef<AppUpdateCoordinator | null>(null);
@@ -58,9 +63,20 @@ export const useAppUpdate = ({
       onStatus: (status, userInitiated) => setRendererState({ status, userInitiated })
     });
     coordinatorRef.current = coordinator;
-    void coordinator.start();
+    const releaseSignalService = releaseSignals && releaseSignalConfig
+      ? createFluxoraReleaseSignalService({
+          checkSignedManifest: () => coordinator.check(false),
+          getNativeStatus: coordinator.getStatus,
+          source: createSupabaseFluxoraReleaseSignalSource(releaseSignalConfig)
+        })
+      : null;
+    void coordinator.start().then(() => {
+      if (!cancelled) releaseSignalService?.start();
+    });
     const scheduler = automaticChecks ? createAppUpdateScheduler({
-      check: () => coordinator.check(false),
+      check: async () => {
+        await coordinator.check(false);
+      },
       scheduleInterval: (listener, intervalMs) => {
         const intervalId = window.setInterval(listener, intervalMs);
         return () => window.clearInterval(intervalId);
@@ -79,18 +95,14 @@ export const useAppUpdate = ({
 
     return () => {
       cancelled = true;
+      releaseSignalService?.stop();
       scheduler?.stop();
       coordinator.stop();
       if (coordinatorRef.current === coordinator) {
         coordinatorRef.current = null;
       }
     };
-  }, [acknowledgeRendererHealth, api, automaticChecks, enabled]);
-
-  const check = useCallback(
-    () => coordinatorRef.current?.check(true) ?? Promise.resolve(),
-    []
-  );
+  }, [acknowledgeRendererHealth, api, automaticChecks, enabled, releaseSignals]);
 
   const activate = useCallback(
     () => coordinatorRef.current?.activate() ?? Promise.resolve(),
@@ -107,7 +119,6 @@ export const useAppUpdate = ({
       rendererState.userInitiated,
       activate,
       cancel
-    ),
-    settings: appUpdateSettingsView(rendererState.status, check)
-  }), [activate, cancel, check, rendererState]);
+    )
+  }), [activate, cancel, rendererState]);
 };
