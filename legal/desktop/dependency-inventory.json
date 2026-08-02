@@ -12,7 +12,7 @@
     },
     {
       "path": "frontend-tauri/package.json",
-      "sha256": "26758baf447d866bed26136a79ffa7744ee588a85f029586f7ffcb90051bda9a"
+      "sha256": "88872aeb6fd16f9fa3dc6ab93faeb83000793942eb9f6612c882a6aa8372b95b"
     },
     {
       "path": "frontend-tauri/pnpm-lock.yaml",
@@ -20,11 +20,11 @@
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.toml",
-      "sha256": "73a14a1ccb8be09cd797a50b5ec818fd595f1a2db0485f6f8af4a4ac4f44f40a"
+      "sha256": "fb317bf8d3beadaf2db018490b9ef0b3c2388ddba1ae12ec52906ef19b405945"
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.lock",
-      "sha256": "ee1d005fcbc29b9c2ecc00170fdf9d8db7c6e2499e0dbfbd242b9eacea639808"
+      "sha256": "038b69ca00af9b822120774993636fafbd4aa64f4375499f250eb9c2dd422e53"
     },
     {
       "path": "Build.ps1",
