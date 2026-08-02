@@ -230,7 +230,7 @@ async fn fluxora_setup_start_install(
     }
     let expanded_payload_bytes =
         trusted_expanded_payload_bytes(state.payload, state.expanded_payload_bytes)?;
-    let install_validation = NativeInstaller::validate_install_path(
+    let _install_validation = NativeInstaller::validate_install_path(
         options.install_directory.trim(),
         expanded_payload_bytes,
     )?;
@@ -287,7 +287,7 @@ async fn fluxora_setup_start_install(
             session.application_path = Some(PathBuf::from(&native.application_path));
             session.installed_version = Some(installed_version.clone());
             session.language = Some(language.to_string());
-            session.mode = Some(install_validation.mode);
+            session.mode = Some(native.mode);
             Ok(InstallResult {
                 schema_version: INSTALLER_SCHEMA_VERSION,
                 operation_id: options.operation_id,

@@ -95,7 +95,7 @@ async function installSetupMock(
   page: Page,
   language: SetupLanguage,
   outcome: 'success' | 'failure' = 'success',
-  postScenario: 'no-update' | 'update-found' | 'network-error' | 'launch-failure' = 'no-update'
+  postScenario: 'no-update' | 'update-found' | 'network-error' | 'launch-failure' | 'manual-downgrade' = 'no-update'
 ) {
   await page.addInitScript(({ language: setupLanguage, outcome: setupOutcome, postScenario: scenario }) => {
     Object.defineProperty(navigator, 'language', {
@@ -125,7 +125,7 @@ async function installSetupMock(
           schemaVersion: 1,
           language: setupLanguage,
           defaultInstallDirectory: installDirectory,
-          mode: 'repair',
+          mode: scenario === 'manual-downgrade' ? 'downgrade' : 'repair',
           installedVersion: '2.4.0',
           requiredBytes: 250_000_000,
           freeBytes: 8_000_000_000,
@@ -143,7 +143,7 @@ async function installSetupMock(
           normalizedInstallDirectory: installDirectory,
           requiredBytes: 250_000_000,
           freeBytes: 8_000_000_000,
-          mode: 'repair'
+          mode: scenario === 'manual-downgrade' ? 'downgrade' : 'repair'
         }),
         startInstall: async (options: Record<string, unknown>) => {
           (window as any).__setupCalls.push({ method: 'startInstall', options });
@@ -203,6 +203,15 @@ async function installSetupMock(
             canCancel: !['up-to-date', 'handoff-committed', 'launching-bundled', 'launch-error'].includes(state),
             ...extras
           });
+          if (scenario === 'manual-downgrade') {
+            emit('launching-bundled', { canCancel: false });
+            (window as any).__setupCalls.push({ method: 'bundledLaunch', operationId });
+            return {
+              schemaVersion: 1,
+              operationId,
+              outcome: 'bundled-launched'
+            };
+          }
           setTimeout(() => emit('checking'), 5);
           if (scenario === 'update-found') {
             setTimeout(() => emit('update-available', {
@@ -462,6 +471,22 @@ test('Setup applies a newly selected language before legal review', async ({ pag
   await expect(page.locator('.setup-steps > li').first()).toContainText('Язык');
   await page.getByRole('button', { name: setupCopy.ru.continue }).click();
   await expect(page.getByLabel(setupCopy.ru.terms)).toBeVisible();
+});
+
+test('Setup presents an owned downgrade and launches it without updater handoff', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 640 });
+  await installSetupMock(page, 'ru', 'success', 'manual-downgrade');
+  await page.goto(`${baseUrl}/setup/setup.html`);
+  await reachLocation(page, 'ru');
+
+  await expect(page.getByText('Откат существующей установки')).toBeVisible();
+  await page.getByRole('button', { name: setupCopy.ru.install }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    (window as any).__setupCalls.some((call: any) => call.method === 'bundledLaunch')
+  )).toBe(true);
+  expect(await page.evaluate(() =>
+    (window as any).__setupCalls.some((call: any) => call.method === 'updaterHandoff')
+  )).toBe(false);
 });
 
 test('Setup exposes a stable native error code without a stack trace', async ({ page }) => {

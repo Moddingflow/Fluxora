@@ -27,7 +27,7 @@ describe('build operation overlays', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toMatch(
-      /const \{ project: created \} = await createProjectFromDraft\(draft, operationId\);[\s\S]*setIsCreateOpen\(false\);[\s\S]*changeRoute\('build'\);[\s\S]*closeOperationOverlay\(operationId\);/
+      /const \{ project: created \} = await createProjectFromDraft\(draft, operationId\);[\s\S]*createWizard\.close\(\);[\s\S]*changeRoute\('build'\);[\s\S]*closeOperationOverlay\(operationId\);/
     );
     expect(app).not.toContain('setMessage(`Created ${created.name}`)');
     expect(app).not.toContain('finishOperationOverlay(operationId, `Created ${created.name}`)');

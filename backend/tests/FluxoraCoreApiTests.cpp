@@ -405,6 +405,11 @@ namespace fluxora::tests
             listed.find(
                 L"\"externalProviderGameSlugs\":{\"moddingflow\":[\"skyrim-se-ae\",\"skyrim-se\"]}"),
             std::wstring::npos);
+        EXPECT_NE(
+            listed.find(
+                L"\"executableName\":\"SkyrimSE.exe\",\"role\":\"primary\""),
+            std::wstring::npos);
+        EXPECT_NE(listed.find(L"\"isPrimary\":true"), std::wstring::npos);
 
         ASSERT_EQ(
             fluxora_resolve_template(

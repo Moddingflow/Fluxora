@@ -16,6 +16,12 @@ export type {
 } from './display';
 export { NavItem, Tabs } from './navigation';
 export type { NavItemProps, TabItem, TabsProps } from './navigation';
+export { WizardStepper } from './wizard-stepper';
+export type {
+  WizardStep,
+  WizardStepperProps,
+  WizardStepState
+} from './wizard-stepper';
 export { EmptyState, FacetSpinner, LoadingSplash, ProgressBar, Skeleton } from './feedback';
 export type {
   EmptyStateProps,

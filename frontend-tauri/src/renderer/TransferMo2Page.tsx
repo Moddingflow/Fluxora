@@ -13,7 +13,7 @@ import {
   XCircle
 } from './design-system/icons/lucide-compat';
 
-import { FacetSpinner, ProgressBar } from './design-system';
+import { FacetSpinner, ProgressBar, WizardStepper } from './design-system';
 import { fluxoraLogo, modOrganizerIcon } from './design-system/assets';
 import {
   findTransferDriveForPath,
@@ -257,8 +257,6 @@ export const TransferMo2Page = ({
   );
 
   const renderRail = (activeStep: TransferStepId) => {
-    const activeIndex = Math.max(0, transferStepOrder.indexOf(activeStep));
-
     return (
       <aside className="transfer-wizard-rail" aria-label="Шаги переноса сборки">
         <div className="transfer-flow">
@@ -267,39 +265,19 @@ export const TransferMo2Page = ({
           {renderFlowChip('Fluxora', fluxoraLogo, true)}
         </div>
 
-        <nav className="transfer-rail-steps" aria-label="Transfer steps">
-          <span
-            className="transfer-rail-indicator"
-            style={{ transform: `translateY(${activeIndex * 64}px)` }}
-            aria-hidden="true"
-          />
-          {transferStepOrder.map((step, index) => {
-            const active = step === activeStep;
-            const done = completedSteps[step] && !active;
-            const meta = transferStepMeta[step];
-
-            return (
-              <button
-                key={step}
-                className="transfer-rail-row"
-                type="button"
-                aria-current={active ? 'step' : undefined}
-                data-active={active}
-                data-complete={done}
-                disabled={isRunning}
-                onClick={() => onSelectStep(step)}
-              >
-                <span className="transfer-rail-row__number">
-                  {done ? <Check size={13} aria-hidden="true" /> : index + 1}
-                </span>
-                <span className="transfer-rail-row__copy">
-                  <strong>{meta.title}</strong>
-                  <small>{meta.hint}</small>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
+        <WizardStepper
+          activeStepId={activeStep}
+          ariaLabel="Transfer steps"
+          className="transfer-rail-steps"
+          disabled={isRunning}
+          onStepSelect={(stepId) => onSelectStep(stepId as TransferStepId)}
+          steps={transferStepOrder.map((step) => ({
+            hint: transferStepMeta[step].hint,
+            id: step,
+            label: transferStepMeta[step].title,
+            state: completedSteps[step] && step !== activeStep ? 'complete' : 'pending'
+          }))}
+        />
 
         <div className="transfer-rail-spacer" />
       </aside>

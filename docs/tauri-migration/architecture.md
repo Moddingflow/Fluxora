@@ -42,6 +42,9 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 - Tauri Rust shell/facade expose typed `window.fluxora.templates.*` and `window.fluxora.projects.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Tauri Rust shell owns native file/folder dialogs, shell-open and frameless window controls through allowlisted facade APIs.
 - Renderer owns only catalog state, local search/filter text, selected-build state, wizard fields, confirmation prompts and visual loading/error/empty states.
+- `templates.list` includes executable display metadata. The Create Build renderer requires an explicit game choice, accepts only the selected template's declared primary executable name, and keeps the chosen path out of free-form editing; C++ repeats the primary-executable check before validated project creation.
+- On Windows, `defaultInstallRootDirectory` is `<SystemDrive>\Fluxora Builds`; `projects.previewDirectory` and `projects.create` append the normalized build name below that root.
+- `features/library/CreateBuildWizard.tsx` renders the semantic form and shared `WizardStepper`; `useCreateBuildWizard.ts` owns reached-step state, native picker orchestration and preview state. Enter invokes the current primary action, and untouched future steps never report completion.
 - Project mutations still create an `operationId` in renderer/main and flow through the bridge request metadata into the C++ operation context.
 
 ## Phase 6 Workspace Mods MVP
@@ -569,12 +572,20 @@ The renderer facades are intentionally narrow:
 
 - `window.fluxora.setup` exposes bootstrap state, the native folder picker,
   path validation, start, cancel-before-commit, launch, open-folder and
-  reveal-log operations. After a successful install, repair or update it also
+  reveal-log operations. Native bootstrap/path validation returns one explicit
+  `install`, `repair`, `update` or `downgrade` mode by comparing the owned
+  installed `Fluxora.exe` product version with the Setup product version. The
+  successful native install result repeats the lock-protected authoritative
+  mode so a concurrent preflight cannot change post-install behavior. After a
+  successful install, repair or update it also
   exposes `startPostInstallUpdate`, `cancelPostInstallUpdate` and a typed
   progress subscription. Those commands accept only the original root
   `operationId`; install directory, application path, installed version,
   selected language, fixed discovery endpoints and signing trust are retained
   by the native Setup session and never accepted from the renderer.
+  A detected manual `downgrade` launches the bundled installed application
+  directly and deliberately skips the stable-channel handoff for that Setup
+  run, so an explicit rollback is not immediately reversed.
 - `window.fluxora.updater` exposes a sanitized request summary, start, progress
   subscription, renderer-ready acknowledgement and final result.
 - Progress DTOs contain `operationId`, a stable phase and status key,

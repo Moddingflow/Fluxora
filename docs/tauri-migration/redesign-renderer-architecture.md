@@ -27,7 +27,7 @@ Graphify query for the broad redesign split returned backend-heavy noise around 
 | Area | Current home | Current responsibility |
 | --- | --- | --- |
 | App shell/titlebar | `App.tsx` `renderTitlebar` | Frameless chrome, drag region and `window.fluxora.windowControls` calls. |
-| Library/home/catalog | `features/library/LibraryHome.tsx`, `features/library/projectLibraryStats.ts`, `App.tsx`, `project-catalog-state.ts`, `services/project-catalog-service.ts` | Project list/search, create/open/rename/delete, visible FluxPack install entry, template filtering, catalog loading and compact project metrics. |
+| Library/home/catalog | `features/library/LibraryHome.tsx`, `features/library/CreateBuildWizard.tsx`, `features/library/useCreateBuildWizard.ts`, `features/library/projectLibraryStats.ts`, `App.tsx`, `project-catalog-state.ts`, `services/project-catalog-service.ts` | Project list/search, create/open/rename/delete, explicit game/executable selection, create-wizard view orchestration, visible FluxPack install entry, catalog loading and compact project metrics. |
 | Build workspace | `App.tsx`, `features/build/BuildDetailHeader.tsx`, `features/build/BuildPathsInspector.tsx`, `features/fluxpack/*`, `build-workspace-state.ts` | Build header actions, build path drawer, FluxPack inspect/plan/conflict/manual-download orchestration and summary state. |
 | Mods table/tree | `features/mods/ModsListSurface.tsx`, `features/mods/ModRow.tsx`, `features/mods/use-pending-install-orchestrator.ts`, `features/mods/install-progress-store.ts`, `features/lists/order-row-view-index.ts`, `components/virtualization/AdaptiveVirtualList.tsx`, `App.tsx` | Memoized list/row presentation, keyed install progress, O(1) row-view lookup, adaptive virtual windowing, file tree expansion and delta orchestration. |
 | Text/code editor | `main.tsx`, `features/text-editor/TextEditorWindow.tsx`, `features/text-editor/*` | Lightweight secondary-window bootstrap, Monaco lifecycle, document tabs/view state, Explorer/search/Problems/palette/status UI and guarded save orchestration over typed facade calls. The editor does not execute generic `App.tsx` startup. |
@@ -49,6 +49,7 @@ Redesign Phase 12 moved these surfaces out of `App.tsx`:
 - `features/settings/SettingsWorkspace.tsx` owns Settings nav and Nexus/language/MO2 transfer panel composition.
 - `features/build/BuildPathsInspector.tsx` owns the build path drawer form and native browse affordances.
 - `features/library/projectLibraryStats.ts` owns pure project metric formatting for the library home.
+- `features/library/CreateBuildWizard.tsx` owns bounded Create Build form rendering and keyboard interaction; `features/library/useCreateBuildWizard.ts` owns step reachability, dialog orchestration, validation messages and directory-preview state.
 
 `App.tsx` still creates operation ids, owns bridge/facade calls, keeps mutation handlers close to selected project state and passes callbacks into feature components. The cleanup reduced `App.tsx` from roughly 7650 lines to roughly 6630 lines in this phase. The old `operation-loader` CSS animation was removed after Phase 11 replaced it with design-system `FacetSpinner` and `ProgressBar` primitives.
 
@@ -97,7 +98,7 @@ frontend-tauri/src/renderer/
 
 | Module | Owns | May call | Must not own |
 | --- | --- | --- | --- |
-| `design-system/` | Pure typed primitives, token imports, icon wrapper and accessibility defaults. | No bridge calls. | Project/mod/download/install business rules, raw Tauri invoke, filesystem or shell behavior. |
+| `design-system/` | Pure typed primitives, token imports, icon wrapper, shared `WizardStepper`, local asset exports and accessibility defaults. | No bridge calls. | Project/mod/download/install business rules, raw Tauri invoke, filesystem or shell behavior. |
 | `components/chrome/` | Titlebar, window controls, app chrome visual composition and `data-tauri-drag-region`. | `window.fluxora.windowControls.*` only for chrome actions. | Domain state, bridge host lifecycle or C++ behavior. |
 | `features/library/` | Home/library route, project rows, create wizard UI state and catalog hooks. | `window.fluxora.projects.*`, `window.fluxora.templates.*`, dialogs/shell through facade. | Project filesystem rules or template resolution logic beyond display/orchestration. |
 | `features/text-editor/` | Workbench composition, Monaco models/view state, open-document search, language labels, command/menu UI and unsaved-change guards. | Typed `window.fluxora.mods`, `window.fluxora.textFiles` and native dialog facade methods. | Raw filesystem access, shell processes, workspace indexing, compiler/LSP ownership or domain save rules. |

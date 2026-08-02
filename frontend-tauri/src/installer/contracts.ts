@@ -1,5 +1,5 @@
 export type InstallerLanguage = 'en' | 'de' | 'ru';
-export type SetupMode = 'install' | 'repair' | 'update';
+export type SetupMode = 'install' | 'repair' | 'update' | 'downgrade';
 export type SetupStep =
   | 'language'
   | 'legal'

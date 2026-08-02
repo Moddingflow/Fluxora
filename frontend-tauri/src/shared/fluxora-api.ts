@@ -893,6 +893,17 @@ export interface FluxoraGameCapabilities {
   [key: string]: unknown;
 }
 
+export interface FluxoraExecutableDisplayMetadata {
+  id?: string;
+  displayName?: string;
+  executableName?: string;
+  role?: string;
+  workingDirectoryKind?: string;
+  isPrimary?: boolean;
+  isLauncher?: boolean;
+  isScriptExtender?: boolean;
+}
+
 export interface FluxoraGameTemplate {
   id: string;
   displayName: string;
@@ -914,7 +925,7 @@ export interface FluxoraGameTemplate {
   gameCapabilities?: FluxoraGameCapabilities;
   externalProviderGameSlugs?: Record<string, string[]>;
   contentLayoutSummary?: Record<string, unknown>;
-  executableDisplayMetadata?: unknown;
+  executableDisplayMetadata?: FluxoraExecutableDisplayMetadata[];
   launchTrackingMetadata?: unknown;
 }
 
@@ -926,7 +937,7 @@ export interface FluxoraExecutable {
   workingDirectory: string;
   iconPath: string;
   managedToolKind?: 'bodySlide' | 'texGen' | 'dynDoLod';
-  executableDisplayMetadata?: unknown;
+  executableDisplayMetadata?: FluxoraExecutableDisplayMetadata;
 }
 
 export interface FluxoraManagedOutputMod {

@@ -106,6 +106,14 @@ describe('Setup component contract', () => {
   );
 
   it.each([
+    ['en', 'Roll back existing installation'],
+    ['de', 'Vorhandene Installation zurücksetzen'],
+    ['ru', 'Откат существующей установки']
+  ] as const)('labels a detected manual downgrade in %s', (language, label) => {
+    expect(translate(language, 'setup.mode.downgrade')).toBe(label);
+  });
+
+  it.each([
     ['en', 'Updating Fluxora', 'Downloading the signed full update…'],
     ['de', 'Fluxora wird aktualisiert', 'Signiertes Vollupdate wird heruntergeladen…'],
     ['ru', 'Обновление Fluxora', 'Загрузка подписанного полного обновления…']

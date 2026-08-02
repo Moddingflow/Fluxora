@@ -20,14 +20,25 @@ These rules are project-specific and apply to all Codex/agent work in this repos
 - When a bridge method, DTO or protocol envelope changes, update the architecture/protocol docs, tests and logging expectations in the same change.
 - Preserve the Tauri security baseline from the architecture docs: sandboxed webviews by default, typed `window.fluxora` API, no scattered raw command exposure, no synchronous native calls from renderer, navigation controls, safe external-link handling and Content Security Policy.
 
+## Design System And Reuse
+
+- Treat `.agents/skills/stitch-design-taste/DESIGN.md` as the normative source of truth for Fluxora product UI. The required direction is premium ultra-minimal product software: compact, restrained, explicit and free of recognizable AI slop. Function, hierarchy, state clarity and accessibility outrank novelty or decoration.
+- Before creating any asset, icon, visual primitive, component, interaction pattern or service, inspect the scoped existing implementation. Reuse suitable sources from `frontend-tauri/src/renderer/design-system/`, its central asset/icon exports, focused feature/components, renderer services, stores and hooks.
+- Do not redraw existing brand or integration assets, duplicate a control, copy-and-restyle a component, or create a parallel interaction system merely to make a surface look new. Extend or compose the shared source when its semantics fit.
+- A new asset or UI element is allowed only when no suitable source exists. Reusable additions must be centralized, accessible, locally owned, and reviewed for license/provenance and packaging implications.
+- Every new bundled game definition must add its matching local selector artwork under `frontend-tauri/src/renderer/assets/background/` in the same change. Locate appropriate recognizable artwork with verified redistribution/provenance, record its source in that folder, crop it to exactly `960x320`, encode it as WebP at no more than `96 KiB`, and register the game ID in the local manifest/test. Never ship an oversized source image or fetch game artwork at runtime; use locally owned symbolic artwork when redistribution rights are unclear.
+- When a change alters the visual language, assets, tokens, reusable component contract, layout, motion, accessibility baseline or UI architecture, automatically update `DESIGN.md`, the governing design skill and every affected design, token, component or architecture document in the same change. Do not defer documentation sync until a separate request.
+- Run an anti-slop reduction pass on every UI change: remove nonessential containers, cards, labels, badges, effects, actions and motion; reject gradients, glow, glassmorphism, marketing heroes, generic dashboards, decorative AI styling, cards-everywhere and fake product state.
+
 ## Service Shape
 
-- Split behavior into small, focused services.
+- Every non-trivial behavior, workflow and stateful integration must have a small, focused service boundary before implementation grows around it.
 - UI work follows the same service split: keep Tauri renderer orchestration in small renderer services, stores/hooks and focused components.
+- Components render bounded UI responsibilities and local interaction only; they must not become repositories, bridge clients, filesystem owners or workflow orchestrators.
 - Renderer UI services may orchestrate typed bridge calls and shape view state only; domain behavior and filesystem decisions still belong in C++ core services.
 - Avoid large master files, catch-all managers and god objects.
 - Prefer clear ownership: one service should have one main responsibility.
-- When adding functionality, first look for an existing service boundary. If none fits, create a small new service instead of expanding an unrelated one.
+- When adding functionality, first look for an existing service boundary and reuse it when the responsibility matches. If none fits, create a small new service instead of expanding an unrelated one or duplicating an existing workflow.
 
 ## Change Process
 

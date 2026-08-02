@@ -12,6 +12,8 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+#[cfg(windows)]
+use std::ffi::OsStr;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -1697,6 +1699,40 @@ fn fluxora_data_dir() -> PathBuf {
     }
 
     std::env::temp_dir().join("Fluxora")
+}
+
+#[cfg(windows)]
+fn windows_drive_root(value: &OsStr) -> Option<PathBuf> {
+    let raw = value.to_string_lossy();
+    let mut characters = raw.trim().chars();
+    let drive_letter = characters.next()?;
+    if !drive_letter.is_ascii_alphabetic() || characters.next()? != ':' {
+        return None;
+    }
+
+    Some(PathBuf::from(format!("{}:\\", drive_letter.to_ascii_uppercase())))
+}
+
+fn default_install_root_directory(data_dir: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let _ = data_dir;
+        let system_drive = std::env::var_os("SystemDrive")
+            .as_deref()
+            .and_then(windows_drive_root)
+            .or_else(|| {
+                std::env::var_os("SystemRoot")
+                    .as_deref()
+                    .and_then(windows_drive_root)
+            })
+            .unwrap_or_else(|| PathBuf::from(r"C:\"));
+        return system_drive.join("Fluxora Builds");
+    }
+
+    #[cfg(not(windows))]
+    {
+        data_dir.join("Projects")
+    }
 }
 
 fn executable_log_dir() -> Option<PathBuf> {
@@ -3727,7 +3763,9 @@ fn fluxora_runtime_paths(_app: AppHandle) -> RuntimePaths {
     let root = fluxora_data_dir();
     RuntimePaths {
         build_configs_directory: root.join("Builds").to_string_lossy().to_string(),
-        default_install_root_directory: root.join("Projects").to_string_lossy().to_string(),
+        default_install_root_directory: default_install_root_directory(&root)
+            .to_string_lossy()
+            .to_string(),
     }
 }
 
@@ -13707,6 +13745,18 @@ mod tests {
         assert_eq!(
             data_dir.join("Builds"),
             app_data.join("Fluxora").join("Builds")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_install_root_directory_uses_the_windows_system_drive() {
+        let _env_lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _system_drive_guard = EnvVarGuard::set("SystemDrive", "R:");
+
+        assert_eq!(
+            default_install_root_directory(&PathBuf::from(r"D:\AppData\Fluxora")),
+            PathBuf::from(r"R:\Fluxora Builds")
         );
     }
 }

@@ -1,6 +1,6 @@
 # Fluxora Tauri design system
 
-Дата обновления: 2026-06-25
+Дата обновления: 2026-08-02
 
 Статус: Phase 13 foundation complete for `frontend-tauri/`; redesign Phase 2 moved the renderer foundation tokens into `frontend-tauri/src/renderer/design-system/tokens/foundations.css` while keeping `styles.css` as the public CSS entrypoint. Redesign Phase 3 added typed renderer primitives under `frontend-tauri/src/renderer/design-system/primitives/` and the local icon wrapper under `frontend-tauri/src/renderer/design-system/icons/`.
 
@@ -32,13 +32,13 @@ Rules:
 - Typography prefers IBM Plex Sans/Mono when installed or later bundled as approved local `.woff2` files, then falls back to Windows/system-safe UI fonts with tabular numerals for dense data. Do not add remote fonts to the Tauri renderer.
 - Keep radii tight and consistent with the redesign tokens: 8px for chips/buttons, 9px for inputs, 10px for inner panels and 12px for cards/dialog panels. Cards inside cards are not part of the workbench language.
 
-Renderer assets are local bundle assets under `frontend-tauri/src/renderer/assets/`: brand files in `brand/`, content imagery in `images/` and redesign SVG glyphs in `icons/`. Runtime UI must not depend on remote images, icon CDNs or remote font CSS.
+Renderer assets are local bundle assets under `frontend-tauri/src/renderer/assets/`: brand files in `brand/`, content imagery in `images/`, game-selector artwork in `background/` and redesign SVG glyphs in `icons/`. Runtime UI must not depend on remote images, icon CDNs or remote font CSS. Every bundled game definition has a registered `960x320` WebP background no larger than `96 KiB`, with local provenance recorded in `background/README.md`; the asset coverage test rejects missing or oversized files.
 
 ## Component contract
 
 Typed primitive entrypoints:
 
-- `frontend-tauri/src/renderer/design-system/primitives/index.ts` exports `Button`, `IconButton`, `Input`, `Select`, `Switch`, `Checkbox`, `Card`, `Badge`, `StatusDot`, `SectionLabel`, `Tabs`, `NavItem`, `ProgressBar`, `EmptyState`, `FacetSpinner` and `LoadingSplash`.
+- `frontend-tauri/src/renderer/design-system/primitives/index.ts` exports `Button`, `IconButton`, `Input`, `Select`, `Switch`, `Checkbox`, `Card`, `Badge`, `StatusDot`, `SectionLabel`, `Tabs`, `NavItem`, `WizardStepper`, `ProgressBar`, `EmptyState`, `FacetSpinner` and `LoadingSplash`.
 - `frontend-tauri/src/renderer/design-system/icons/index.ts` exports the local `Icon` wrapper. Icons render on a 24x24 canvas and stroke with `currentColor`.
 - `frontend-tauri/src/renderer/design-system/PrimitivePreview.tsx` is a dev-only preview surface available from the app at `#design-system`. It must not call bridge APIs or own business state.
 - Product code must not use `window.FluxoraDesignSystem_c83a40` or any other prototype global namespace.
@@ -54,6 +54,12 @@ Inputs and selectors:
 
 - Text fields use the shared `input` rules, visible focus ring and no raw browser default styling.
 - Multi-option mode controls use `.segmented-control` or `.segmented-grid`, not ad-hoc text buttons.
+
+Multi-step workflows:
+
+- `WizardStepper` is the shared vertical navigation contract for product wizards. It exposes current, complete, pending and disabled states without pulse or decorative progress effects.
+- A wizard marks only reached, validated steps complete. A default value in an untouched future step is not completion.
+- The Create Build workflow uses one semantic form, so Enter submits the current validated step; explicit game selection and exact official-executable validation remain mandatory.
 
 Surfaces:
 

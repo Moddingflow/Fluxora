@@ -201,6 +201,14 @@ install path or mutable Tauri identifier:
   fallback once; successful automatic update then establishes the receipt needed
   by subsequent exact-version deltas.
 
+Setup detects a prior owned installation from its durable per-user ownership
+registration, reuses that exact directory, and compares the installed
+`Fluxora.exe` product version with its bundled product version. Equal versions
+are `repair`, a lower installed version is `update`, and a higher installed
+version is the explicit `downgrade` mode. All four modes use the same
+single-writer, staged atomic directory replacement and rollback path; no
+version direction is rejected by Setup.
+
 Every successful Setup `install`, `repair` or `update` continues under the same
 root `operationId` with an automatic stable-channel check. This post-install
 path uses the common signed discovery, cache validation, resumable download,
@@ -212,6 +220,9 @@ handoff commit, Setup launches the installed bundled application; the normal
 in-app check can retry later. A successful handoff invokes the isolated updater
 with `presentation=setup-handoff` and the selected `en`, `de` or `ru` locale,
 without changing the native C++ request contract or its health/rollback rules.
+A successful explicit `downgrade` is the deliberate exception: Setup skips the
+stable-channel check for that run and launches the bundled downgraded
+application, preventing the requested rollback from being immediately undone.
 
 The native transaction uses installation siblings named
 `.Fluxora.fluxora-transaction`, `.Fluxora.fluxora-staging-<32hex>`,

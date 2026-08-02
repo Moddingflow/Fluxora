@@ -4,7 +4,10 @@ import {
   emptyProjectDraft,
   filterProjects,
   filterTemplates,
+  firstIncompleteProjectDraftStep,
+  primaryGameExecutableName,
   isProjectDraftStepComplete,
+  projectDraftStepError,
   projectCapabilitiesLabel,
   projectDisplayPath
 } from '../src/renderer/project-catalog-state';
@@ -54,7 +57,29 @@ const templates: FluxoraGameTemplate[] = [
     displayName: 'Skyrim Special Edition',
     gameName: 'Skyrim Special Edition',
     summary: 'Bethesda RPG',
-    uiTemplateId: 'skyrim'
+    uiTemplateId: 'skyrim',
+    executableDisplayMetadata: [
+      {
+        id: 'game',
+        displayName: 'Skyrim Special Edition',
+        executableName: 'SkyrimSE.exe',
+        role: 'primary',
+        workingDirectoryKind: '',
+        isPrimary: true,
+        isLauncher: false,
+        isScriptExtender: false
+      },
+      {
+        id: 'launcher',
+        displayName: 'Skyrim Launcher',
+        executableName: 'SkyrimSELauncher.exe',
+        role: 'launcher',
+        workingDirectoryKind: '',
+        isPrimary: false,
+        isLauncher: true,
+        isScriptExtender: false
+      }
+    ]
   },
   {
     id: 'fallout-4',
@@ -85,10 +110,53 @@ describe('project catalog state', () => {
       gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe'
     };
 
-    expect(isProjectDraftStepComplete(draft, 0)).toBe(true);
-    expect(isProjectDraftStepComplete(draft, 1)).toBe(true);
-    expect(isProjectDraftStepComplete(draft, 2)).toBe(true);
-    expect(isProjectDraftStepComplete(draft, 3)).toBe(true);
+    expect(isProjectDraftStepComplete(draft, 0, templates[0])).toBe(true);
+    expect(isProjectDraftStepComplete(draft, 1, templates[0])).toBe(true);
+    expect(isProjectDraftStepComplete(draft, 2, templates[0])).toBe(true);
+    expect(isProjectDraftStepComplete(draft, 3, templates[0])).toBe(true);
+  });
+
+  it('accepts only the primary executable declared by the selected game', () => {
+    const draft = {
+      ...emptyProjectDraft('C:\\Fluxora Builds'),
+      projectName: 'Skyrim Main',
+      templateId: 'skyrim-special-edition',
+      gamePath: 'C:\\Games\\Skyrim\\SkyrimSELauncher.exe'
+    };
+
+    expect(primaryGameExecutableName(templates[0])).toBe('SkyrimSE.exe');
+    expect(isProjectDraftStepComplete(draft, 2, templates[0])).toBe(false);
+    expect(
+      isProjectDraftStepComplete(
+        { ...draft, gamePath: 'C:\\Games\\Skyrim\\SKYRIMSE.EXE' },
+        2,
+        templates[0]
+      )
+    ).toBe(true);
+  });
+
+  it('reports the first incomplete step without treating untouched defaults as progress', () => {
+    const draft = emptyProjectDraft('C:\\Fluxora Builds');
+
+    expect(firstIncompleteProjectDraftStep(draft, templates)).toBe(0);
+    expect(projectDraftStepError(draft, 0, null)).toBe('Enter a build name.');
+
+    const namedDraft = { ...draft, projectName: 'Northwind' };
+    expect(firstIncompleteProjectDraftStep(namedDraft, templates)).toBe(1);
+    expect(projectDraftStepError(namedDraft, 1, null)).toBe('Choose a game template.');
+  });
+
+  it('explains which official executable is required', () => {
+    const draft = {
+      ...emptyProjectDraft('C:\\Fluxora Builds'),
+      projectName: 'Northwind',
+      templateId: templates[0].id,
+      gamePath: 'C:\\Games\\Skyrim\\SkyrimSELauncher.exe'
+    };
+
+    expect(projectDraftStepError(draft, 2, templates[0])).toBe(
+      'Select SkyrimSE.exe. Other executables cannot be used.'
+    );
   });
 
   it('keeps default install root as the only populated field in an empty draft', () => {
@@ -116,7 +184,7 @@ describe('project catalog state', () => {
     ];
 
     cases.forEach(({ draft, stepIndex }) => {
-      expect(isProjectDraftStepComplete(draft, stepIndex)).toBe(false);
+      expect(isProjectDraftStepComplete(draft, stepIndex, templates[0])).toBe(false);
     });
   });
 

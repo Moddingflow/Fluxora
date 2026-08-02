@@ -50,6 +50,7 @@ pub enum SetupMode {
     Install,
     Repair,
     Update,
+    Downgrade,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -184,6 +185,7 @@ pub struct NativeInstallResult {
     #[serde(default)]
     pub desktop_shortcut_path: String,
     pub created_desktop_shortcut: bool,
+    pub mode: SetupMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -484,6 +486,20 @@ mod tests {
 
         let serialized = serde_json::to_value(state).unwrap();
         assert!(serialized.get("installedVersion").is_none());
+    }
+
+    #[test]
+    fn native_install_result_accepts_authoritative_downgrade_mode() {
+        let result: NativeInstallResult = serde_json::from_value(serde_json::json!({
+            "installDirectory": r"C:\Fluxora Installed",
+            "applicationPath": r"C:\Fluxora Installed\Fluxora.exe",
+            "desktopShortcutPath": "",
+            "createdDesktopShortcut": false,
+            "mode": "downgrade"
+        }))
+        .unwrap();
+
+        assert_eq!(result.mode, SetupMode::Downgrade);
     }
 
     #[test]

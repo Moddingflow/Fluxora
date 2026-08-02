@@ -1,121 +1,303 @@
-# Design System: Taste Standard
-**Skill:** stitch-design-taste
+# Fluxora Product Interface Standard
 
----
+**Status:** Normative design source of truth
 
-## Configuration — Set Your Style
-Adjust these dials before using this design system. They control how creative, dense, and animated the output should be. Pick the level that fits your project.
+**Applies to:** Fluxora Tauri product UI, product-facing installer UI, generated screen concepts, and implementation handoff
 
-| Dial | Level | Description |
-|------|-------|-------------|
-| **Creativity** | `8` | `1` = Ultra-minimal, Swiss, silent, monochrome. `5` = Balanced, clean but with personality. `10` = Expressive, editorial, bold typography experiments, inline images in headlines, strong asymmetry. Default: `8` |
-| **Density** | `4` | `1` = Gallery-airy, massive whitespace. `5` = Balanced sections. `10` = Cockpit-dense, data-heavy. Default: `4` |
-| **Variance** | `8` | `1` = Predictable, symmetric grids. `5` = Subtle offsets. `10` = Artsy chaotic, no two sections alike. Default: `8` |
-| **Motion Intent** | `6` | `1` = Static, no animation noted. `5` = Subtle hover/entrance cues. `10` = Cinematic orchestration noted in every component. Default: `6` |
+**Skill:** `stitch-design-taste`
 
-> **How to use:** Change the numbers above to match your project's vibe. At **Creativity 1–3**, the system produces clean, quiet, Notion-like interfaces. At **Creativity 7–10**, expect inline image typography, dramatic scale contrast, and strong editorial layouts. The rest of the rules below adapt to your chosen levels.
+This document defines a premium, ultra-minimal desktop product interface. It replaces the previous expressive marketing aesthetic. When a local implementation and this document disagree, resolve the mismatch in the same change instead of silently creating a second visual language.
 
----
+## 1. Direction
 
-## 1. Visual Theme & Atmosphere
-A restrained, gallery-airy interface with confident asymmetric layouts and fluid spring-physics motion. The atmosphere is clinical yet warm — like a well-lit architecture studio where every element earns its place through function. Density is balanced (Level 4), variance runs high (Level 8) to prevent symmetrical boredom, and motion is fluid but never theatrical (Level 6). The overall impression: expensive, intentional, alive.
+Premium is precision, restraint, speed, and consistency. It is not decoration.
 
-## 2. Color Palette & Roles
-- **Canvas White** (#F9FAFB) — Primary background surface. Warm-neutral, never clinical blue-white
-- **Pure Surface** (#FFFFFF) — Card and container fill. Used with whisper shadow for elevation
-- **Charcoal Ink** (#18181B) — Primary text. Zinc-950 depth — never pure black
-- **Steel Secondary** (#71717A) — Body text, descriptions, metadata. Zinc-500 warmth
-- **Muted Slate** (#94A3B8) — Tertiary text, timestamps, disabled states
-- **Whisper Border** (rgba(226,232,240,0.5)) — Card borders, structural 1px lines. Semi-transparent for depth
-- **Diffused Shadow** (rgba(0,0,0,0.05)) — Card elevation. Wide-spreading, 40px blur, -15px offset. Never harsh
+Ultra-minimal means that every visible element has a current task. It does not mean hiding essential state, reducing legibility, or replacing clear labels with mystery icons.
 
-### Accent Selection (Pick ONE per project)
-- **Emerald Signal** (#10B981) — For growth, success, positive data dashboards
-- **Electric Blue** (#3B82F6) — For productivity, SaaS, developer tools
-- **Deep Rose** (#E11D48) — For creative, editorial, fashion-adjacent projects
-- **Amber Warmth** (#F59E0B) — For community, social, warm-toned products
+Fluxora should feel like a modern coding tool: calm, compact, direct, and trustworthy. The work is the visual focus. Chrome remains quiet. State changes are explicit. The interface must never resemble a SaaS landing page, a template dashboard, a game launcher, or an AI-generated concept shot.
 
-### Banned Colors
-- Purple/Violet neon gradients — the "AI Purple" aesthetic
-- Pure Black (#000000) — always Off-Black or Zinc-950
-- Oversaturated accents above 80% saturation
-- Mixed warm/cool gray systems within one project
+| Quality | Target | Meaning |
+|---|---:|---|
+| Restraint | `10/10` | Remove anything that does not improve comprehension or control. |
+| Functional density | `7/10` | Compact desktop workflow without crowding. |
+| Visual variance | `2/10` | Stable patterns and alignment; asymmetry only when the task requires it. |
+| Motion | `2/10` | Short state transitions only; static by default. |
+| Decoration | `0/10` | No visual filler, ornamental effects, or trend-driven treatment. |
 
-## 3. Typography Rules
-- **Display:** `Geist`, `Satoshi`, `Cabinet Grotesk`, or `Outfit` — Track-tight (`-0.025em`), controlled fluid scale, weight-driven hierarchy (700–900). Not screaming. Leading compressed (`1.1`). Alternatives forced — `Inter` is BANNED for premium contexts
-- **Body:** Same family at weight 400 — Relaxed leading (`1.65`), 65ch max-width, Steel Secondary color (#71717A)
-- **Mono:** `Geist Mono` or `JetBrains Mono` — For code blocks, metadata, timestamps. When density exceeds Level 7, all numbers switch to monospace
-- **Scale:** Display at `clamp(2.25rem, 5vw, 3.75rem)`. Body at `1rem/1.125rem`. Mono metadata at `0.8125rem`
+Non-negotiable outcomes:
 
-### Banned Fonts
-- `Inter` — banned everywhere in premium/creative contexts
-- Generic serif fonts (`Times New Roman`, `Georgia`, `Garamond`, `Palatino`) — BANNED. If serif is needed for editorial/creative, use only distinctive modern serifs like `Fraunces`, `Gambarino`, `Editorial New`, or `Instrument Serif`. Never use default browser serif stacks. Serif is always BANNED in dashboards or software UIs regardless
+- One obvious primary task per view or dialog.
+- One visual language across catalog, workspace, settings, installer, operations, and AI surfaces.
+- Existing assets, tokens, icons, primitives, components, and interaction patterns are reused before anything new is created.
+- Every loading, empty, error, disabled, selected, busy, offline, permission, and success state is intentionally designed.
+- No screen ships with recognizable AI slop.
 
-## 4. Component Stylings
-* **Buttons:** Flat surface, no outer glow. Primary: accent fill with white text. Secondary: ghost/outline. Active state: `-1px translateY` or `scale(0.98)` for tactile push. Hover: subtle background shift, never glow
-* **Cards/Containers:** Generously rounded corners (`2.5rem`). Pure white fill. Whisper border (`1px`, semi-transparent). Diffused shadow (`0 20px 40px -15px rgba(0,0,0,0.05)`). Internal padding `2rem–2.5rem`. Used ONLY when elevation communicates hierarchy — high-density layouts replace cards with `border-top` dividers or negative space
-* **Inputs/Forms:** Label positioned above input. Helper text optional. Error text below in Deep Rose. Focus ring in accent color, `2px` offset. No floating labels. Standard `0.5rem` gap between label-input-error stack
-* **Navigation:** Sleek, sticky. Icons scale on hover (Dock Magnification optional). No hamburger on desktop. Clean horizontal with generous spacing
-* **Loaders:** Skeletal shimmer matching exact layout dimensions and rounded corners. Shifting light reflection across placeholder shapes. Never circular spinners
-* **Empty States:** Composed illustration or icon composition with guidance text. Never just "No data found"
-* **Error States:** Inline, contextual. Red accent underline or border. Clear recovery action
+## 2. Existing Sources and Reuse Order
 
-## 5. Hero Section
-The Hero is the first impression — it must be striking, creative, and never generic.
-- **Inline Image Typography:** Embed small, contextual photos or visuals directly between words or letters in the headline. Example: "We build [photo of hands typing] digital [photo of screen] products" — images sit inline at type-height, rounded, acting as visual punctuation between words. This is the signature creative technique
-- **No Overlapping Elements:** Text must never overlap images or other text. Every element has its own clear spatial zone. No z-index stacking of content layers, no absolute-positioned headlines over images. Clean separation always
-- **No Filler Text:** "Scroll to explore", "Swipe down", scroll arrow icons, bouncing chevrons, and any instructional UI chrome are BANNED. The user knows how to scroll. Let the content pull them in naturally
-- **Asymmetric Structure:** Centered Hero layouts are BANNED at this variance level. Use Split Screen (50/50), Left-Aligned text / Right visual, or Asymmetric Whitespace with large empty zones
-- **CTA Restraint:** Maximum one primary CTA button. No secondary "Learn more" links. No redundant micro-copy below the headline
+Do not treat a new screen as a blank canvas. Inspect the current product first.
 
-## 6. Layout Principles
-- **Grid-First:** CSS Grid for all structural layouts. Never flexbox percentage math (`calc(33% - 1rem)` is BANNED)
-- **No Overlapping:** Elements must never overlap each other. No absolute-positioned layers stacking content on content. Every element occupies its own grid cell or flow position. Clean, separated spatial zones
-- **Feature Sections:** The "3 equal cards in a row" pattern is BANNED. Use 2-column Zig-Zag, asymmetric Bento grids (2fr 1fr 1fr), or horizontal scroll galleries
-- **Containment:** All content within `max-width: 1400px`, centered. Generous horizontal padding (`1rem` mobile, `2rem` tablet, `4rem` desktop)
-- **Full-Height:** Use `min-height: 100dvh` — never `height: 100vh` (iOS Safari address bar jump)
-- **Bento Architecture:** For feature grids, use Row 1: 3 columns | Row 2: 2 columns (70/30 split). Each tile contains a perpetual micro-animation
+Use these sources in this order:
 
-## 7. Responsive Rules
-Every screen must work flawlessly across all viewports. **Responsive is not optional — it is a hard requirement. Every single element must be tested at 375px, 768px, and 1440px.**
-- **Mobile-First Collapse (< 768px):** All multi-column layouts collapse to a strict single column. `width: 100%`, `padding: 1rem`, `gap: 1.5rem`. No exceptions
-- **No Horizontal Scroll:** Horizontal overflow on mobile is a critical failure. All elements must fit within viewport width. If any element causes horizontal scroll, the design is broken
-- **Typography Scaling:** Headlines scale down gracefully via `clamp()`. Body text stays `1rem` minimum. Never shrink body below `14px`. Headlines must remain readable on 375px screens
-- **Touch Targets:** All interactive elements minimum `44px` tap target. Generous spacing between clickable items. Buttons must be full-width on mobile
-- **Image Behavior:** Hero and inline images scale proportionally. Inline typography images (photos between words) stack below the headline on mobile instead of inline
-- **Navigation:** Desktop horizontal nav collapses to a clean mobile menu (slide-in or full-screen overlay). No tiny hamburger icons without labels
-- **Cards & Grids:** Bento grids and asymmetric layouts revert to stacked single-column cards with full-width. Maintain internal padding (`1rem`)
-- **Spacing Consistency:** Vertical section gaps reduce proportionally on mobile (`clamp(3rem, 8vw, 6rem)`). Never cramped, never excessively airy
-- **Testing Viewports:** Designs must be verified at: `375px` (iPhone SE), `390px` (iPhone 14), `768px` (iPad), `1024px` (small laptop), `1440px` (desktop)
+1. Tokens in `frontend-tauri/src/renderer/design-system/tokens/foundations.css`.
+2. Primitives exported by `frontend-tauri/src/renderer/design-system/primitives/`.
+3. Icons from `frontend-tauri/src/renderer/design-system/icons/`.
+4. Brand and integration assets exported by `frontend-tauri/src/renderer/design-system/assets.ts`.
+5. Existing focused components, feature components, services, stores, and hooks with matching semantics.
+6. A small extension to an existing shared primitive when the need is genuinely reusable.
+7. A new component or asset only when no suitable implementation exists.
 
-## 8. Motion & Interaction (Code-Phase Intent)
-> **Note:** Stitch generates static screens — it does not animate. This section documents the **intended motion behavior** so that the coding agent (Antigravity, Cursor, etc.) knows exactly how to implement animations when building the exported design into a live product.
+Current reusable primitives include `Button`, `IconButton`, `Input`, `Select`, `CustomSelect`, `Switch`, `Checkbox`, `Tabs`, `NavItem`, `WizardStepper`, `Badge`, `Card`, `SectionLabel`, `StatusDot`, `ProgressBar`, `Skeleton`, `FacetSpinner`, `LoadingSplash`, and `EmptyState`.
 
-- **Physics Engine:** Spring-based exclusively. `stiffness: 100, damping: 20`. No linear easing anywhere. Premium, weighty feel on all interactive elements
-- **Perpetual Micro-Loops:** Every active dashboard component has an infinite-loop state — Pulse on status dots, Typewriter on search bars, Float on feature icons, Shimmer on loading states
-- **Staggered Orchestration:** Lists and grids mount with cascaded delays (`animation-delay: calc(var(--index) * 100ms)`). Waterfall reveals, never instant mount
-- **Layout Transitions:** Smooth re-ordering via shared element IDs. Items swap positions with physics, simulating real-time intelligence
-- **Hardware Rules:** Animate ONLY `transform` and `opacity`. Never `top`, `left`, `width`, `height`. Grain/noise filters on fixed, pointer-events-none pseudo-elements only
-- **Performance:** CPU-heavy perpetual animations isolated in microscopic leaf components. Never trigger parent re-renders. Target 60fps minimum
+Rules:
 
-## 9. Anti-Patterns (Banned)
-- No emojis — anywhere in UI, code, or alt text
-- No `Inter` font — use `Geist`, `Outfit`, `Cabinet Grotesk`, `Satoshi`
-- No generic serif fonts (`Times New Roman`, `Georgia`, `Garamond`) — if serif is needed, use distinctive modern serifs only (`Fraunces`, `Instrument Serif`)
-- No pure black (`#000000`) — Off-Black or Zinc-950 only
-- No neon outer glows or default box-shadow glows
-- No oversaturated accent colors above 80%
-- No excessive gradient text on large headers
-- No custom mouse cursors
-- No overlapping elements — text never overlaps images or other content. Clean spatial separation always
-- No 3-column equal card layouts for features
-- No centered Hero sections (at this variance level)
-- No filler UI text: "Scroll to explore", "Swipe down", "Discover more below", scroll arrows, bouncing chevrons — all BANNED
-- No generic names: "John Doe", "Sarah Chan", "Acme", "Nexus", "SmartFlow"
-- No fake round numbers: `99.99%`, `50%`, `1234567` — use organic data: `47.2%`, `+1 (312) 847-1928`
-- No AI copywriting clichés: "Elevate", "Seamless", "Unleash", "Next-Gen", "Revolutionize"
-- No broken Unsplash links — use `picsum.photos/seed/{id}/800/600` or SVG UI Avatars
-- No generic `shadcn/ui` defaults — customize radii, colors, shadows to match this system
-- No `z-index` spam — use only for Navbar, Modal, Overlay layer contexts
-- No `h-screen` — always `min-h-[100dvh]`
-- No circular loading spinners — skeletal shimmer only
+- Do not redraw the Fluxora mark, partner logos, game icons, or an existing UI icon.
+- Do not add a second button, select, tab, badge, card, progress, loading, or empty-state system.
+- Do not copy a component and restyle the copy. Extend the shared primitive or compose it.
+- Do not introduce remote stock imagery, random illustration packs, emoji, or generated decorative art into product UI.
+- New assets must have a clear product purpose, local ownership, appropriate licensing/provenance, and a central export when reused.
+- Bundled game definitions require a matching selector background in `frontend-tauri/src/renderer/assets/background/`: locate recognizable redistribution-safe artwork, record provenance, crop to exactly `960x320`, compress to WebP at no more than `96 KiB`, and register the game ID in the local manifest and coverage. Never fetch these backgrounds at runtime or retain an oversized source payload in the product bundle.
+- Reuse is semantic, not blind: do not force an existing element into a role it cannot perform accessibly or correctly.
+
+## 3. Visual Foundation
+
+### Color
+
+Fluxora uses one dark neutral system and one restrained gold accent. Use the existing variables rather than duplicating hex values in feature CSS.
+
+| Role | Token | Reference value | Use |
+|---|---|---:|---|
+| App canvas | `--flx-bg-1` | `#090C11` | Main workbench background. |
+| Deep canvas | `--flx-bg-0` | `#05070A` | Recessed or edge regions only. |
+| Soft panel | `--flx-panel-soft` | `#0B0E14` | Chrome, inset areas, secondary panes. |
+| Panel | `--flx-panel` | `#10141A` | Primary contained surface. |
+| Raised panel | `--flx-panel-raised` | `#161A23` | Menus, dialogs, selected raised regions. |
+| Hover surface | `--flx-panel-hover` | `#1D212B` | Temporary hover/pressed feedback. |
+| Primary text | `--flx-text` | `#F5F0E6` | Titles and important values. |
+| Secondary text | `--flx-text-secondary` | `#CEC8BA` | Labels and readable body copy. |
+| Muted text | `--flx-text-muted` | `#948D7E` | Metadata and low-emphasis context. |
+| Structural line | `--flx-line` | `#20252E` | One-pixel separation. |
+| Accent | `--flx-accent` | `#EDB848` | Primary action, selection, focus, active progress. |
+| Accent hover | `--flx-accent-hover` | `#F8CA62` | Direct interaction feedback only. |
+
+Accent discipline:
+
+- Gold is a signal, not a theme fill. Most screens should remain overwhelmingly neutral.
+- Use accent for the current primary action, active selection, focus, or meaningful progress.
+- Do not color every icon, heading, border, badge, and scrollbar simultaneously.
+- Semantic conflict colors are reserved for real mod-conflict meaning; they are not decorative alternatives.
+- Never introduce a second brand accent for variety.
+
+Surface discipline:
+
+- Prefer a flat canvas plus one-pixel lines. Use surface changes only to communicate containment or interaction.
+- Keep at most three perceptible depth levels in one view: canvas, panel, overlay.
+- Shadows are reserved for overlays that must separate from content, such as menus and dialogs.
+- No gradients, glassmorphism, frosted panes, colored shadows, bloom, neon, or ambient glow.
+- Never use pure black or pure white as large surfaces.
+
+### Typography
+
+- Use the bundled `Geist` family for product UI and `IBM Plex Mono` for code, paths, logs, identifiers, timestamps, and aligned numeric data.
+- Default UI copy is compact: `11–13px`; important labels and body text are `12–15px`; view titles are normally `18–22px`.
+- Large type is exceptional. A desktop workbench does not need landing-page headlines.
+- Use weight `400–600` for nearly all UI. Reserve `700` for rare, short emphasis.
+- Use sentence case. Avoid all-caps except brief established technical labels.
+- Prefer hierarchy through placement, weight, and tone before increasing size.
+- Keep labels explicit and short. Do not sacrifice clarity to sound stylish.
+- Do not introduce another font family for a feature.
+
+### Spacing and shape
+
+- Use the existing `4px` spacing scale: `4, 8, 12, 16, 20, 24, 32, 40, 48`.
+- Default component gaps are `4–8px`; group gaps are `12–16px`; major pane separation is `20–32px` only when needed.
+- Controls use the existing compact heights (`28–36px`). Increase the interaction area where accessibility requires it without making the visual control bulky.
+- Default radii are `4–10px`. Use `12px` only for a meaningful large container. Pill shapes are reserved for compact statuses, segmented choices, or truly circular controls.
+- Do not make every container rounded. Connected workbench panes should usually meet at straight one-pixel boundaries.
+- Alignment errors of one or two pixels are quality defects in dense product UI.
+
+## 4. Information Architecture and Layout
+
+Build a workbench, not a dashboard.
+
+- Preserve a stable shell: titlebar, navigation, workspace, contextual pane, and status/operation regions where applicable.
+- Make the active task visually dominant; supporting controls should recede.
+- Use split panes, tables, trees, lists, inspectors, toolbars, and inline details when they match the workflow.
+- Prefer rows and dividers over collections of floating cards.
+- Keep toolbars short. Move uncommon actions into a contextual menu instead of exposing every option.
+- Use progressive disclosure for advanced settings and destructive details.
+- Place controls next to the object they affect. Avoid remote actions and ambiguous global buttons.
+- Keep one primary action per local decision surface. Secondary actions must be visibly quieter.
+- Empty space should separate responsibilities, not decorate the screen.
+- Preserve user context during loading, refresh, navigation, and background operations.
+
+Never default to:
+
+- Marketing heroes, slogans, or oversized product names.
+- Metric-card dashboards for ordinary product state.
+- Bento grids, equal three-card rows, or card mosaics.
+- A centered stack when the task naturally needs a workbench or master-detail layout.
+- Nested cards inside cards.
+- A new page when an existing pane, dialog, or inline state solves the task more directly.
+
+## 5. Component Behavior
+
+### Buttons and actions
+
+- Use `Button` and `IconButton` before creating feature-specific controls.
+- Primary buttons use the accent only for the main safe action in the current context.
+- Secondary and ghost actions remain neutral. Destructive actions must be explicit and cannot borrow the premium accent.
+- Icon-only actions require an accessible name and a discoverable tooltip where the meaning is not universal.
+- Pressed feedback is subtle: a surface change or a maximum `scale(0.98)`. No bounce.
+- Disabled actions remain legible and explain why when the reason is not obvious.
+
+### Inputs and forms
+
+- Keep labels visible. Placeholder text is an example, never the only label.
+- Validate near the field and provide a concrete recovery instruction.
+- Group related inputs with spacing and a restrained section label, not a decorative card.
+- Preserve entered data after recoverable errors.
+- Advanced settings are collapsed by default only when their current value remains visible and understandable.
+
+### Multi-step workflows
+
+- Use the shared vertical `WizardStepper`; do not introduce a feature-specific stepper language.
+- A step is complete only after its required input has been explicitly provided and validated. Defaults and untouched future steps are not progress.
+- Users may revisit reached valid steps, but future or dependency-blocked steps remain disabled and legible.
+- Put the workflow in one semantic form: Enter invokes the current primary action, while validation prevents invalid advancement and returns a concrete inline recovery message.
+
+### Lists, trees, tables, and tabs
+
+- Rows are the default dense data container. Use consistent height, column alignment, hover, selected, focus, drag, disabled, and conflict states.
+- Keep row actions contextual and reveal secondary controls on selection, hover, keyboard focus, or menu invocation.
+- Use real headers where columns need interpretation. Do not fake tables with misaligned cards.
+- Tabs switch peer contexts; they are not general-purpose buttons.
+- Truncation must preserve access to the full value through tooltip, details, or copy action.
+
+### Cards, badges, and status
+
+- Use `Card` only when it communicates a real boundary, selection, or elevation. A heading plus divider is usually enough.
+- Use `Badge` for short categorical metadata, not for every label.
+- Status always combines shape/icon or text with color. Never rely on color alone.
+- Status dots are static by default. Pulse only for a time-sensitive live event whose movement adds information.
+
+### Loading, empty, and error states
+
+- Prefer preserving the current layout and showing local progress over replacing the whole app.
+- Use `ProgressBar` for measurable work and `Skeleton` only when the final geometry is known.
+- Use `FacetSpinner` only for a compact, genuinely indeterminate inline operation.
+- Loading animation exists only while work is happening and stops immediately afterward.
+- Empty states are concise: what is absent, why it matters, and the single best next action. Illustration is not required.
+- Errors state what failed, what remains safe, and what the user can do next. Never show a vague red banner as the entire recovery experience.
+- Success should usually be a quiet state update, not a celebratory modal, animation, or toast storm.
+
+### Dialogs and menus
+
+- A dialog handles one decision. Keep its title factual, body brief, and actions predictable.
+- Destructive confirmation names the affected object and consequence.
+- Menus contain actions, not paragraphs or miniature dashboards.
+- Popovers and menus close predictably on Escape, outside click, and completed action.
+
+## 6. Motion and Feedback
+
+The default interface is static.
+
+- Use the existing `120–220ms` motion tokens for hover, focus, open/close, and state replacement.
+- Animate only when it explains causality, continuity, progress, or spatial change.
+- Prefer opacity and small transforms. Avoid layout animation when a direct update is clearer.
+- No perpetual motion, breathing controls, floating icons, decorative shimmer, typewriter effects, bouncing, parallax, or cascade reveals.
+- Do not animate routine list mounting or every state change.
+- Respect `prefers-reduced-motion`; essential feedback must remain understandable with motion disabled.
+- Motion must never delay input, obscure current state, or compete with work.
+
+## 7. Product Copy
+
+- Write direct, domain-specific language. Use the user’s terms for mods, plugins, builds, conflicts, downloads, profiles, and operations.
+- Prefer a useful label over a clever phrase.
+- Remove redundant eyebrow + title + subtitle stacks when one line is enough.
+- Do not use promotional or AI copywriting clichés such as “Elevate”, “Unleash”, “Seamless”, “Next-gen”, “Revolutionary”, or “Supercharge”.
+- Do not invent fake metrics, testimonials, activity, filenames, accounts, or success claims.
+- Avoid generic placeholder names such as “John Doe”, “Acme”, “Nexus”, or “SmartFlow”.
+- Localize meaning, not just words. Keep Russian, English, and German layouts resilient to text-length differences.
+
+## 8. Accessibility and Window Behavior
+
+- Keyboard access, visible focus, correct semantics, and screen-reader names are release requirements.
+- Never encode meaning by color alone.
+- Maintain readable contrast for text, icons, focus, selection, disabled controls, and semantic states.
+- Preserve focus across local refreshes and return it logically after dialogs or menus close.
+- Test compact desktop layouts at the supported minimum (`860x620`) and at common larger sizes; no control may become unreachable.
+- Validate long Russian/German strings, 200% text zoom where supported, and Windows display scaling.
+- Avoid horizontal scrolling for general settings or forms. Data grids may scroll only when the data model genuinely requires it.
+- Keep native titlebar, resize, drag, context-menu, and platform behavior predictable.
+- Forced-colors and reduced-motion modes must remain usable.
+
+## 9. Service and Component Architecture
+
+Visual quality depends on clear ownership.
+
+- Every non-trivial workflow is split into focused renderer services, stores/hooks, and components.
+- Components render a bounded responsibility. They do not own filesystem, bridge, install, download, catalog, account, or domain business logic.
+- Renderer services may coordinate typed `window.fluxora` calls and shape view state only. Domain rules remain in focused C++ core services.
+- Reuse an existing service boundary before adding one. If no boundary fits, create a small service with one main responsibility.
+- Do not grow `App.tsx`, a route, dialog, panel, or “manager” into a catch-all orchestrator.
+- Do not create one-off service copies for each screen. Shared behavior has one owner and a typed contract.
+- New visual primitives remain presentation-only and cannot become hidden business-logic containers.
+
+## 10. AI-Slop Rejection Rules
+
+Reject the design immediately if any of these appear without a concrete product reason:
+
+- Gradient text, neon accents, outer glow, glassmorphism, blurred color blobs, grain overlays, star fields, or decorative grids.
+- Purple/blue “AI” styling, sparkle icons, robot mascots, “magic” buttons, or visual treatment that makes AI a decoration.
+- Oversized headline typography, marketing heroes, slogan copy, or landing-page CTA composition inside the desktop app.
+- A card around every group, excessive rounded containers, nested cards, floating islands, or pill-shaped controls everywhere.
+- Generic bento layouts, equal feature-card rows, decorative charts, fake metrics, or made-up activity feeds.
+- Unnecessary illustrations, stock photos, generated avatars, emoji, or random icon tiles.
+- Repeated title/subtitle/helper patterns that add no information.
+- Multiple equally loud primary actions or accent applied to ordinary chrome.
+- Hidden labels, ambiguous icon-only actions, weak contrast, tiny targets, or state shown only by color.
+- Spinners and skeletons used as decoration, fake waiting, or a substitute for real progress.
+- Constant motion, staggered entrances, pulsing status, animated gradients, or hover effects on non-interactive content.
+- Custom controls that duplicate an existing primitive, asset, icon, component, or interaction pattern.
+- Beautiful mock states that omit loading, empty, error, permission, disabled, busy, offline, or destructive behavior.
+- Implementation logic concentrated in a master component instead of focused services.
+
+## 11. Agent Workflow and Documentation Sync
+
+Before designing or implementing UI:
+
+1. Read this document and inspect the existing screen in context.
+2. Inventory relevant assets, icons, tokens, primitives, components, services, stores, and hooks.
+3. State the primary user task and information hierarchy in one sentence.
+4. Identify every required state and keyboard interaction.
+5. Decide what will be reused, extended, or added. A new element needs a specific justification.
+
+During implementation:
+
+1. Build with tokens and shared primitives.
+2. Keep orchestration in focused services/stores/hooks and rendering in focused components.
+3. Make the real operational state visible; do not build a visual-only facade.
+4. Validate the smallest supported window before adding visual refinement.
+
+After implementation:
+
+1. Run an anti-slop reduction pass: remove nonessential containers, labels, badges, effects, and actions.
+2. Compare the result with this document and existing product surfaces.
+3. Update this `DESIGN.md`, the governing design skill, tokens/component documentation, architecture notes, and other related sources automatically when the design language or reusable contract changed. Do this in the same change; do not wait for a separate request.
+4. Verify that no suitable existing asset, component, or service was duplicated.
+
+## 12. Acceptance Gate
+
+A screen is not complete until every answer is “yes”:
+
+- Is the primary task obvious within a few seconds?
+- Does the interface feel like one compact desktop tool rather than a set of template cards?
+- Does every visible element provide information, navigation, control, feedback, or necessary brand identity?
+- Are tokens, assets, icons, primitives, components, and services reused where appropriate?
+- Is there only one dominant action in each decision context?
+- Are all operational and edge states explicit and recoverable?
+- Is motion brief, functional, optional, and reduced-motion safe?
+- Is the screen keyboard-accessible, readable, and usable at the minimum window size?
+- Has every recognizable AI-slop pattern been removed rather than merely restyled?
+
+If any answer is “no”, simplify or correct the design before calling it premium.

@@ -212,6 +212,44 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ProjectServiceTests, CreateProjectRejectsNonPrimaryGameExecutableSelection)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"SkyrimSELauncher.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        try
+        {
+            (void)projects.createProject(ProjectCreateRequest{
+                L"Wrong Executable Build",
+                L"skyrimse",
+                game / L"SkyrimSELauncher.exe",
+                temp.path() / L"Builds"
+            });
+            FAIL() << "Expected project creation to reject the launcher executable.";
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            EXPECT_NE(
+                std::string(exception.what()).find("SkyrimSE.exe"),
+                std::string::npos);
+        }
+#endif
+    }
+
     TEST(ProjectServiceTests, CreateProjectCreatesMissingInstallRoot)
     {
 #ifndef _WIN32

@@ -24,7 +24,8 @@ import {
   Skeleton,
   StatusDot,
   Switch,
-  Tabs
+  Tabs,
+  WizardStepper
 } from '../src/renderer/design-system';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -71,10 +72,39 @@ describe('redesign primitives', () => {
       Skeleton,
       StatusDot,
       Switch,
-      Tabs
+      Tabs,
+      WizardStepper
     ]) {
       expect(typeof primitive).toBe('function');
     }
+  });
+
+  it('renders one accessible vertical stepper contract for product wizards', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(WizardStepper, {
+        activeStepId: 'game',
+        ariaLabel: 'Build creation steps',
+        onStepSelect: noop,
+        steps: [
+          { id: 'name', label: 'Build name', hint: 'Name', state: 'complete' },
+          { id: 'game', label: 'Game template', hint: 'Game', state: 'pending' },
+          {
+            id: 'executable',
+            label: 'Game executable',
+            hint: 'Executable',
+            state: 'pending',
+            disabled: true
+          }
+        ]
+      })
+    );
+
+    expect(markup).toContain('class="flx-wizard-steps"');
+    expect(markup).toContain('aria-label="Build creation steps"');
+    expect(markup).toContain('aria-current="step"');
+    expect(markup).toContain('data-state="complete"');
+    expect(markup).toContain('data-icon="check"');
+    expect(markup).toContain('disabled=""');
   });
 
   it('exports one decorative skeleton primitive for every loading surface', () => {

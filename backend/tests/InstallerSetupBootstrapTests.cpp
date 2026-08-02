@@ -200,6 +200,109 @@ TEST(SetupBootstrapServiceTests, DiscoversDurablyOwnedCustomInstallForRepair)
     EXPECT_EQ(fluxora::installer::SetupInstallMode::Repair, state.mode);
 }
 
+TEST(SetupBootstrapServiceTests, DetectsManualDowngradeForOwnedInstallation)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path install =
+        temporary.path() / L"Programs" / L"Fluxora";
+    fluxora::tests::writeTextFile(
+        install / L"Fluxora.exe",
+        "installed executable");
+    EmptyRegistry registry;
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::OwnerValueName,
+        fluxora::installer::InstallationOwnershipService::OwnerId);
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::InstallPathValueName,
+        (install / L"Fluxora.exe").wstring());
+    const fluxora::installer::SetupBootstrapService service(
+        registry,
+        temporary.path(),
+        "0.0.2",
+        {},
+        [](const std::filesystem::path&) {
+            return std::string("0.0.10");
+        });
+
+    const auto state = service.bootstrap(1024);
+
+    EXPECT_EQ(install, state.defaultInstallDirectory);
+    EXPECT_EQ("0.0.10", state.installedVersion);
+    EXPECT_EQ(fluxora::installer::SetupInstallMode::Downgrade, state.mode);
+    EXPECT_NE(
+        std::wstring::npos,
+        fluxora::installer::SetupBootstrapService::serialize(state).find(
+            L"\"mode\":\"downgrade\""));
+}
+
+TEST(SetupBootstrapServiceTests, DetectsManualUpgradeForOwnedInstallation)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path install =
+        temporary.path() / L"Programs" / L"Fluxora";
+    fluxora::tests::writeTextFile(
+        install / L"Fluxora.exe",
+        "installed executable");
+    EmptyRegistry registry;
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::OwnerValueName,
+        fluxora::installer::InstallationOwnershipService::OwnerId);
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::InstallPathValueName,
+        (install / L"Fluxora.exe").wstring());
+    const fluxora::installer::SetupBootstrapService service(
+        registry,
+        temporary.path(),
+        "0.0.3",
+        {},
+        [](const std::filesystem::path&) {
+            return std::string("0.0.2");
+        });
+
+    const auto state = service.bootstrap(1024);
+
+    EXPECT_EQ(install, state.defaultInstallDirectory);
+    EXPECT_EQ("0.0.2", state.installedVersion);
+    EXPECT_EQ(fluxora::installer::SetupInstallMode::Update, state.mode);
+}
+
+TEST(SetupBootstrapServiceTests, DetectsSameVersionReinstallAsRepair)
+{
+    fluxora::tests::TempDirectory temporary;
+    const std::filesystem::path install =
+        temporary.path() / L"Programs" / L"Fluxora";
+    fluxora::tests::writeTextFile(
+        install / L"Fluxora.exe",
+        "installed executable");
+    EmptyRegistry registry;
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::OwnerValueName,
+        fluxora::installer::InstallationOwnershipService::OwnerId);
+    registry.writeString(
+        fluxora::installer::InstallationOwnershipService::OwnershipPath,
+        fluxora::installer::InstallationOwnershipService::InstallPathValueName,
+        (install / L"Fluxora.exe").wstring());
+    const fluxora::installer::SetupBootstrapService service(
+        registry,
+        temporary.path(),
+        "0.0.2",
+        {},
+        [](const std::filesystem::path&) {
+            return std::string("0.0.2");
+        });
+
+    const auto state = service.bootstrap(1024);
+
+    EXPECT_EQ(install, state.defaultInstallDirectory);
+    EXPECT_EQ("0.0.2", state.installedVersion);
+    EXPECT_EQ(fluxora::installer::SetupInstallMode::Repair, state.mode);
+}
+
 TEST(SetupBootstrapServiceTests, DurableOwnershipAllowsBrokenProtocolRepair)
 {
     fluxora::tests::TempDirectory temporary;

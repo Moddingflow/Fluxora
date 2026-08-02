@@ -1024,6 +1024,8 @@ namespace
             writeGameCapabilities(writer, metadata.capabilities);
             writer.stringArray(L"archiveExtensions", metadata.archiveExtensions);
             writer.stringArray(L"requiredFiles", metadata.requiredFiles);
+            writer.key(L"executableDisplayMetadata");
+            writeExecutableDisplayMetadataList(writer, metadata);
             writer.endObject();
         }
         writer.endArray();

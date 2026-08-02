@@ -7,6 +7,12 @@ import nexusModsIcon from '../assets/images/nexus-mods.svg';
 import skyrimIcon from '../assets/images/SkyrimSpecialEditionIcon.png';
 
 export {
+  GAME_TEMPLATE_BACKGROUND_FILES,
+  gameTemplateBackgroundFor
+} from '../assets/background';
+export type { GameTemplateBackgroundAsset } from '../assets/background';
+
+export {
   appIconPlaceholder,
   fluxoraLogo,
   fluxoraLogoSvg,

@@ -125,6 +125,30 @@ namespace fluxora
             return equalsIgnoreCase(path.extension().wstring(), L".exe");
         }
 
+        std::optional<std::wstring> primaryExecutableNameForGame(std::wstring_view gameId)
+        {
+            const GameSupportLookupResult lookup = GameSupportRegistry::embedded().lookupById(gameId);
+            if (!lookup.supported || lookup.definition == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            const auto primary = std::find_if(
+                lookup.definition->executables.begin(),
+                lookup.definition->executables.end(),
+                [](const GameExecutableDefinition& executable)
+                {
+                    return executable.role == GameExecutableRole::Primary;
+                });
+
+            if (primary == lookup.definition->executables.end())
+            {
+                return std::nullopt;
+            }
+
+            return primary->name.displayName();
+        }
+
         bool isWindowsReservedFolderName(std::wstring_view name)
         {
             const std::wstring normalized = toLower(trimFolderName(std::wstring(name)));
@@ -2734,6 +2758,26 @@ namespace fluxora
             }
 
             std::filesystem::path gameDirectory = std::filesystem::absolute(request.gamePath).lexically_normal();
+            const bool selectedGamePathIsFile = isRegularFile(gameDirectory);
+            if (request.validateGameDirectory && selectedGamePathIsFile)
+            {
+                const std::optional<std::wstring> primaryExecutable =
+                    primaryExecutableNameForGame(resolved.id);
+                if (!primaryExecutable.has_value())
+                {
+                    throw std::invalid_argument(
+                        "The selected game does not declare an official primary executable.");
+                }
+
+                if (!equalsIgnoreCase(gameDirectory.filename().wstring(), primaryExecutable.value()))
+                {
+                    throw std::invalid_argument(
+                        "Select the official game executable " +
+                        toUtf8(primaryExecutable.value()) +
+                        ". Other executables cannot be used.");
+                }
+            }
+
             if (isRegularFile(gameDirectory) ||
                 (!request.validateGameDirectory && hasExecutableExtension(gameDirectory)))
             {

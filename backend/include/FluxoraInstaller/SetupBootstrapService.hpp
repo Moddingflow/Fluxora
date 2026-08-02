@@ -11,12 +11,15 @@ namespace fluxora::installer
 {
     using SetupWritabilityProbe =
         std::function<void(const std::filesystem::path& installDirectory)>;
+    using SetupInstalledVersionProbe =
+        std::function<std::string(const std::filesystem::path& applicationPath)>;
 
     enum class SetupInstallMode
     {
         Install,
         Repair,
-        Update
+        Update,
+        Downgrade
     };
 
     struct SetupBootstrapState final
@@ -56,7 +59,8 @@ namespace fluxora::installer
             ICurrentUserRegistryStore& registry,
             std::filesystem::path localAppDataRoot = {},
             std::string productVersion = {},
-            SetupWritabilityProbe writabilityProbe = {});
+            SetupWritabilityProbe writabilityProbe = {},
+            SetupInstalledVersionProbe installedVersionProbe = {});
 
         [[nodiscard]] SetupBootstrapState bootstrap(
             std::uint64_t expandedPayloadBytes) const;
@@ -81,5 +85,6 @@ namespace fluxora::installer
         std::filesystem::path localAppDataRoot_;
         std::string productVersion_;
         SetupWritabilityProbe writabilityProbe_;
+        SetupInstalledVersionProbe installedVersionProbe_;
     };
 }

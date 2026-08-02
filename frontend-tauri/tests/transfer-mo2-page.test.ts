@@ -104,6 +104,16 @@ const renderTransferPage = (
   renderToStaticMarkup(React.createElement(TransferMo2Page, { ...baseProps, selectedStep, ...overrides }));
 
 describe('TransferMo2Page', () => {
+  it('uses the shared product wizard stepper instead of a transfer-only variant', () => {
+    const html = renderTransferPage('destination');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(html).toContain('class="flx-wizard-steps transfer-rail-steps"');
+    expect(html).toContain('aria-current="step"');
+    expect(html).not.toContain('transfer-rail-row');
+    expect(styles).not.toContain('.transfer-stepper');
+  });
+
   it('renders the transfer destination step with drive choices and the Fluxora Builds structure', () => {
     const html = renderTransferPage('destination');
 

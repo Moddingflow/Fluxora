@@ -25,6 +25,10 @@ pub struct InstalledSetupSession {
     pub mode: SetupMode,
 }
 
+fn should_check_stable_channel(mode: SetupMode) -> bool {
+    mode != SetupMode::Downgrade
+}
+
 struct ActivePostInstallUpdate {
     operation_id: String,
     decision: Arc<UpdateDecision>,
@@ -412,6 +416,18 @@ pub async fn run(
     runtime: &PostInstallUpdateRuntime,
     session: InstalledSetupSession,
 ) -> Result<SetupPostInstallUpdateResult, NativeFailure> {
+    if !should_check_stable_channel(session.mode) {
+        log_event(&session, "check", None, "skipped-manual-downgrade", None, 0).await;
+        return Ok(launch_bundled_and_finish(
+            &app,
+            runtime,
+            &session,
+            SetupPostInstallUpdateOutcome::BundledLaunched,
+            None,
+            None,
+        )
+        .await);
+    }
     let current_version = Version::parse(&session.installed_version).map_err(|_| {
         NativeFailure::new(
             "setup-installed-version-invalid",
@@ -838,5 +854,13 @@ mod tests {
             updater_source(&session),
             PathBuf::from(r"C:\Fluxora Installed\resources\native\FluxoraUpdater.exe")
         );
+    }
+
+    #[test]
+    fn manual_downgrade_does_not_reenter_the_stable_update_channel() {
+        assert!(!should_check_stable_channel(SetupMode::Downgrade));
+        assert!(should_check_stable_channel(SetupMode::Update));
+        assert!(should_check_stable_channel(SetupMode::Repair));
+        assert!(should_check_stable_channel(SetupMode::Install));
     }
 }

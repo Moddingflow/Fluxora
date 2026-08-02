@@ -184,7 +184,19 @@ test.beforeEach(async ({ page }) => {
       displayName: 'Skyrim Special Edition',
       gameName: 'Skyrim Special Edition',
       summary: 'Bethesda RPG',
-      uiTemplateId: 'skyrim'
+      uiTemplateId: 'skyrim',
+      executableDisplayMetadata: [
+        {
+          id: 'game',
+          displayName: 'Skyrim Special Edition',
+          executableName: 'SkyrimSE.exe',
+          role: 'primary',
+          workingDirectoryKind: 'gameRoot',
+          isPrimary: true,
+          isLauncher: false,
+          isScriptExtender: false
+        }
+      ]
     };
     const modRows: any[] = [
       {
@@ -1875,7 +1887,11 @@ test.beforeEach(async ({ page }) => {
           path: 'D:\\Incoming\\NaturalVisionFomod.7z'
         }),
         pickBuildConfig: async () => ({ canceled: true }),
-        pickExecutable: async () => ({ canceled: true }),
+        pickExecutable: async (title: any, initialPath: any) => {
+          calls.push({ method: 'dialogs.pickExecutable', payload: { title, initialPath } });
+          const path = (window as any).__fluxoraExecutablePickPath;
+          return path ? { canceled: false, path } : { canceled: true };
+        },
         pickFluxPack: async () => ({ canceled: true }),
         pickFolder: async () => ({ canceled: true }),
         pickTextFile: async () => ({ canceled: true }),
@@ -3784,7 +3800,7 @@ test.beforeEach(async ({ page }) => {
         },
         list: async () => ({
           buildConfigsDirectory: 'D:\\Fluxora\\Configs',
-          defaultInstallRootDirectory: 'D:\\Fluxora\\Builds',
+          defaultInstallRootDirectory: 'C:\\Fluxora Builds',
           operationId: 'op_projects_list',
           projects: (window as any).__fluxoraEmptyProjectCatalog ? [] : projects
         }),
@@ -5551,18 +5567,39 @@ test('selects, opens and creates builds from the redesigned library home', async
 
   await page.getByLabel('Home').click();
   await page.getByRole('button', { name: 'New build' }).first().click();
+  await expect(page.locator('.flx-wizard-step[data-state="complete"]')).toHaveCount(0);
   const buildNameInput = page.getByPlaceholder('My Skyrim build');
   await buildNameInput.fill('  Playwright build  ');
   await buildNameInput.press('Tab');
   await page.keyboard.press('Shift+Tab');
   await expect(buildNameInput).toBeFocused();
-  await expectSolidFocusBand(buildNameInput);
-  await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByPlaceholder('Path to game executable').fill('C:\\Games\\Skyrim\\SkyrimSE.exe');
-  await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByPlaceholder('Folder for Fluxora builds').fill('D:\\Fluxora\\Builds');
-  await page.getByRole('button', { name: 'Create' }).click();
+  await expectSolidFocusBand(buildNameInput, '.flx-input');
+  await buildNameInput.press('Enter');
+
+  await expect(page.getByRole('heading', { name: 'Game template' })).toBeVisible();
+  const gameTemplate = page.getByRole('radio', { name: 'Skyrim Special Edition' });
+  await expect(gameTemplate).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByText('Bethesda RPG')).toHaveCount(0);
+  await expect(page.locator('.flx-wizard-step[data-state="complete"]')).toHaveCount(1);
+  await gameTemplate.click();
+  await expect(gameTemplate).toHaveAttribute('aria-checked', 'true');
+  await gameTemplate.press('Enter');
+
+  await expect(page.getByRole('heading', { name: 'Game executable' })).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__fluxoraExecutablePickPath = 'C:\\Games\\Skyrim\\SkyrimSE.exe';
+  });
+  await page.getByRole('button', { name: 'Choose SkyrimSE.exe' }).click();
+  const executableInput = page.getByRole('textbox', { name: 'Official game executable' });
+  await expect(executableInput).toHaveAttribute('readonly', '');
+  await expect(executableInput).toHaveValue('C:\\Games\\Skyrim\\SkyrimSE.exe');
+  await executableInput.press('Enter');
+
+  await expect(page.getByRole('heading', { name: 'Install location' })).toBeVisible();
+  const installRootInput = page.getByRole('textbox', { name: 'Builds folder' });
+  await expect(installRootInput).toHaveValue('C:\\Fluxora Builds');
+  await expect(page.getByText('C:\\Fluxora Builds\\Playwright build')).toBeVisible();
+  await installRootInput.press('Enter');
 
   await expect
     .poll(() => latestCallPayload(page, 'projects.create'))
@@ -5572,7 +5609,7 @@ test('selects, opens and creates builds from the redesigned library home', async
       },
       request: {
         gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
-        installRootDirectory: 'D:\\Fluxora\\Builds',
+        installRootDirectory: 'C:\\Fluxora Builds',
         projectName: 'Playwright build',
         templateId: 'skyrim-special-edition'
       }
@@ -5584,6 +5621,62 @@ test('selects, opens and creates builds from the redesigned library home', async
   await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).click();
   const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
   await expect(skyrimSummary.getByText('248', { exact: true })).toBeVisible();
+});
+
+test('rejects a launcher in the official executable picker', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.getByRole('button', { name: 'New build' }).first().click();
+  const buildNameInput = page.getByPlaceholder('My Skyrim build');
+  await buildNameInput.fill('Launcher rejection');
+  await buildNameInput.press('Enter');
+
+  const gameTemplate = page.getByRole('radio', { name: 'Skyrim Special Edition' });
+  await gameTemplate.click();
+  await gameTemplate.press('Enter');
+  await page.evaluate(() => {
+    (window as any).__fluxoraExecutablePickPath = 'C:\\Games\\Skyrim\\SkyrimSELauncher.exe';
+  });
+  await page.getByRole('button', { name: 'Choose SkyrimSE.exe' }).click();
+
+  await expect(page.getByRole('alert')).toHaveText(
+    'Select SkyrimSE.exe. Other executables cannot be used.'
+  );
+  await expect(page.getByRole('textbox', { name: 'Official game executable' })).toHaveValue('');
+  await expect(page.getByRole('heading', { name: 'Game executable' })).toBeVisible();
+});
+
+test('keeps the create-build wizard compact at supported desktop sizes', async ({ page }, testInfo) => {
+  const sizes = [
+    { width: 860, height: 620 },
+    { width: 1280, height: 720 }
+  ] as const;
+
+  for (const size of sizes) {
+    await page.setViewportSize(size);
+    await page.goto(baseUrl);
+    await page.getByRole('button', { name: 'New build' }).first().click();
+    await expect(page.locator('.create-build-wizard')).toBeVisible();
+    await expectNoDocumentHorizontalOverflow(page);
+
+    const nameInput = page.getByPlaceholder('My Skyrim build');
+    await nameInput.fill('Visual review');
+    await nameInput.press('Enter');
+    const artwork = page.locator('.create-build-template img');
+    await expect(artwork).toBeVisible();
+    await expect
+      .poll(() =>
+        artwork.evaluate((image) => ({
+          height: (image as HTMLImageElement).naturalHeight,
+          width: (image as HTMLImageElement).naturalWidth
+        }))
+      )
+      .toEqual({ height: 320, width: 960 });
+    await expectNoDocumentHorizontalOverflow(page);
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath(`create-build-game-${size.width}x${size.height}.png`)
+    });
+  }
 });
 
 test('renames a build in the Fluxora dialog with complete keyboard behavior', async ({ page }) => {

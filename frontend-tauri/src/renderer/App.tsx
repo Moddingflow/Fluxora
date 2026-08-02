@@ -82,6 +82,8 @@ import {
   LibraryHome,
   type LibraryCatalogState
 } from './features/library/LibraryHome';
+import { CreateBuildWizard } from './features/library/CreateBuildWizard';
+import { useCreateBuildWizard } from './features/library/useCreateBuildWizard';
 import {
   buildProjectLibraryStats,
   type ProjectRuntimeSummary
@@ -227,23 +229,14 @@ import {
 import { SettingsWorkspace } from './features/settings/SettingsWorkspace';
 import { isTextEditorFileName } from './features/text-editor/text-editor-model';
 import { previewKindForFile } from './features/file-preview/preview-kind-registry';
+import { filterProjects } from './project-catalog-state';
 import {
-  emptyProjectDraft,
-  filterProjects,
-  filterTemplates,
-  isProjectDraftStepComplete,
-  projectCapabilitiesLabel,
-  type ProjectDraft
-} from './project-catalog-state';
-import {
-  bridgeStatusLabel,
   cleanupCreatedProject,
   createProjectFromDraft,
   deleteProjectConfig,
   loadProjectCatalog,
   mergeProjectIntoCatalog,
   openProjectConfig,
-  previewProjectDirectory,
   projectCatalogFallback,
   replaceRenamedProject,
   renameProjectConfig,
@@ -1001,13 +994,6 @@ const modDetailsTabs: Array<{ id: ModDetailsTabId; label: string; icon: string }
   { id: 'conflicts', label: 'Конфликты', icon: modDetailsConflictsIcon }
 ];
 
-const wizardSteps = [
-  { id: 'name', label: 'Build name' },
-  { id: 'game', label: 'Game template' },
-  { id: 'executable', label: 'Game executable' },
-  { id: 'location', label: 'Install location' }
-] as const;
-
 const rightPaneTabs: Array<{ id: RightPaneId; label: string; icon: typeof Layers }> = [
   { id: 'plugins', label: 'Плагины', icon: Layers },
   { id: 'data', label: 'Данные', icon: FolderTree },
@@ -1392,7 +1378,6 @@ export const App = () => {
     useState<BuildRenameDialogRequest | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
   const [searchText, setSearchText] = useState('');
-  const [templateSearchText, setTemplateSearchText] = useState('');
   const [, setMessage] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [aiChat, dispatchAiChat] = useReducer(aiChatReducer, initialAiChatState);
@@ -1545,12 +1530,13 @@ export const App = () => {
   const [transferCancelRequested, setTransferCancelRequested] = useState(false);
   const [transferResult, setTransferResult] = useState<FluxoraProject | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const chromePlatform = appInfo?.platform ?? bridgeStatus?.capabilities?.platform ?? 'unknown';
-  const [createStep, setCreateStep] = useState(0);
-  const [draft, setDraft] = useState<ProjectDraft>(emptyProjectDraft());
-  const [previewDirectory, setPreviewDirectory] = useState('');
-  const [previewBusy, setPreviewBusy] = useState(false);
+  const createWizard = useCreateBuildWizard({
+    bridgeReady: Boolean(bridgeStatus?.ready),
+    defaultInstallRootDirectory: catalog.defaultInstallRootDirectory,
+    templates
+  });
+  const isCreateOpen = createWizard.isOpen;
   const [modsWorkspace, dispatchModsWorkspace] = useReducer(
     modWorkspaceReducer,
     undefined,
@@ -2207,7 +2193,6 @@ export const App = () => {
   ]);
 
   const deferredSearchText = useDeferredValue(searchText);
-  const deferredTemplateSearchText = useDeferredValue(templateSearchText);
   const deferredModSearchText = useDeferredValue(modsWorkspace.searchText);
   const deferredPluginSearchText = useDeferredValue(pluginsWorkspace.searchText);
   const deferredDownloadSearchText = useDeferredValue(downloadsWorkspace.searchText);
@@ -2233,16 +2218,6 @@ export const App = () => {
   const filteredProjects = useMemo(
     () => filterProjects(projects, deferredSearchText),
     [projects, deferredSearchText]
-  );
-
-  const filteredTemplates = useMemo(
-    () => filterTemplates(templates, deferredTemplateSearchText),
-    [templates, deferredTemplateSearchText]
-  );
-
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === draft.templateId) ?? null,
-    [templates, draft.templateId]
   );
 
   const filteredModItems = useMemo(
@@ -9351,47 +9326,6 @@ export const App = () => {
   }, [downloadMenuId, modMenuOrderId, modsToolbarMenuPosition, pluginMenuOrderId]);
 
   useEffect(() => {
-    if (
-      !bridgeStatus?.ready ||
-      draft.projectName.trim().length === 0 ||
-      draft.installRootDirectory.trim().length === 0
-    ) {
-      setPreviewDirectory('');
-      setPreviewBusy(false);
-      return;
-    }
-
-    let isCanceled = false;
-    setPreviewBusy(true);
-    const operationId = createRendererOperationId('projects_preview');
-    const timeout = window.setTimeout(() => {
-      previewProjectDirectory(draft.projectName, draft.installRootDirectory, operationId)
-        .then(
-          (preview) => {
-            if (!isCanceled) {
-              setPreviewDirectory(preview.projectDirectory);
-            }
-          },
-          () => {
-            if (!isCanceled) {
-              setPreviewDirectory('');
-            }
-          }
-        )
-        .finally(() => {
-          if (!isCanceled) {
-            setPreviewBusy(false);
-          }
-        });
-    }, 150);
-
-    return () => {
-      isCanceled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [bridgeStatus?.ready, draft.projectName, draft.installRootDirectory]);
-
-  useEffect(() => {
     modDetailsContentCacheRef.current.clear();
   }, [selectedProject?.projectDirectory]);
 
@@ -10529,15 +10463,7 @@ export const App = () => {
   };
 
   const startCreate = () => {
-    const installRoot = catalog.defaultInstallRootDirectory;
-    setDraft({
-      ...emptyProjectDraft(installRoot),
-      templateId: templates[0]?.id ?? ''
-    });
-    setCreateStep(0);
-    setTemplateSearchText('');
-    setPreviewDirectory('');
-    setIsCreateOpen(true);
+    createWizard.open();
     changeRoute('home');
     setMessage(null);
   };
@@ -11722,45 +11648,12 @@ export const App = () => {
     }
   };
 
-  const browseGameExecutable = async () => {
-    const result = await window.fluxora.dialogs.pickExecutable(
-      'Select game executable',
-      draft.gamePath
-    );
-    if (!result.canceled && result.path) {
-      setDraft((current) => ({ ...current, gamePath: result.path ?? current.gamePath }));
-    }
-  };
-
-  const browseInstallRoot = async () => {
-    const result = await window.fluxora.dialogs.pickFolder(
-      'Select install location',
-      draft.installRootDirectory
-    );
-    if (!result.canceled && result.path) {
-      setDraft((current) => ({
-        ...current,
-        installRootDirectory: result.path ?? current.installRootDirectory
-      }));
-    }
-  };
-
-  const advanceCreateStep = () => {
-    if (!isProjectDraftStepComplete(draft, createStep)) {
-      setMessage(`${wizardSteps[createStep].label} is required.`);
-      return;
-    }
-
-    setMessage(null);
-    setCreateStep((current) => Math.min(current + 1, wizardSteps.length - 1));
-  };
-
   const createProject = async () => {
-    if (!wizardSteps.every((_, step) => isProjectDraftStepComplete(draft, step))) {
-      setMessage('Complete the build details first.');
+    if (!createWizard.validateAll()) {
       return;
     }
 
+    const draft = createWizard.draft;
     const operationId = createRendererOperationId('projects_create');
     beginOperationOverlay({
       operationId,
@@ -11782,7 +11675,7 @@ export const App = () => {
       setLoadedWorkspaceProjectId(null);
       setProjects((current) => upsertProject(current, created));
       setSelectedProjectId(created.id);
-      setIsCreateOpen(false);
+      createWizard.close();
       changeRoute('build');
       const openingProfileName = projectDefaultProfileName(created);
       dispatchProfilesWorkspace({ type: 'selected', name: openingProfileName });
@@ -12011,7 +11904,7 @@ export const App = () => {
       return;
     }
 
-    setIsCreateOpen(false);
+    createWizard.close();
     setIsTransferPageOpen(true);
     setActiveRoute('home');
     resetTransferPlanningState();
@@ -12326,7 +12219,7 @@ export const App = () => {
     setTransferProgress(null);
     setTransferCancelRequested(false);
     setTransferStep('review');
-    setIsCreateOpen(false);
+    createWizard.close();
     setIsTransferPageOpen(true);
     setActiveRoute('home');
 
@@ -12392,7 +12285,7 @@ export const App = () => {
     const operationId = createRendererOperationId('transfer_import_mo2');
     transferRunningOperationIdRef.current = operationId;
     setIsTransferPageOpen(true);
-    setIsCreateOpen(false);
+    createWizard.close();
     setTransferSourceDirectory(sourceDirectory);
     setTransferDestinationRootDirectory(importDestinationRootDirectory);
     setTransferAnalysis(normalizedAnalysis);
@@ -12580,245 +12473,6 @@ export const App = () => {
         </button>
       </div>,
       document.body
-    );
-  };
-
-  const renderCreateWizard = () => {
-    const currentStep = wizardSteps[createStep];
-
-    return (
-      <section className="create-wizard" aria-label="Create build">
-        <header className="create-wizard__header">
-          <div>
-            <p className="eyebrow">New build</p>
-            <h2>{currentStep.label}</h2>
-          </div>
-          <span className="create-wizard__count">
-            Step {createStep + 1} of {wizardSteps.length}
-          </span>
-        </header>
-
-        <nav className="stepper" aria-label="Build creation steps">
-          {wizardSteps.map((step, index) => {
-            const isActive = index === createStep;
-            const isComplete = isProjectDraftStepComplete(draft, index);
-            const state = isActive ? 'active' : isComplete ? 'complete' : 'pending';
-            const statusLabel = isActive ? 'Current' : isComplete ? 'Done' : 'To do';
-
-            return (
-              <button
-                key={step.id}
-                className="stepper__item"
-                type="button"
-                data-state={state}
-                data-complete={isComplete}
-                aria-current={isActive ? 'step' : undefined}
-                onClick={() => {
-                  setMessage(null);
-                  setCreateStep(index);
-                }}
-              >
-                <span className="stepper__rail" aria-hidden="true" />
-                <span className="stepper__marker" aria-hidden="true">
-                  {isComplete && !isActive ? <CheckCircle2 size={16} /> : index + 1}
-                </span>
-                <span className="stepper__copy">
-                  <strong>{step.label}</strong>
-                  <small>{statusLabel}</small>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="wizard-body">
-          {createStep === 0 ? (
-            <label className="field create-wizard-field create-wizard-field--name">
-              <span>Как мы назовём вашу сборку?</span>
-              <input
-                value={draft.projectName}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, projectName: event.target.value }))
-                }
-                placeholder="My Skyrim build"
-              />
-            </label>
-          ) : null}
-
-          {createStep === 1 ? (
-            <>
-              <label className="field create-wizard-field create-wizard-field--search">
-                <span>Game search</span>
-                <input
-                  value={templateSearchText}
-                  onChange={(event) => setTemplateSearchText(event.target.value)}
-                  placeholder="Skyrim, Fallout..."
-                />
-              </label>
-              <div className="template-list template-list--create-wizard">
-                {filteredTemplates.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    data-active={draft.templateId === template.id}
-                    onClick={() =>
-                      setDraft((current) => ({ ...current, templateId: template.id }))
-                    }
-                  >
-                    <strong>{template.displayName || template.gameName}</strong>
-                    <span>{template.summary || template.id}</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-
-          {createStep === 2 ? (
-            <label className="field create-wizard-field create-wizard-field--path">
-              <span>Game executable</span>
-              <div className="path-picker path-picker--create-wizard">
-                <input
-                  value={draft.gamePath}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, gamePath: event.target.value }))
-                  }
-                  placeholder="Path to game executable"
-                />
-                <button className="tool-button" type="button" onClick={() => void browseGameExecutable()}>
-                  <FolderOpen size={16} aria-hidden="true" />
-                  Browse
-                </button>
-              </div>
-            </label>
-          ) : null}
-
-          {createStep === 3 ? (
-            <>
-              <label className="field create-wizard-field create-wizard-field--path">
-                <span>Install root</span>
-                <div className="path-picker path-picker--create-wizard">
-                  <input
-                    value={draft.installRootDirectory}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        installRootDirectory: event.target.value
-                      }))
-                    }
-                    placeholder="Folder for Fluxora builds"
-                  />
-                  <button className="tool-button" type="button" onClick={() => void browseInstallRoot()}>
-                    <FolderOpen size={16} aria-hidden="true" />
-                    Browse
-                  </button>
-                </div>
-              </label>
-              <div className="directory-preview directory-preview--create-wizard" data-loading={previewBusy}>
-                <span>Preview</span>
-                <strong>{previewBusy ? 'Calculating...' : previewDirectory || 'Waiting for input'}</strong>
-              </div>
-            </>
-          ) : null}
-        </div>
-
-        <div className="wizard-actions">
-          <button
-            className="tool-button"
-            type="button"
-            onClick={() => {
-              setMessage(null);
-              setIsCreateOpen(false);
-            }}
-          >
-            Cancel
-          </button>
-          <div className="wizard-actions__nav">
-            <button
-              className="tool-button"
-              type="button"
-              disabled={createStep === 0}
-              onClick={() => setCreateStep((current) => Math.max(current - 1, 0))}
-            >
-              <ChevronLeft size={16} aria-hidden="true" />
-              Back
-            </button>
-            {createStep < wizardSteps.length - 1 ? (
-              <button className="primary-button" type="button" onClick={advanceCreateStep}>
-                Next
-                <ChevronRight size={16} aria-hidden="true" />
-              </button>
-            ) : (
-              <button
-                className="primary-button"
-                type="button"
-                disabled={Boolean(busyLabel) || !selectedTemplate}
-                onClick={() => void createProject()}
-              >
-                Create
-                <CheckCircle2 size={16} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
-    );
-  };
-
-  const renderInspector = () => {
-    if (isCreateOpen) {
-      return renderCreateWizard();
-    }
-
-    return (
-      <aside className="inspector" aria-label="Build inspector">
-        <div className="surface-header surface-header--compact">
-          <div>
-            <p className="eyebrow">Selected build</p>
-            <h2>{selectedProject?.name ?? 'None'}</h2>
-          </div>
-        </div>
-        <dl className="fact-list">
-          <div>
-            <dt>Core</dt>
-            <dd data-status={bridgeStatusLabel(bridgeStatus)}>
-              {bridgeStatus?.ready ? 'available' : bridgeStatus?.error ? 'unavailable' : 'pending'}
-            </dd>
-          </div>
-          <div>
-            <dt>Catalog</dt>
-            <dd>{projects.length} builds</dd>
-          </div>
-          <div>
-            <dt>Game</dt>
-            <dd>{selectedProject?.gameName ?? 'not opened'}</dd>
-          </div>
-          <div>
-            <dt>Capabilities</dt>
-            <dd>{selectedProject ? projectCapabilitiesLabel(selectedProject) : 'none'}</dd>
-          </div>
-          <div>
-            <dt>Platform</dt>
-            <dd>{appInfo ? `${appInfo.platform}/${appInfo.arch}` : 'pending'}</dd>
-          </div>
-          <div>
-            <dt>IPC channels</dt>
-            <dd>{securityState?.allowedIpcChannels.length ?? 0}</dd>
-          </div>
-        </dl>
-        <div className="language-strip" aria-label="Language">
-          {['en-us', 'ru-ru', 'de-de'].map((language) => (
-            <button
-              key={language}
-              type="button"
-              data-active={bridgeStatus?.language === language}
-              disabled={!bridgeStatus?.ready || languageBusy !== null}
-              onClick={() => void setLanguage(language)}
-            >
-              {languageBusy === language ? 'Saving' : language}
-            </button>
-          ))}
-        </div>
-      </aside>
     );
   };
 
@@ -17224,7 +16878,31 @@ export const App = () => {
                     <strong>{busyLabel}</strong>
                   </div>
                 ) : null}
-                {isCreateOpen ? <section className="create-flow">{renderCreateWizard()}</section> : null}
+                {isCreateOpen ? (
+                  <section className="create-flow">
+                    <CreateBuildWizard
+                      activeStepIndex={createWizard.activeStepIndex}
+                      busy={Boolean(busyLabel)}
+                      draft={createWizard.draft}
+                      error={createWizard.error}
+                      furthestStepIndex={createWizard.furthestStepIndex}
+                      onBack={createWizard.back}
+                      onBrowseExecutable={createWizard.browseExecutable}
+                      onBrowseInstallRoot={createWizard.browseInstallRoot}
+                      onCancel={createWizard.close}
+                      onChangeInstallRoot={createWizard.changeInstallRoot}
+                      onChangeName={createWizard.changeName}
+                      onCreate={createProject}
+                      onNext={createWizard.next}
+                      onSelectStep={createWizard.selectStep}
+                      onSelectTemplate={createWizard.selectTemplate}
+                      previewBusy={createWizard.previewBusy}
+                      previewDirectory={createWizard.previewDirectory}
+                      selectedTemplate={createWizard.selectedTemplate}
+                      templates={templates}
+                    />
+                  </section>
+                ) : null}
                 {!isCreateOpen && activeRoute === 'home' ? renderHome() : null}
                 {!isCreateOpen && (activeRoute === 'build' || activeRoute === 'workspace')
                   ? renderBuildWorkspace()

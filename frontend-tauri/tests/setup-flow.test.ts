@@ -136,6 +136,21 @@ describe('Setup flow', () => {
     expect(canStartInstall(ready)).toBe(true);
   });
 
+  it('preserves the native manual downgrade mode for the selected owned directory', () => {
+    const bootstrapped = setupFlowReducer(initialSetupFlowState, {
+      type: 'bootstrap-ready',
+      state: { ...bootstrap, mode: 'downgrade' }
+    });
+    const ready = setupFlowReducer(bootstrapped, {
+      type: 'validation-ready',
+      validation: { ...validation, mode: 'downgrade' }
+    });
+
+    expect(ready.bootstrap?.mode).toBe('downgrade');
+    expect(ready.validation?.mode).toBe('downgrade');
+    expect(canStartInstall(ready)).toBe(true);
+  });
+
   it('ignores foreign operation progress and locks cancellation at commit', () => {
     const started = setupFlowReducer(initialSetupFlowState, {
       type: 'install-started',

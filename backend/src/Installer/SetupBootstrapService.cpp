@@ -83,6 +83,8 @@ namespace
             return L"repair";
         case fluxora::installer::SetupInstallMode::Update:
             return L"update";
+        case fluxora::installer::SetupInstallMode::Downgrade:
+            return L"downgrade";
         }
         return L"install";
     }
@@ -413,6 +415,45 @@ namespace
             std::to_string(LOWORD(info->dwProductVersionMS)) + "." +
             std::to_string(HIWORD(info->dwProductVersionLS));
     }
+
+    int compareThreePartSemanticVersions(
+        std::string_view left,
+        std::string_view right)
+    {
+        std::size_t leftPosition = 0;
+        std::size_t rightPosition = 0;
+        for (int component = 0; component < 3; ++component)
+        {
+            const std::size_t leftEnd = left.find('.', leftPosition);
+            const std::size_t rightEnd = right.find('.', rightPosition);
+            const std::string_view leftComponent = left.substr(
+                leftPosition,
+                leftEnd == std::string_view::npos
+                    ? std::string_view::npos
+                    : leftEnd - leftPosition);
+            const std::string_view rightComponent = right.substr(
+                rightPosition,
+                rightEnd == std::string_view::npos
+                    ? std::string_view::npos
+                    : rightEnd - rightPosition);
+            if (leftComponent.size() != rightComponent.size())
+            {
+                return leftComponent.size() < rightComponent.size() ? -1 : 1;
+            }
+            const int comparison = leftComponent.compare(rightComponent);
+            if (comparison != 0)
+            {
+                return comparison < 0 ? -1 : 1;
+            }
+            leftPosition = leftEnd == std::string_view::npos
+                ? left.size()
+                : leftEnd + 1;
+            rightPosition = rightEnd == std::string_view::npos
+                ? right.size()
+                : rightEnd + 1;
+        }
+        return 0;
+    }
 }
 
 namespace fluxora::installer
@@ -421,7 +462,8 @@ namespace fluxora::installer
         ICurrentUserRegistryStore& registry,
         std::filesystem::path localAppDataRoot,
         std::string productVersion,
-        SetupWritabilityProbe writabilityProbe)
+        SetupWritabilityProbe writabilityProbe,
+        SetupInstalledVersionProbe installedVersionProbe)
         : registry_(registry),
           localAppDataRoot_(
               localAppDataRoot.empty()
@@ -434,7 +476,11 @@ namespace fluxora::installer
           writabilityProbe_(
               writabilityProbe
                   ? std::move(writabilityProbe)
-                  : SetupWritabilityProbe(requireWritableSetupLocation))
+                  : SetupWritabilityProbe(requireWritableSetupLocation)),
+          installedVersionProbe_(
+              installedVersionProbe
+                  ? std::move(installedVersionProbe)
+                  : SetupInstalledVersionProbe(executableProductVersion))
     {
         if (!localAppDataRoot_.is_absolute() ||
             !isThreePartSemanticVersion(productVersion_))
@@ -470,7 +516,7 @@ namespace fluxora::installer
         state.isOwnedInstall = validation.isOwnedInstall;
         if (state.isOwnedInstall)
         {
-            state.installedVersion = executableProductVersion(
+            state.installedVersion = installedVersionProbe_(
                 state.defaultInstallDirectory / L"Fluxora.exe");
         }
         return state;
@@ -586,11 +632,23 @@ namespace fluxora::installer
             !pathEquals(*durableOwned, application);
         if (result.isOwnedInstall)
         {
-            const std::string installedVersion = executableProductVersion(application);
-            result.mode =
-                installedVersion.empty() || installedVersion == productVersion_
-                    ? SetupInstallMode::Repair
-                    : SetupInstallMode::Update;
+            const std::string installedVersion = installedVersionProbe_(application);
+            if (installedVersion.empty() ||
+                !isThreePartSemanticVersion(installedVersion) ||
+                installedVersion == productVersion_)
+            {
+                result.mode = SetupInstallMode::Repair;
+            }
+            else if (compareThreePartSemanticVersions(
+                         installedVersion,
+                         productVersion_) > 0)
+            {
+                result.mode = SetupInstallMode::Downgrade;
+            }
+            else
+            {
+                result.mode = SetupInstallMode::Update;
+            }
         }
         else
         {

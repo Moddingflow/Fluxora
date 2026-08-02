@@ -32,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -88,6 +89,7 @@ namespace
         std::filesystem::path applicationPath;
         std::filesystem::path desktopShortcutPath;
         bool createdDesktopShortcut{false};
+        std::optional<fluxora::installer::SetupInstallMode> setupMode;
     };
 
     struct InstallerProgressState
@@ -772,6 +774,20 @@ namespace
 
     std::wstring serializeResult(const InstallResult& result)
     {
+        const auto setupModeName = [](fluxora::installer::SetupInstallMode mode) {
+            switch (mode)
+            {
+            case fluxora::installer::SetupInstallMode::Install:
+                return L"install";
+            case fluxora::installer::SetupInstallMode::Repair:
+                return L"repair";
+            case fluxora::installer::SetupInstallMode::Update:
+                return L"update";
+            case fluxora::installer::SetupInstallMode::Downgrade:
+                return L"downgrade";
+            }
+            return L"install";
+        };
         std::wstring json;
         json += L"{";
         json += L"\"installDirectory\":\"" + jsonEscape(makeAbsoluteString(result.installDirectory)) + L"\",";
@@ -779,6 +795,12 @@ namespace
         json += L"\"desktopShortcutPath\":\"" + jsonEscape(makeAbsoluteString(result.desktopShortcutPath)) + L"\",";
         json += L"\"createdDesktopShortcut\":";
         json += result.createdDesktopShortcut ? L"true" : L"false";
+        if (result.setupMode.has_value())
+        {
+            json += L",\"mode\":\"";
+            json += setupModeName(*result.setupMode);
+            json += L"\"";
+        }
         json += L"}";
         return json;
     }
@@ -4024,6 +4046,7 @@ extern "C"
             expected.applicationPath =
                 validation.normalizedInstallDirectory / L"Fluxora.exe";
             expected.createdDesktopShortcut = createShortcut;
+            expected.setupMode = validation.mode;
             if (createShortcut)
             {
                 expected.desktopShortcutPath =
@@ -4139,6 +4162,7 @@ extern "C"
                             "Setup destination changed before payload extraction.");
                     }
                 });
+            result.setupMode = validation.mode;
 
             emitProgress(
                 progressCallback,

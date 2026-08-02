@@ -9,8 +9,16 @@ Current frontend reality:
 - The old C# WPF product frontend has been removed. Do not recreate `frontend/`, `frontend.Tests/` or `Fluxora.App`; historical WPF parity material is archival only and must not route new product UI work.
 - Do not put UI responsibilities into C++.
 - Do not put core business logic into Tauri, TypeScript, JavaScript or C#.
-- Split work into small focused services. Avoid master files, catch-all managers and god objects.
-- Tauri UI must be split by responsibility into small renderer services, stores/hooks and focused components; do not grow a single App/MainWindow/master file with catalog, workspace, settings, install or operation orchestration.
+- Every non-trivial behavior, workflow and stateful integration must have a small focused service boundary. Avoid master files, catch-all managers, duplicated one-off services and god objects.
+- Tauri UI must be split by responsibility into small renderer services, stores/hooks and focused components; components render bounded UI responsibilities and must not absorb catalog, workspace, settings, install, filesystem or operation orchestration.
+
+Design and reuse rules:
+
+- For product UI work, read and follow `.agents/skills/stitch-design-taste/DESIGN.md` as the normative design source of truth. Fluxora must remain premium, ultra-minimal, compact and free of recognizable AI slop; utility, hierarchy and explicit state take priority over decoration.
+- Before creating an asset, icon, visual primitive, component, interaction pattern or service, inspect the scoped existing sources and reuse a suitable implementation. Prefer `frontend-tauri/src/renderer/design-system/`, its central asset/icon exports, existing focused components, and existing services/stores/hooks. Do not create near-duplicates or rebuild controls only to make them look new.
+- Extend or compose an existing shared primitive when the semantics fit. Create a new asset or element only when no suitable source exists; keep reusable additions centralized, accessible, locally owned and license/provenance safe.
+- Every new bundled game definition must add its matching local selector artwork under `frontend-tauri/src/renderer/assets/background/` in the same change. Locate appropriate recognizable artwork with verified redistribution/provenance, record its source in that folder, crop it to exactly `960x320`, encode it as WebP at no more than `96 KiB`, and register the game ID in the local manifest/test. Never ship an oversized source image or fetch game artwork at runtime; use locally owned symbolic artwork when redistribution rights are unclear.
+- When a change alters the visual language, assets, tokens, reusable components, layout, motion, accessibility baseline or UI architecture, automatically update `.agents/skills/stitch-design-taste/DESIGN.md`, the governing design skill, and any other affected design/architecture/component documentation in the same change. Do not wait for a separate request.
 
 Skill selection rules:
 
