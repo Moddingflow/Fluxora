@@ -646,12 +646,15 @@ renderer into a network, process or filesystem authority.
   creates an ephemeral `@supabase/supabase-js` client with session persistence,
   token refresh and URL-session detection disabled, using only
   `VITE_FLUXORA_RELEASES_SUPABASE_URL` and
-  `VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY`. Production accepts exactly
-  `https://tpciohumwahlctpeuduv.supabase.co`; its CSP permits only that HTTPS
-  origin and the matching `wss://tpciohumwahlctpeuduv.supabase.co` origin.
-  Missing, partial, or wrong-project Production configuration fails before a
-  release build. The publishable key is public capability material constrained
-  by grants and RLS; no service-role or webhook secret enters the renderer.
+  `VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY`. Production resolves both
+  from the tracked `frontend-tauri/release-signal.public.json` by default and
+  permits only a complete process-environment pair as a controlled rotation
+  override. It accepts exactly `https://tpciohumwahlctpeuduv.supabase.co`; its
+  CSP permits only that HTTPS origin and the matching
+  `wss://tpciohumwahlctpeuduv.supabase.co` origin. Missing, partial, or
+  wrong-project Production configuration fails before a release build. The
+  publishable key is public capability material constrained by grants and RLS;
+  no secret, service-role, or webhook credential enters the renderer.
 - The service subscribes before reading state to `INSERT` and `UPDATE` Postgres
   Changes for `public.fluxora_desktop_releases` with
   `channel=eq.stable`. Every `SUBSCRIBED` transition, including reconnect,

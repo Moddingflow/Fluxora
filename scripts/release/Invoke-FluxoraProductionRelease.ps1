@@ -277,15 +277,17 @@ if ($versionResolution.Cancelled) {
 }
 $targetVersion = [string]$versionResolution.Version
 $tag = "v$targetVersion"
-$releaseSignalSupabaseUrl = [Environment]::GetEnvironmentVariable(
+$releaseSignalConfiguration = Resolve-FluxoraReleaseSignalPublicConfiguration -ProjectRoot $projectRoot
+$releaseSignalSupabaseUrl = [string]$releaseSignalConfiguration.Url
+$releaseSignalPublishableKey = [string]$releaseSignalConfiguration.PublishableKey
+[Environment]::SetEnvironmentVariable(
     'VITE_FLUXORA_RELEASES_SUPABASE_URL',
+    $releaseSignalSupabaseUrl,
     'Process')
-$releaseSignalPublishableKey = [Environment]::GetEnvironmentVariable(
+[Environment]::SetEnvironmentVariable(
     'VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY',
+    $releaseSignalPublishableKey,
     'Process')
-Assert-FluxoraReleaseSignalPublicConfiguration `
-    -SupabaseUrl $releaseSignalSupabaseUrl `
-    -PublishableKey $releaseSignalPublishableKey
 
 foreach ($command in @('git', 'gh', 'cmake', 'cargo', 'node', 'npm', 'pwsh')) {
     if ($null -eq (Get-Command $command -ErrorAction SilentlyContinue)) {

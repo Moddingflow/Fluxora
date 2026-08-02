@@ -121,6 +121,16 @@ or `signtool`; Windows builds can therefore show an unknown-publisher warning,
 while automatic update manifests and inventories remain detached-signature
 verified.
 
+Production automatically loads the public desktop release-signal URL and
+Supabase publishable key from
+`frontend-tauri/release-signal.public.json`, validates the fixed project, and
+passes both values to the nested Vite build. A complete pair of
+`VITE_FLUXORA_RELEASES_SUPABASE_URL` and
+`VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY` process variables may override
+the tracked values for a controlled rotation. The tracked key is intentionally
+public client configuration protected by grants and RLS; a secret or
+service-role key must never be placed there.
+
 The build pipeline creates:
 
 - `output/` as local staging for the Tauri app payload and native resources.

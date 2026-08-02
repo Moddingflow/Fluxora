@@ -1657,6 +1657,11 @@ Invoke-Case 'release signal public configuration fails before long production wo
             -SupabaseUrl 'https://attacker.supabase.co' `
             -PublishableKey 'do-not-print-this-key'
     } '*project URL is invalid*'
+    Assert-Throws {
+        Assert-FluxoraReleaseSignalPublicConfiguration `
+            -SupabaseUrl 'https://tpciohumwahlctpeuduv.supabase.co' `
+            -PublishableKey 'sb_secret_fixture'
+    } '*must use an sb_publishable_ key*'
     try {
         Assert-FluxoraReleaseSignalPublicConfiguration `
             -SupabaseUrl 'https://attacker.supabase.co' `
@@ -1665,6 +1670,35 @@ Invoke-Case 'release signal public configuration fails before long production wo
     }
     catch {
         Assert-True (-not $_.Exception.Message.Contains('do-not-print-this-key')) 'Configuration failures must never print the publishable key.'
+    }
+}
+
+Invoke-Case 'production resolves repository public release signal configuration without shell setup' {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-release-signal-config-' + [Guid]::NewGuid().ToString('N'))
+    $previousUrl = [Environment]::GetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_URL', 'Process')
+    $previousPublishableKey = [Environment]::GetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY', 'Process')
+    try {
+        $frontendRoot = Join-Path $root 'frontend-tauri'
+        New-Item -ItemType Directory -Path $frontendRoot -Force | Out-Null
+        @{
+            url = 'https://tpciohumwahlctpeuduv.supabase.co'
+            publishableKey = 'sb_publishable_fixture'
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $frontendRoot 'release-signal.public.json') -Encoding utf8
+        [Environment]::SetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_URL', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY', $null, 'Process')
+
+        $configuration = Resolve-FluxoraReleaseSignalPublicConfiguration -ProjectRoot $root
+
+        Assert-Equal $configuration.Url 'https://tpciohumwahlctpeuduv.supabase.co' 'Production must resolve the canonical repository-owned public URL.'
+        Assert-Equal $configuration.PublishableKey 'sb_publishable_fixture' 'Production must resolve the repository-owned publishable key.'
+        Assert-Equal $configuration.Source 'Repository' 'Missing shell configuration must fall back to the tracked public configuration.'
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_URL', $previousUrl, 'Process')
+        [Environment]::SetEnvironmentVariable('VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY', $previousPublishableKey, 'Process')
+        if (Test-Path -LiteralPath $root) {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
     }
 }
 

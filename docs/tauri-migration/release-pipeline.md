@@ -274,9 +274,12 @@ Production mode is fail-closed and non-forceful:
    private OS lock excludes concurrent publishers. Before showing this menu, a
    stale version-recovery journal from an interrupted process is validated
    against the unchanged Git HEAD and used to restore the exact original bytes.
-   Production also requires the exact public Supabase URL and a non-empty
-   publishable key before package-manager bootstrap, remote checks, checkpoint
-   mutation, or the long build. Values are never printed.
+   Production resolves the exact public Supabase URL and publishable key from
+   tracked `frontend-tauri/release-signal.public.json`, or from a complete
+   process-environment override pair during controlled rotation, before
+   package-manager bootstrap, remote checks, checkpoint mutation, or the long
+   build. It exports the validated pair to the nested Vite build. Values are
+   never printed, and secret/service-role keys never belong in this public file.
 2. Verify the authenticated GitHub repository, default release branch, that the
    branch is not behind upstream, and absence of the version tag/release. If the
    worktree is dirty or local commits are unpublished, show the exact `git add

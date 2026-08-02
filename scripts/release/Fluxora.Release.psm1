@@ -2791,6 +2791,72 @@ function Assert-FluxoraReleaseSignalPublicConfiguration {
     if ($url -cne 'https://tpciohumwahlctpeuduv.supabase.co') {
         throw 'Fluxora release signal project URL is invalid for Production.'
     }
+    if (-not $PublishableKey.Trim().StartsWith('sb_publishable_', [StringComparison]::Ordinal)) {
+        throw 'Fluxora release signal public configuration must use an sb_publishable_ key.'
+    }
+}
+
+function Resolve-FluxoraReleaseSignalPublicConfiguration {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $ProjectRoot,
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $SupabaseUrl = [Environment]::GetEnvironmentVariable(
+            'VITE_FLUXORA_RELEASES_SUPABASE_URL',
+            'Process'),
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $PublishableKey = [Environment]::GetEnvironmentVariable(
+            'VITE_FLUXORA_RELEASES_SUPABASE_PUBLISHABLE_KEY',
+            'Process')
+    )
+
+    $environmentUrlPresent = -not [string]::IsNullOrWhiteSpace($SupabaseUrl)
+    $environmentKeyPresent = -not [string]::IsNullOrWhiteSpace($PublishableKey)
+    if ($environmentUrlPresent -or $environmentKeyPresent) {
+        Assert-FluxoraReleaseSignalPublicConfiguration `
+            -SupabaseUrl $SupabaseUrl `
+            -PublishableKey $PublishableKey
+        return [pscustomobject]@{
+            Url = $SupabaseUrl.Trim()
+            PublishableKey = $PublishableKey.Trim()
+            Source = 'Environment'
+        }
+    }
+
+    $configurationPath = Join-Path $ProjectRoot 'frontend-tauri\release-signal.public.json'
+    if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) {
+        throw "Fluxora repository public release signal configuration is missing: '$configurationPath'."
+    }
+    $configurationItem = Get-Item -LiteralPath $configurationPath -Force
+    if (($configurationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Fluxora repository public release signal configuration must not be a reparse point: '$configurationPath'."
+    }
+
+    try {
+        $document = Get-Content -LiteralPath $configurationPath -Raw -Encoding utf8 |
+            ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Fluxora repository public release signal configuration is invalid JSON: '$configurationPath'."
+    }
+    $urlProperty = $document.PSObject.Properties['url']
+    $publishableKeyProperty = $document.PSObject.Properties['publishableKey']
+    $resolvedUrl = if ($null -eq $urlProperty) { '' } else { [string]$urlProperty.Value }
+    $resolvedPublishableKey = if ($null -eq $publishableKeyProperty) { '' } else { [string]$publishableKeyProperty.Value }
+    Assert-FluxoraReleaseSignalPublicConfiguration `
+        -SupabaseUrl $resolvedUrl `
+        -PublishableKey $resolvedPublishableKey
+
+    return [pscustomobject]@{
+        Url = $resolvedUrl.Trim()
+        PublishableKey = $resolvedPublishableKey.Trim()
+        Source = 'Repository'
+    }
 }
 
 function Test-FluxoraPublicReleaseAnnouncement {
@@ -2945,5 +3011,6 @@ Export-ModuleMember -Function @(
     'Assert-FluxoraReleasePreconditions',
     'Assert-FluxoraPostCheckpointStatus',
     'Assert-FluxoraReleaseSignalPublicConfiguration',
+    'Resolve-FluxoraReleaseSignalPublicConfiguration',
     'Wait-FluxoraReleasePublicationPostflight'
 )
