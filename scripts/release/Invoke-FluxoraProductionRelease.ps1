@@ -80,18 +80,47 @@ function Invoke-ReleaseCommand {
     param(
         [Parameter(Mandatory = $true)] [string] $FilePath,
         [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [string[]] $Arguments,
-        [string] $WorkingDirectory = $projectRoot
+        [string] $WorkingDirectory = $projectRoot,
+        [switch] $LiveOutput,
+        [string] $Activity
     )
 
     Assert-FluxoraReleaseChildEnvironment -SecretName $signingSecretName -ChildFilePath $FilePath
 
+    $resolvedActivity = if ([string]::IsNullOrWhiteSpace($Activity)) {
+        "Running $FilePath"
+    }
+    else {
+        $Activity
+    }
+    $commandStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    if ($LiveOutput) {
+        Write-Host ("    -> {0}; live output follows" -f $resolvedActivity)
+    }
+
     Push-Location $WorkingDirectory
     try {
-        $output = @(& $FilePath @Arguments 2>&1)
+        $output = @(
+            & $FilePath @Arguments 2>&1 | ForEach-Object {
+                $line = $_.ToString()
+                if ($LiveOutput) {
+                    Write-Host ("    | {0}" -f $line)
+                }
+                $line
+            }
+        )
         $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
+    }
+    $commandStopwatch.Stop()
+    if ($LiveOutput) {
+        $commandResult = if ($exitCode -eq 0) { 'completed' } else { 'failed' }
+        Write-Host ("    -> {0} {1} in {2}" -f `
+            $resolvedActivity,
+            $commandResult,
+            $commandStopwatch.Elapsed.ToString('hh\:mm\:ss'))
     }
     if ($exitCode -ne 0) {
         $detail = @($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
@@ -117,15 +146,42 @@ function Test-ReleaseCommand {
     }
 }
 
+$script:FluxoraReleaseStepNumber = 0
+
 function Invoke-ReleaseStep {
     param(
         [Parameter(Mandatory = $true)] [string] $Name,
         [Parameter(Mandatory = $true)] [scriptblock] $Action
     )
 
+    $script:FluxoraReleaseStepNumber++
+    $stepNumber = $script:FluxoraReleaseStepNumber
+    $startedAt = [DateTimeOffset]::Now
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $completed = $false
+
     Write-Host ''
-    Write-Host "== $Name =="
-    & $Action
+    Write-Host ("== [release {0:00} | {1}] {2} ==" -f $stepNumber, $startedAt.ToString('HH:mm:ss'), $Name)
+    Write-Progress `
+        -Id 7200 `
+        -Activity 'Fluxora Production release' `
+        -Status ("Step {0}: {1}" -f $stepNumber, $Name) `
+        -PercentComplete -1
+    try {
+        & $Action
+        $completed = $true
+    }
+    finally {
+        $stopwatch.Stop()
+        Write-Progress -Id 7200 -Activity 'Fluxora Production release' -Completed
+        $elapsed = $stopwatch.Elapsed.ToString('hh\:mm\:ss')
+        if ($completed) {
+            Write-Host ("    [release {0:00} completed in {1}] {2}" -f $stepNumber, $elapsed, $Name)
+        }
+        else {
+            Write-Host ("    [release {0:00} failed after {1}] {2}" -f $stepNumber, $elapsed, $Name)
+        }
+    }
 }
 
 function Get-ProductVersion {
@@ -235,7 +291,9 @@ Invoke-ReleaseStep 'Preparing pinned frontend package manager' {
     [void](Invoke-ReleaseCommand `
         -FilePath ([string]$frontendPackageManager.FilePath) `
         -Arguments $versionArguments `
-        -WorkingDirectory $frontendRoot)
+        -WorkingDirectory $frontendRoot `
+        -LiveOutput `
+        -Activity 'Checking the pinned frontend package manager')
 }
 if (-not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
     throw "Embedded update public key is missing: '$publicKeyPath'."
@@ -284,7 +342,9 @@ Invoke-ReleaseStep 'Authenticating GitHub release transport' {
 Invoke-ReleaseStep 'Refreshing release refs' {
     [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments @(
         'fetch', '--prune', '--tags', $script:canonicalFetchUrl,
-        "refs/heads/$($script:defaultBranch):refs/remotes/origin/$($script:defaultBranch)"))
+        "refs/heads/$($script:defaultBranch):refs/remotes/origin/$($script:defaultBranch)") `
+        -LiveOutput `
+        -Activity 'Fetching canonical release refs')
 }
 
 $branch = (Invoke-ReleaseCommand -FilePath 'git' -Arguments @('branch', '--show-current')) -join ''
@@ -436,7 +496,9 @@ try {
             '--repo', $repository,
             '--dir', $previousReleaseRoot,
             '--pattern', 'fluxora-update-manifest.json',
-            '--pattern', 'fluxora-update-manifest.sig'))
+            '--pattern', 'fluxora-update-manifest.sig') `
+            -LiveOutput `
+            -Activity "Downloading update ancestry for $([string]$previousRelease[0].tagName)")
         $script:previousManifestPath = Join-Path $previousReleaseRoot 'fluxora-update-manifest.json'
         $script:previousSignaturePath = Join-Path $previousReleaseRoot 'fluxora-update-manifest.sig'
         $previousManifest = Read-FluxoraSignedUpdateManifest `
@@ -459,14 +521,18 @@ try {
         [void](Invoke-ReleaseCommand `
             -FilePath ([string]$frontendPackageManager.FilePath) `
             -Arguments $installArguments `
-            -WorkingDirectory $frontendRoot)
+            -WorkingDirectory $frontendRoot `
+            -LiveOutput `
+            -Activity 'Restoring the pinned frontend dependency graph')
     }
 
     Invoke-ReleaseStep 'Refreshing deterministic dependency inventory for the release version' {
         [void](Invoke-ReleaseCommand -FilePath 'pwsh' -Arguments @(
             '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
             '-File', (Join-Path $projectRoot 'scripts\release\Test-DesktopLegalAndAssetCompliance.ps1'),
-            '-UpdateInventory'))
+            '-UpdateInventory') `
+            -LiveOutput `
+            -Activity 'Regenerating the deterministic dependency inventory')
         $script:expectedVersionSnapshots = @(Get-FluxoraFileSnapshots -ProjectRoot $projectRoot -RelativePaths $versionPaths)
     }
 
@@ -481,14 +547,20 @@ try {
         if ($IncludeSymbols) {
             $buildArguments += '-IncludeSymbols'
         }
-        [void](Invoke-ReleaseCommand -FilePath 'pwsh' -Arguments $buildArguments)
+        [void](Invoke-ReleaseCommand `
+            -FilePath 'pwsh' `
+            -Arguments $buildArguments `
+            -LiveOutput `
+            -Activity 'Running the complete local Build.ps1 pipeline')
     }
 
     Invoke-ReleaseStep 'Running strict release contract tests against built native artifacts' {
         [void](Invoke-ReleaseCommand -FilePath 'pwsh' -Arguments @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass',
             '-File', (Join-Path $projectRoot 'scripts\tests\Fluxora.Release.Tests.ps1'),
-            '-RequireNativeAbi'))
+            '-RequireNativeAbi') `
+            -LiveOutput `
+            -Activity 'Running strict PowerShell release contract tests')
     }
 
     Invoke-ReleaseStep 'Running complete backend CTest suite' {
@@ -498,7 +570,9 @@ try {
             '--timeout', '120',
             '--stop-on-failure',
             '--output-on-failure',
-            '--no-tests=error'))
+            '--no-tests=error') `
+            -LiveOutput `
+            -Activity 'Running the complete backend CTest suite')
     }
 
     Invoke-ReleaseStep 'Running native Tauri Setup and updater boundary suites' {
@@ -509,9 +583,15 @@ try {
 
         & (Join-Path $projectRoot 'frontend-tauri\scripts\ensure-libclang.ps1')
         [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
-            'run', 'build:setup:frontend') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+            'run', 'build:setup:frontend') `
+            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
+            -LiveOutput `
+            -Activity 'Building the Setup renderer')
         [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
-            'run', 'build:updater:frontend') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+            'run', 'build:updater:frontend') `
+            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
+            -LiveOutput `
+            -Activity 'Building the updater renderer')
 
         $previousInstallerCoreLibraryDirectory = [Environment]::GetEnvironmentVariable(
             'FLUXORA_INSTALLER_CORE_LIB_DIR',
@@ -539,7 +619,10 @@ try {
                 'test', '--release', '--locked',
                 '--features', 'installer-native,custom-protocol',
                 '--bin', 'FluxoraUpdater',
-                '--bin', 'FluxoraSetup') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri'))
+                '--bin', 'FluxoraSetup') `
+                -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri') `
+                -LiveOutput `
+                -Activity 'Running native Setup and updater boundary tests')
         }
         finally {
             if ($null -eq $previousInstallerCoreLibraryDirectory) {
@@ -561,25 +644,43 @@ try {
     }
 
     Invoke-ReleaseStep 'Running Tauri unit and component suites' {
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'typecheck') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('test') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri'))
+        [void](Invoke-ReleaseCommand `
+            -FilePath 'npm' `
+            -Arguments @('run', 'typecheck') `
+            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
+            -LiveOutput `
+            -Activity 'Type-checking the Tauri renderer')
+        [void](Invoke-ReleaseCommand `
+            -FilePath 'npm' `
+            -Arguments @('test') `
+            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
+            -LiveOutput `
+            -Activity 'Running Tauri unit and component tests')
     }
 
     Invoke-ReleaseStep 'Running Tauri Playwright smoke suite' {
         $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:frontend') -WorkingDirectory $frontendRoot)
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:setup:frontend') -WorkingDirectory $frontendRoot)
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:updater:frontend') -WorkingDirectory $frontendRoot)
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:frontend') `
+            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Building the main Tauri renderer')
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:setup:frontend') `
+            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Restaging the Setup renderer')
+        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:updater:frontend') `
+            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Restaging the updater renderer')
         [void](Invoke-ReleaseCommand -FilePath 'node' -Arguments @(
             'node_modules/@playwright/test/cli.js',
             'test',
             '--pass-with-no-tests',
             '--output', $playwrightOutputRoot
-        ) -WorkingDirectory $frontendRoot)
+        ) -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Running the Playwright smoke suite')
     }
 
     Invoke-ReleaseStep 'Running Tauri Rust suite' {
-        [void](Invoke-ReleaseCommand -FilePath 'cargo' -Arguments @('test', '--release', '--locked') -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri'))
+        [void](Invoke-ReleaseCommand `
+            -FilePath 'cargo' `
+            -Arguments @('test', '--release', '--locked') `
+            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri') `
+            -LiveOutput `
+            -Activity 'Running the complete Tauri Rust suite')
     }
 
     if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
@@ -751,7 +852,9 @@ try {
 
     Invoke-ReleaseStep 'Atomically pushing release commit and tag' {
         [void](Invoke-ReleaseCommand -FilePath 'git' -Arguments @(
-            'push', '--atomic', $script:canonicalPushUrl, $script:defaultBranch, "refs/tags/$tag"))
+            'push', '--atomic', $script:canonicalPushUrl, $script:defaultBranch, "refs/tags/$tag") `
+            -LiveOutput `
+            -Activity "Pushing $tag and the release commit atomically")
         $script:remotePushed = $true
     }
 
@@ -772,7 +875,9 @@ try {
             '--verify-tag',
             '--draft',
             '--title', "Fluxora $targetVersion",
-            '--notes-file', $releaseNotesPath) + $uploadPaths))
+            '--notes-file', $releaseNotesPath) + $uploadPaths) `
+            -LiveOutput `
+            -Activity "Uploading verified assets to the $tag draft")
         $script:draftCreated = $true
     }
 
@@ -784,7 +889,9 @@ try {
                 'release', 'download', $tag,
                 '--repo', $repository,
                 '--dir', $verificationRoot,
-                '--pattern', $assetName))
+                '--pattern', $assetName) `
+                -LiveOutput `
+                -Activity "Downloading draft asset $assetName")
             $downloadedAsset = Join-Path $verificationRoot $assetName
             if (-not (Test-Path -LiteralPath $downloadedAsset -PathType Leaf)) {
                 throw "GitHub draft is missing uploaded asset '$assetName'."
@@ -815,7 +922,9 @@ try {
             'release', 'edit', $tag,
             '--repo', $repository,
             '--draft=false',
-            '--latest'))
+            '--latest') `
+            -LiveOutput `
+            -Activity "Publishing verified release $tag")
         $published = (Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
             'release', 'view', $tag, '--repo', $repository, '--json', 'isDraft,tagName,url')) -join "`n" | ConvertFrom-Json
         if ([bool]$published.isDraft -or [string]$published.tagName -cne $tag) {

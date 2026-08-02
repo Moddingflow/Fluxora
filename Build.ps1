@@ -250,6 +250,8 @@ function Assert-FluxoraWebView2Bootstrapper {
     return $metadata
 }
 
+$script:FluxoraBuildStepNumber = 0
+
 function Invoke-BuildStep {
     param(
         [Parameter(Mandatory = $true)]
@@ -259,9 +261,34 @@ function Invoke-BuildStep {
         [scriptblock]$Action
     )
 
+    $script:FluxoraBuildStepNumber++
+    $stepNumber = $script:FluxoraBuildStepNumber
+    $startedAt = [DateTimeOffset]::Now
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $completed = $false
+
     Write-Host ""
-    Write-Host "==> $Title"
-    & $Action
+    Write-Host ("==> [build {0:00} | {1}] {2}" -f $stepNumber, $startedAt.ToString('HH:mm:ss'), $Title)
+    Write-Progress `
+        -Id 7100 `
+        -Activity 'Fluxora local build' `
+        -Status ("Step {0}: {1}" -f $stepNumber, $Title) `
+        -PercentComplete -1
+    try {
+        & $Action
+        $completed = $true
+    }
+    finally {
+        $stopwatch.Stop()
+        Write-Progress -Id 7100 -Activity 'Fluxora local build' -Completed
+        $elapsed = $stopwatch.Elapsed.ToString('hh\:mm\:ss')
+        if ($completed) {
+            Write-Host ("    [build {0:00} completed in {1}] {2}" -f $stepNumber, $elapsed, $Title)
+        }
+        else {
+            Write-Host ("    [build {0:00} failed after {1}] {2}" -f $stepNumber, $elapsed, $Title)
+        }
+    }
 }
 
 function Invoke-CheckedCommand {

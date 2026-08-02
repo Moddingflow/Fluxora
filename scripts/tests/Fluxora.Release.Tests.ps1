@@ -1887,6 +1887,12 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($packageManagerBootstrapOffset -ge 0 -and $packageManagerBootstrapOffset -lt $githubAuthOffset) 'Production must download or resolve the pinned frontend package manager before remote checks or checkpoint mutation.'
     Assert-True ($journalCreateOffset -gt $githubAuthOffset -and $journalCreateOffset -lt $versionApplyOffset) 'The durable recovery journal must be sealed before version files are edited.'
     Assert-True ($versionApplyOffset -ge 0 -and $dependencyRestoreOffset -gt $versionApplyOffset -and $dependencyInventoryRefreshOffset -gt $dependencyRestoreOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must restore pinned frontend packages after changing version-owned inputs, then refresh deterministic dependency evidence before the full build.'
+    $localBuildSection = $source.Substring($buildOffset, $strictContractOffset - $buildOffset)
+    Assert-True ($localBuildSection.Contains('-LiveOutput')) 'Production must stream the nested local build instead of buffering its output until completion.'
+    Assert-True ($localBuildSection.Contains('Running the complete local Build.ps1 pipeline')) 'Production must identify the nested local build activity before its live output starts.'
+    Assert-True ($source.Contains('$script:FluxoraReleaseStepNumber')) 'Production release steps must expose a stable sequential step number.'
+    Assert-True ($source.Contains("[release {0:00} completed in {1}]")) 'Production release steps must print their completed duration.'
+    Assert-True ($source.Contains("[release {0:00} failed after {1}]")) 'Production release steps must print their failed duration.'
     Assert-True ($source.Contains('Get-FluxoraFrontendPackageManagerArguments')) 'Production must preserve the package-manager bootstrap prefix for every pnpm invocation.'
     Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
     Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
@@ -1927,6 +1933,140 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($source.Contains("'--draft=false'")) 'Only the verified draft may be published.'
     Assert-True (-not $source.Contains('--clobber')) 'Production release must never overwrite an existing asset.'
     Assert-True (-not $source.Contains('--force')) 'Production release must never force-push or force-rewrite a release.'
+}
+
+Invoke-Case 'production release progress streams child output and reports timed step state' {
+    $scriptPath = Join-Path $projectRoot 'scripts\release\Invoke-FluxoraProductionRelease.ps1'
+    $tokens = $null
+    $errors = $null
+    $scriptAst = [Management.Automation.Language.Parser]::ParseFile(
+        $scriptPath,
+        [ref]$tokens,
+        [ref]$errors)
+    Assert-Equal $errors.Count 0 'Production release progress helpers must be parseable before their focused behavior test.'
+
+    $commandFunction = $scriptAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-ReleaseCommand'
+    }, $true)
+    $stepFunction = $scriptAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-ReleaseStep'
+    }, $true)
+    Assert-True ($null -ne $commandFunction) 'The production release command helper must remain discoverable.'
+    Assert-True ($null -ne $stepFunction) 'The production release step helper must remain discoverable.'
+    Invoke-Expression $commandFunction.Extent.Text
+    Invoke-Expression $stepFunction.Extent.Text
+
+    $progressSecretName = 'FLUXORA_RELEASE_PROGRESS_TEST_SECRET'
+    $previousProgressSecret = [Environment]::GetEnvironmentVariable($progressSecretName, 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable($progressSecretName, $null, 'Process')
+        $signingSecretName = $progressSecretName
+
+        $visibleCommandOutput = @(
+            & {
+                [void](Invoke-ReleaseCommand `
+                    -FilePath 'pwsh' `
+                    -Arguments @(
+                        '-NoProfile',
+                        '-NonInteractive',
+                        '-Command',
+                        "Write-Output 'live-child-marker'") `
+                    -LiveOutput `
+                    -Activity 'Synthetic live release command')
+            } 6>&1 | ForEach-Object { $_.ToString() }
+        )
+        $visibleCommandText = $visibleCommandOutput -join "`n"
+        Assert-True ($visibleCommandText.Contains('Synthetic live release command; live output follows')) 'A long release command must identify its current activity before launching.'
+        Assert-True ($visibleCommandText.Contains('live-child-marker')) 'A long release command must expose child output while its caller discards the returned capture.'
+        Assert-True ($visibleCommandText.Contains('Synthetic live release command completed in')) 'A long release command must report its elapsed completion time.'
+
+        Assert-Throws {
+            [void](Invoke-ReleaseCommand `
+                -FilePath 'pwsh' `
+                -Arguments @(
+                    '-NoProfile',
+                    '-NonInteractive',
+                    '-Command',
+                    "Write-Output 'retained-failure-marker'; exit 9"))
+        } '*retained-failure-marker*'
+
+        $script:FluxoraReleaseStepNumber = 0
+        $visibleStepOutput = @(
+            & {
+                [void](Invoke-ReleaseStep 'Synthetic timed release step' {
+                    Write-Output 'step-body-marker'
+                })
+            } 6>&1 | ForEach-Object { $_.ToString() }
+        )
+        $visibleStepText = $visibleStepOutput -join "`n"
+        Assert-True ($visibleStepText.Contains('[release 01 |')) 'A release step must expose its sequential number and start time.'
+        Assert-True ($visibleStepText.Contains('[release 01 completed in')) 'A successful release step must expose its elapsed time.'
+
+        $failedStepOutput = @(
+            & {
+                try {
+                    [void](Invoke-ReleaseStep 'Synthetic failed release step' {
+                        throw 'synthetic release step failure'
+                    })
+                }
+                catch {
+                    Write-Output 'expected-step-failure'
+                }
+            } 6>&1 | ForEach-Object { $_.ToString() }
+        )
+        Assert-True (($failedStepOutput -join "`n").Contains('[release 02 failed after')) 'A failed release step must expose its elapsed time before preserving the error.'
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable($progressSecretName, $previousProgressSecret, 'Process')
+    }
+}
+
+Invoke-Case 'local build progress reports numbered timed step state' {
+    $buildPath = Join-Path $projectRoot 'Build.ps1'
+    $tokens = $null
+    $errors = $null
+    $buildAst = [Management.Automation.Language.Parser]::ParseFile(
+        $buildPath,
+        [ref]$tokens,
+        [ref]$errors)
+    Assert-Equal $errors.Count 0 'Build.ps1 progress helpers must be parseable before their focused behavior test.'
+    $stepFunction = $buildAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-BuildStep'
+    }, $true)
+    Assert-True ($null -ne $stepFunction) 'The local build step helper must remain discoverable.'
+    Invoke-Expression $stepFunction.Extent.Text
+
+    $script:FluxoraBuildStepNumber = 0
+    $visibleStepOutput = @(
+        & {
+            [void](Invoke-BuildStep 'Synthetic local build step' {
+                Write-Output 'local-step-body-marker'
+            })
+        } 6>&1 | ForEach-Object { $_.ToString() }
+    )
+    $visibleStepText = $visibleStepOutput -join "`n"
+    Assert-True ($visibleStepText.Contains('[build 01 |')) 'A local build step must expose its sequential number and start time.'
+    Assert-True ($visibleStepText.Contains('[build 01 completed in')) 'A successful local build step must expose its elapsed time.'
+
+    $failedStepOutput = @(
+        & {
+            try {
+                [void](Invoke-BuildStep 'Synthetic failed local build step' {
+                    throw 'synthetic local build step failure'
+                })
+            }
+            catch {
+                Write-Output 'expected-local-step-failure'
+            }
+        } 6>&1 | ForEach-Object { $_.ToString() }
+    )
+    Assert-True (($failedStepOutput -join "`n").Contains('[build 02 failed after')) 'A failed local build step must expose its elapsed time before preserving the error.'
 }
 
 Invoke-Case 'Build.ps1 exposes safe local and production entry modes' {
