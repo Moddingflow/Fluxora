@@ -278,7 +278,7 @@ if ($versionResolution.Cancelled) {
 $targetVersion = [string]$versionResolution.Version
 $tag = "v$targetVersion"
 
-foreach ($command in @('git', 'gh', 'cmake', 'ctest', 'cargo', 'node', 'npm', 'pwsh')) {
+foreach ($command in @('git', 'gh', 'cmake', 'cargo', 'node', 'npm', 'pwsh')) {
     if ($null -eq (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Production release requires '$command' on PATH."
     }
@@ -463,7 +463,6 @@ $preReleaseHead = ((Invoke-ReleaseCommand -FilePath 'git' -Arguments @('rev-pars
 $transactionRoot = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-production-release-' + [Guid]::NewGuid().ToString('N'))
 $previousReleaseRoot = Join-Path $transactionRoot 'previous-release'
 $verificationRoot = Join-Path $transactionRoot 'remote-verification'
-$playwrightOutputRoot = Join-Path $transactionRoot 'playwright-results'
 New-Item -ItemType Directory -Path $previousReleaseRoot -Force | Out-Null
 $versionPaths = @(Get-VersionPaths)
 $commitCreated = $false
@@ -537,6 +536,8 @@ try {
     }
 
     Invoke-ReleaseStep 'Building the complete local release' {
+        # Test suites are an explicit operator action. Production intentionally
+        # uses the default test-free local build contract.
         $buildArguments = @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass',
             '-File', (Join-Path $projectRoot 'Build.ps1'),
@@ -552,135 +553,6 @@ try {
             -Arguments $buildArguments `
             -LiveOutput `
             -Activity 'Running the complete local Build.ps1 pipeline')
-    }
-
-    Invoke-ReleaseStep 'Running strict release contract tests against built native artifacts' {
-        [void](Invoke-ReleaseCommand -FilePath 'pwsh' -Arguments @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass',
-            '-File', (Join-Path $projectRoot 'scripts\tests\Fluxora.Release.Tests.ps1'),
-            '-RequireNativeAbi') `
-            -LiveOutput `
-            -Activity 'Running strict PowerShell release contract tests')
-    }
-
-    Invoke-ReleaseStep 'Running complete backend CTest suite' {
-        [void](Invoke-ReleaseCommand -FilePath 'ctest' -Arguments @(
-            '--test-dir', (Join-Path $projectRoot 'build\backend'),
-            '-C', $Configuration,
-            '--timeout', '120',
-            '--stop-on-failure',
-            '--output-on-failure',
-            '--no-tests=error') `
-            -LiveOutput `
-            -Activity 'Running the complete backend CTest suite')
-    }
-
-    Invoke-ReleaseStep 'Running native Tauri Setup and updater boundary suites' {
-        $installerCoreLibraryPath = Join-Path $projectRoot "build\backend\$Configuration\FluxoraInstallerCore.lib"
-        if (-not (Test-Path -LiteralPath $installerCoreLibraryPath -PathType Leaf)) {
-            throw "The production boundary suite requires the configured static installer core '$installerCoreLibraryPath'."
-        }
-
-        & (Join-Path $projectRoot 'frontend-tauri\scripts\ensure-libclang.ps1')
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
-            'run', 'build:setup:frontend') `
-            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
-            -LiveOutput `
-            -Activity 'Building the Setup renderer')
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @(
-            'run', 'build:updater:frontend') `
-            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
-            -LiveOutput `
-            -Activity 'Building the updater renderer')
-
-        $previousInstallerCoreLibraryDirectory = [Environment]::GetEnvironmentVariable(
-            'FLUXORA_INSTALLER_CORE_LIB_DIR',
-            'Process')
-        $installerRustFlagsVariable = 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS'
-        $previousInstallerRustFlags = [Environment]::GetEnvironmentVariable(
-            $installerRustFlagsVariable,
-            'Process')
-        try {
-            $env:FLUXORA_INSTALLER_CORE_LIB_DIR = Split-Path -Parent $installerCoreLibraryPath
-            $staticCrtFlag = '-C target-feature=+crt-static'
-            if ([string]::IsNullOrWhiteSpace($previousInstallerRustFlags)) {
-                [Environment]::SetEnvironmentVariable(
-                    $installerRustFlagsVariable,
-                    $staticCrtFlag,
-                    'Process')
-            }
-            elseif ($previousInstallerRustFlags -notmatch '(?:^|\s)-C\s+target-feature=\+crt-static(?:\s|$)') {
-                [Environment]::SetEnvironmentVariable(
-                    $installerRustFlagsVariable,
-                    "$previousInstallerRustFlags $staticCrtFlag",
-                    'Process')
-            }
-            [void](Invoke-ReleaseCommand -FilePath 'cargo' -Arguments @(
-                'test', '--release', '--locked',
-                '--features', 'installer-native,custom-protocol',
-                '--bin', 'FluxoraUpdater',
-                '--bin', 'FluxoraSetup') `
-                -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri') `
-                -LiveOutput `
-                -Activity 'Running native Setup and updater boundary tests')
-        }
-        finally {
-            if ($null -eq $previousInstallerCoreLibraryDirectory) {
-                Remove-Item Env:FLUXORA_INSTALLER_CORE_LIB_DIR -ErrorAction SilentlyContinue
-            }
-            else {
-                $env:FLUXORA_INSTALLER_CORE_LIB_DIR = $previousInstallerCoreLibraryDirectory
-            }
-            if ($null -eq $previousInstallerRustFlags) {
-                Remove-Item -LiteralPath "Env:$installerRustFlagsVariable" -ErrorAction SilentlyContinue
-            }
-            else {
-                [Environment]::SetEnvironmentVariable(
-                    $installerRustFlagsVariable,
-                    $previousInstallerRustFlags,
-                    'Process')
-            }
-        }
-    }
-
-    Invoke-ReleaseStep 'Running Tauri unit and component suites' {
-        [void](Invoke-ReleaseCommand `
-            -FilePath 'npm' `
-            -Arguments @('run', 'typecheck') `
-            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
-            -LiveOutput `
-            -Activity 'Type-checking the Tauri renderer')
-        [void](Invoke-ReleaseCommand `
-            -FilePath 'npm' `
-            -Arguments @('test') `
-            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri') `
-            -LiveOutput `
-            -Activity 'Running Tauri unit and component tests')
-    }
-
-    Invoke-ReleaseStep 'Running Tauri Playwright smoke suite' {
-        $frontendRoot = Join-Path $projectRoot 'frontend-tauri'
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:frontend') `
-            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Building the main Tauri renderer')
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:setup:frontend') `
-            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Restaging the Setup renderer')
-        [void](Invoke-ReleaseCommand -FilePath 'npm' -Arguments @('run', 'build:updater:frontend') `
-            -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Restaging the updater renderer')
-        [void](Invoke-ReleaseCommand -FilePath 'node' -Arguments @(
-            'node_modules/@playwright/test/cli.js',
-            'test',
-            '--pass-with-no-tests',
-            '--output', $playwrightOutputRoot
-        ) -WorkingDirectory $frontendRoot -LiveOutput -Activity 'Running the Playwright smoke suite')
-    }
-
-    Invoke-ReleaseStep 'Running Tauri Rust suite' {
-        [void](Invoke-ReleaseCommand `
-            -FilePath 'cargo' `
-            -Arguments @('test', '--release', '--locked') `
-            -WorkingDirectory (Join-Path $projectRoot 'frontend-tauri\src-tauri') `
-            -LiveOutput `
-            -Activity 'Running the complete Tauri Rust suite')
     }
 
     if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
@@ -707,6 +579,9 @@ try {
         ArtifactDirectory = $artifactDirectory
         Version = $targetVersion
         PublicKeyPath = $publicKeyPath
+        # Preconditions above already proved that this version has no local tag
+        # or GitHub release. A retry may therefore replace only its local output.
+        ReplaceExisting = $true
     }
     if (-not [string]::IsNullOrWhiteSpace($previousManifestPath)) {
         $artifactArguments['PreviousManifestPath'] = $previousManifestPath

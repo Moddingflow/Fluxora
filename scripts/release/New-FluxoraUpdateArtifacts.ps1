@@ -25,6 +25,8 @@ param(
 
     [string] $Repository = 'Moddingflow/Fluxora',
 
+    [switch] $ReplaceExisting,
+
     [AllowNull()]
     [System.Security.Cryptography.ECDsa] $SigningKey
 )
@@ -64,11 +66,58 @@ Import-Module $modulePath -Force
 
 $payloadRoot = [IO.Path]::GetFullPath($PayloadDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
 $artifactRoot = [IO.Path]::GetFullPath($ArtifactDirectory).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$replacementBackupRoot = $artifactRoot + '.previous'
 if (-not (Test-Path -LiteralPath $payloadRoot -PathType Container)) {
     throw "Update payload directory does not exist: '$payloadRoot'."
 }
-if (Test-Path -LiteralPath $artifactRoot) {
+
+function Assert-OrdinaryArtifactDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Purpose
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force
+    if (-not $item.PSIsContainer -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Purpose must be an ordinary directory: '$Path'."
+    }
+}
+
+if (Test-Path -LiteralPath $replacementBackupRoot) {
+    if (-not $ReplaceExisting) {
+        throw "An interrupted artifact replacement requires an explicit retry: '$replacementBackupRoot'."
+    }
+    Assert-OrdinaryArtifactDirectory -Path $replacementBackupRoot -Purpose 'Artifact replacement rollback path'
+    if (Test-Path -LiteralPath $artifactRoot) {
+        Assert-OrdinaryArtifactDirectory -Path $artifactRoot -Purpose 'Update artifact path'
+        try {
+            $interruptedManifest = Read-FluxoraSignedUpdateManifest `
+                -ManifestPath (Join-Path $artifactRoot 'fluxora-update-manifest.json') `
+                -SignaturePath (Join-Path $artifactRoot 'fluxora-update-manifest.sig') `
+                -PublicKeyPath $PublicKeyPath
+            if ([string]$interruptedManifest.version -cne $Version) {
+                throw "Recovered manifest version '$($interruptedManifest.version)' does not match '$Version'."
+            }
+        }
+        catch {
+            throw "Both the artifact and rollback directories exist, and the committed replacement could not be verified. Resolve '$artifactRoot' and '$replacementBackupRoot' explicitly. $($_.Exception.Message)"
+        }
+        Remove-Item -LiteralPath $replacementBackupRoot -Recurse -Force
+    }
+    else {
+        [IO.Directory]::Move($replacementBackupRoot, $artifactRoot)
+    }
+}
+
+if ((Test-Path -LiteralPath $artifactRoot) -and (-not $ReplaceExisting)) {
     throw "Update artifact directory already exists; refusing to mix release state: '$artifactRoot'."
+}
+if (Test-Path -LiteralPath $artifactRoot) {
+    Assert-OrdinaryArtifactDirectory -Path $artifactRoot -Purpose 'Update artifact path'
 }
 $payloadPrefix = $payloadRoot + [IO.Path]::DirectorySeparatorChar
 $artifactPrefix = $artifactRoot + [IO.Path]::DirectorySeparatorChar
@@ -195,7 +244,38 @@ try {
         -SignaturePath $signatureStagingPath `
         -PublicKeyPath $PublicKeyPath)
 
-    [IO.Directory]::Move($stagingRoot, $artifactRoot)
+    $existingArtifactWasMoved = $false
+    if (Test-Path -LiteralPath $artifactRoot) {
+        if (-not $ReplaceExisting) {
+            throw "Update artifact directory appeared during generation; refusing to mix release state: '$artifactRoot'."
+        }
+        Assert-OrdinaryArtifactDirectory -Path $artifactRoot -Purpose 'Update artifact path'
+        if (Test-Path -LiteralPath $replacementBackupRoot) {
+            throw "Artifact replacement rollback path already exists: '$replacementBackupRoot'."
+        }
+        [IO.Directory]::Move($artifactRoot, $replacementBackupRoot)
+        $existingArtifactWasMoved = $true
+    }
+    try {
+        [IO.Directory]::Move($stagingRoot, $artifactRoot)
+    }
+    catch {
+        $replacementFailure = $_
+        if ($existingArtifactWasMoved -and
+            (-not (Test-Path -LiteralPath $artifactRoot)) -and
+            (Test-Path -LiteralPath $replacementBackupRoot)) {
+            [IO.Directory]::Move($replacementBackupRoot, $artifactRoot)
+        }
+        throw $replacementFailure
+    }
+    if ($existingArtifactWasMoved -and (Test-Path -LiteralPath $replacementBackupRoot)) {
+        try {
+            Remove-Item -LiteralPath $replacementBackupRoot -Recurse -Force
+        }
+        catch {
+            Write-Warning "The new artifact directory is committed, but its local rollback directory could not be removed: '$replacementBackupRoot'."
+        }
+    }
     return [pscustomobject]@{
         version = $Version
         target = $Target

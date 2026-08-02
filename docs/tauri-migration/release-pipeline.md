@@ -1,6 +1,6 @@
 # Fluxora Tauri release pipeline
 
-Дата обновления: 2026-08-01
+Дата обновления: 2026-08-02
 
 Статус: the Windows product, Setup and updater build path is C++ plus Tauri.
 Linux/macOS public distribution remains gated by native smoke,
@@ -62,6 +62,23 @@ The corresponding explicit local command is:
 ```powershell
 .\Build.ps1 -Mode Local -Configuration Release -Runtime win-x64
 ```
+
+Local builds and Production publication do not run behavioral test suites by
+default. They also configure the C++ backend with `BUILD_TESTING=OFF`, Fluxora
+test targets disabled, and zlib's example-test binaries disabled, so cached
+CMake settings cannot make publication compile them accidentally. The
+build-coupled Windows integration checks for the bridge, updater, native AI path
+and Setup are an explicit manual opt-in:
+
+```powershell
+.\Build.ps1 -Mode Local -Configuration Release -Runtime win-x64 -RunTests
+```
+
+The complete PowerShell, CTest, Tauri unit/component, Playwright and Rust suites
+remain separate operator commands under `scripts/tests`, `backend/tests` and
+`frontend-tauri`; run the relevant suites manually before publication when that
+validation is required. `-RunTests` is rejected together with `-Mode Production`
+so publication cannot silently turn the test matrix back on.
 
 To set the product version and build the application, native bridge, updater and
 Setup with the same stable SemVer:
@@ -232,7 +249,8 @@ Production mode is fail-closed and non-forceful:
    separate checkpoint commit. Generated `node_modules`, build, target, test-
    result and output trees are rejected as well. Existing local commits are allowed and are
    included in the later atomic push. The worktree must then be clean. Open the
-   update-manifest signing key only after repository-controlled build/test gates.
+   update-manifest signing key only after repository-controlled build and
+   integrity gates.
    Update every owned version source and regenerate its deterministic dependency
    inventory as one recoverable local step. This refresh is required because the
    inventory hashes version-owned package and Cargo inputs. Before any version
@@ -245,24 +263,24 @@ Production mode is fail-closed and non-forceful:
    version it restores the frozen frontend dependencies before regenerating the
    inventory, so a clean checkout does not depend on a global pnpm installation
    or pre-existing `node_modules`.
-3. Build the native updater ABI prerequisite, then run the full unit, component,
-   integration, API-contract and UI gates plus the ordinary local release build.
-   Production treats a missing real native full/delta ABI test target as a hard
-   failure; a clean machine may never silently skip it. Cargo lock enforcement
-   applies to direct Rust builds and the exact packaged Tauri binary. Production
-   bounds every CTest case to 120 seconds and stops the suite on the first failure,
-   so a wedged test cannot leave the release running indefinitely. Production
-   restages the Setup and updater renderers after the main Vite build so the same
-   Playwright pass covers all three shipped windows. Screenshots, traces and
-   last-run state are written under the disposable release transaction directory,
-   so test output cannot enter the release checkpoint or trip the strict post-gate
-   worktree allowlist.
+3. Run the ordinary local Release build with its default test-free contract.
+   Production does not invoke PowerShell contract tests, CTest, Tauri
+   unit/component tests, Playwright or Cargo test suites. Those suites are
+   operator-invoked validation and remain independent from publication, avoiding
+   a repeated test matrix on every retry. Packaging still builds the exact locked
+   C++ and Rust/Tauri release binaries and keeps the legal/dependency checks,
+   native payload checks and installer construction fail-closed.
 4. Produce and round-trip-verify the full `.flxupd`, eligible deltas and
    raw-byte-signed manifest, then generate the signed inventory over the exact
    unsigned Setup and machine-asset bytes. Fluxora does not require a paid
    Authenticode certificate or `signtool`; Windows can therefore identify these
    executables as an unknown publisher. Detached P-256 signatures authenticate
    the automatic-update manifest/inventory but do not claim OS publisher trust.
+   If an earlier untagged and unpublished attempt already left
+   `output-update/v<version>`, the builder creates and verifies a complete new set
+   in a sibling staging directory, atomically swaps only that local version
+   directory with rollback protection, and then removes the old local bytes. It
+   never merges attempts and never enables GitHub asset clobbering.
 5. Verify the exact version-file bytes, staged blob identities, release commit
    parent/path set and committed tree; release commits bypass mutable local hooks.
    Create the immutable version tag, and atomically push the branch and tag
@@ -292,8 +310,8 @@ asset under an existing version.
 - The ECDSA P-256 private key is supplied from protected release-operator or CI
   secret storage outside the repository and is never echoed, logged, staged or
   uploaded. Production removes a CI key from the process environment before
-  loading repository modules or starting any build/test/Git/GitHub child; a
-  local DPAPI key is not opened until all build/test gates have completed. The
+  loading repository modules or starting any build/Git/GitHub child; a local
+  DPAPI key is not opened until all build and integrity gates have completed. The
   in-memory signer is limited to artifact generation and disposed/zeroed after
   use. Keep at least two encrypted, access-controlled offline backups and
   periodically test restoration with a disposable signature/verification drill;

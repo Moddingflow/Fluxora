@@ -1459,6 +1459,64 @@ Invoke-Case 'artifact builder emits signed full and previous-version delta relea
     }
 }
 
+Invoke-Case 'production artifact retries replace only the requested local version directory' {
+    if (-not $IsWindows) {
+        Write-Host 'SKIP release artifact signing integration is Windows-only.'
+        return
+    }
+
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-artifact-retry-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        $payload = Join-Path $root 'payload'
+        $artifacts = Join-Path $root 'artifacts'
+        New-Item -ItemType Directory -Path $payload -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $payload 'Fluxora.exe'), [byte[]](1, 2, 3))
+
+        $protectedKey = Join-Path $root 'private.dpapi'
+        $publicKey = Join-Path $root 'public.der'
+        Initialize-FluxoraUpdateSigningKey -ProtectedKeyPath $protectedKey -PublicKeyPath $publicKey | Out-Null
+        $artifactScript = Join-Path $projectRoot 'scripts\release\New-FluxoraUpdateArtifacts.ps1'
+        $artifactArguments = @{
+            PayloadDirectory = $payload
+            ArtifactDirectory = $artifacts
+            Version = '2.0.0'
+            ProtectedSigningKeyPath = $protectedKey
+            PublicKeyPath = $publicKey
+        }
+
+        & $artifactScript @artifactArguments | Out-Null
+        $firstManifest = Read-FluxoraSignedUpdateManifest `
+            -ManifestPath (Join-Path $artifacts 'fluxora-update-manifest.json') `
+            -SignaturePath (Join-Path $artifacts 'fluxora-update-manifest.sig') `
+            -PublicKeyPath $publicKey
+        $markerPath = Join-Path $artifacts 'stale.marker'
+        [IO.File]::WriteAllText($markerPath, 'preserve until replacement commits')
+        [IO.File]::WriteAllBytes((Join-Path $payload 'Fluxora.exe'), [byte[]](9, 8, 7, 6))
+
+        Assert-Throws {
+            & $artifactScript @artifactArguments | Out-Null
+        } '*already exists*refusing to mix release state*'
+        Assert-True (Test-Path -LiteralPath $markerPath -PathType Leaf) 'The default collision guard must preserve an existing artifact directory.'
+
+        & $artifactScript @artifactArguments -ReplaceExisting | Out-Null
+        $replacementManifest = Read-FluxoraSignedUpdateManifest `
+            -ManifestPath (Join-Path $artifacts 'fluxora-update-manifest.json') `
+            -SignaturePath (Join-Path $artifacts 'fluxora-update-manifest.sig') `
+            -PublicKeyPath $publicKey
+        Assert-True ($replacementManifest.fileManifestSha256 -cne $firstManifest.fileManifestSha256) 'The retry must publish artifacts for the rebuilt payload instead of reusing stale bytes.'
+        Assert-True (-not (Test-Path -LiteralPath $markerPath)) 'The committed replacement must not mix files from the prior attempt.'
+        Assert-True (-not (Test-Path -LiteralPath ($artifacts + '.previous'))) 'A successful replacement must remove its local rollback directory.'
+
+        $publisherSource = Get-Content -LiteralPath (Join-Path $projectRoot 'scripts\release\Invoke-FluxoraProductionRelease.ps1') -Raw
+        Assert-True ($publisherSource.Contains('ReplaceExisting = $true')) 'Production must opt into transactional replacement after its tag and release collision checks pass.'
+    }
+    finally {
+        if (Test-Path -LiteralPath $root) {
+            Remove-Item -LiteralPath $root -Recurse -Force
+        }
+    }
+}
+
 Invoke-Case 'standalone artifact signing clears the CI secret before later child processes' {
     $root = Join-Path ([IO.Path]::GetTempPath()) ('fluxora-artifact-secret-' + [Guid]::NewGuid().ToString('N'))
     $secretName = 'FLUXORA_UPDATE_SIGNING_KEY_PKCS8_BASE64'
@@ -1858,7 +1916,6 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $source = Get-Content -LiteralPath $scriptPath -Raw
     $secretClearOffset = $source.IndexOf("SetEnvironmentVariable(`$signingSecretName, `$null, 'Process')", [StringComparison]::Ordinal)
     $moduleImportOffset = $source.IndexOf('Import-Module $modulePath -Force', [StringComparison]::Ordinal)
-    $lastGateOffset = $source.IndexOf("Running Tauri Rust suite", [StringComparison]::Ordinal)
     $signingOpenOffset = $source.IndexOf("Opening isolated signing identity after all repository gates", [StringComparison]::Ordinal)
     $versionMenuOffset = $source.IndexOf('Resolve-FluxoraProductionVersion', [StringComparison]::Ordinal)
     $recoveryOffset = $source.IndexOf('Restore-FluxoraVersionRecoveryJournal', [StringComparison]::Ordinal)
@@ -1869,46 +1926,35 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     $dependencyRestoreOffset = $source.IndexOf('Restoring pinned frontend dependencies for release inventory', [StringComparison]::Ordinal)
     $dependencyInventoryRefreshOffset = $source.IndexOf('Refreshing deterministic dependency inventory for the release version', [StringComparison]::Ordinal)
     $buildOffset = $source.IndexOf('Building the complete local release', [StringComparison]::Ordinal)
-    $strictContractOffset = $source.IndexOf('Running strict release contract tests against built native artifacts', [StringComparison]::Ordinal)
-    $nativeBoundaryOffset = $source.IndexOf('Running native Tauri Setup and updater boundary suites', [StringComparison]::Ordinal)
-    $nativeUpdaterRendererOffset = $source.IndexOf("'run', 'build:updater:frontend'", $nativeBoundaryOffset, [StringComparison]::Ordinal)
-    $nativeCargoTestOffset = $source.IndexOf("'test', '--release', '--locked'", $nativeBoundaryOffset, [StringComparison]::Ordinal)
-    $playwrightGateOffset = $source.IndexOf('Running Tauri Playwright smoke suite', [StringComparison]::Ordinal)
-    $playwrightOutputRootOffset = $source.IndexOf('$playwrightOutputRoot = Join-Path $transactionRoot', [StringComparison]::Ordinal)
-    $playwrightSetupRendererOffset = $source.IndexOf("'run', 'build:setup:frontend'", $playwrightGateOffset, [StringComparison]::Ordinal)
-    $playwrightUpdaterRendererOffset = $source.IndexOf("'run', 'build:updater:frontend'", $playwrightGateOffset, [StringComparison]::Ordinal)
-    $playwrightOutputArgumentOffset = $source.IndexOf("'--output', `$playwrightOutputRoot", $playwrightGateOffset, [StringComparison]::Ordinal)
     $updateAssetOffset = $source.IndexOf('Creating and verifying signed full/delta update assets', [StringComparison]::Ordinal)
     $inventoryOffset = $source.IndexOf('Creating signed release inventory', [StringComparison]::Ordinal)
     Assert-True ($secretClearOffset -ge 0 -and $secretClearOffset -lt $moduleImportOffset) 'The CI signing secret must be cleared before repository release code is imported.'
-    Assert-True ($signingOpenOffset -gt $lastGateOffset) 'DPAPI or in-memory signing identity must not be opened before repository-controlled gates finish.'
+    Assert-True ($signingOpenOffset -gt $buildOffset) 'DPAPI or in-memory signing identity must not be opened before the release build finishes.'
     Assert-True ($recoveryOffset -ge 0 -and $recoveryOffset -lt $versionMenuOffset) 'An interrupted version transaction must be recovered before the next version menu is shown.'
     Assert-True ($versionMenuOffset -ge 0 -and $versionMenuOffset -lt $githubAuthOffset) 'Version selection and cancellation must happen before remote release prerequisites.'
     Assert-True ($packageManagerBootstrapOffset -ge 0 -and $packageManagerBootstrapOffset -lt $githubAuthOffset) 'Production must download or resolve the pinned frontend package manager before remote checks or checkpoint mutation.'
     Assert-True ($journalCreateOffset -gt $githubAuthOffset -and $journalCreateOffset -lt $versionApplyOffset) 'The durable recovery journal must be sealed before version files are edited.'
     Assert-True ($versionApplyOffset -ge 0 -and $dependencyRestoreOffset -gt $versionApplyOffset -and $dependencyInventoryRefreshOffset -gt $dependencyRestoreOffset -and $buildOffset -gt $dependencyInventoryRefreshOffset) 'Production must restore pinned frontend packages after changing version-owned inputs, then refresh deterministic dependency evidence before the full build.'
-    $localBuildSection = $source.Substring($buildOffset, $strictContractOffset - $buildOffset)
+    $localBuildSection = $source.Substring($buildOffset, $signingOpenOffset - $buildOffset)
     Assert-True ($localBuildSection.Contains('-LiveOutput')) 'Production must stream the nested local build instead of buffering its output until completion.'
     Assert-True ($localBuildSection.Contains('Running the complete local Build.ps1 pipeline')) 'Production must identify the nested local build activity before its live output starts.'
+    Assert-True (-not $localBuildSection.Contains('-RunTests')) 'Production must never opt into the local build test steps.'
     Assert-True ($source.Contains('$script:FluxoraReleaseStepNumber')) 'Production release steps must expose a stable sequential step number.'
     Assert-True ($source.Contains("[release {0:00} completed in {1}]")) 'Production release steps must print their completed duration.'
     Assert-True ($source.Contains("[release {0:00} failed after {1}]")) 'Production release steps must print their failed duration.'
     Assert-True ($source.Contains('Get-FluxoraFrontendPackageManagerArguments')) 'Production must preserve the package-manager bootstrap prefix for every pnpm invocation.'
     Assert-True ($source.Contains("'legal\desktop\dependency-inventory.json'")) 'The deterministic dependency inventory must belong to the recoverable version transaction.'
     Assert-True ($source.Contains("'-UpdateInventory'")) 'Production must explicitly regenerate dependency evidence for the selected release version.'
-    Assert-True ($buildOffset -ge 0 -and $strictContractOffset -gt $buildOffset) 'Production must build native artifacts before running the strict release contract suite.'
-    Assert-True ($nativeBoundaryOffset -gt $strictContractOffset -and $nativeUpdaterRendererOffset -gt $nativeBoundaryOffset -and $nativeCargoTestOffset -gt $nativeUpdaterRendererOffset) 'Production must restage the updater renderer immediately before recompiling its native boundary tests.'
-    Assert-True ($playwrightOutputRootOffset -ge 0 -and $playwrightOutputArgumentOffset -gt $playwrightGateOffset) 'Production Playwright artifacts must be isolated under the release transaction instead of changing repository test-results.'
-    Assert-True ($playwrightSetupRendererOffset -gt $playwrightGateOffset -and $playwrightUpdaterRendererOffset -gt $playwrightSetupRendererOffset -and $playwrightOutputArgumentOffset -gt $playwrightUpdaterRendererOffset) 'Production must restage both specialized installer renderers after the main Vite build and before Playwright.'
-    Assert-True ($source.Contains('build\backend\$Configuration\FluxoraInstallerCore.lib')) 'Production must link the canonical configured installer core instead of a recursively selected test library.'
-    Assert-True ($source.Contains('CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS')) 'Production native boundary tests must preserve the static MSVC runtime contract.'
+    Assert-True ($buildOffset -ge 0 -and $updateAssetOffset -gt $buildOffset) 'Production must build native artifacts before creating signed update assets.'
+    Assert-True (-not $source.Contains('scripts\tests\Fluxora.Release.Tests.ps1')) 'Production must not run the PowerShell release contract suite automatically.'
+    Assert-True (-not $source.Contains("Invoke-ReleaseCommand -FilePath 'ctest'")) 'Production must not run backend CTest automatically.'
+    Assert-True (-not $source.Contains("'test', '--release', '--locked'")) 'Production must not run Cargo tests automatically.'
+    Assert-True (-not $source.Contains("Arguments @('test')")) 'Production must not run Tauri unit or component tests automatically.'
+    Assert-True (-not $source.Contains('node_modules/@playwright/test/cli.js')) 'Production must not run Playwright automatically.'
     Assert-True ($source.Contains('$unexpectedInstallerRuntime = @(')) 'Production must normalize an empty or singleton loose-runtime probe to an array before checking Count.'
-    Assert-True ($updateAssetOffset -gt $lastGateOffset -and $inventoryOffset -gt $updateAssetOffset) 'Detached update assets must be signed before the release inventory.'
+    Assert-True ($inventoryOffset -gt $updateAssetOffset) 'Detached update assets must be signed before the release inventory.'
     Assert-True (-not $source.Contains('Authenticode')) 'Production must not require paid Authenticode code signing.'
     Assert-True (-not $source.Contains('signtool')) 'Production must not discover or invoke signtool.'
-    Assert-True ($source.Contains("'-RequireNativeAbi'")) 'Production must make a missing native update ABI a fatal release-test failure.'
-    Assert-True ($source.Contains("'--timeout', '120'")) 'The complete CTest gate must have a bounded per-test timeout.'
-    Assert-True ($source.Contains("'--stop-on-failure'")) 'The complete CTest gate must stop after its first failure.'
     Assert-True ($source.Contains('[IO.FileShare]::None')) 'Concurrent production publishers must be excluded by an OS-owned lock.'
     Assert-True ($source.Contains('Remove-FluxoraVersionRecoveryJournal')) 'A verified release commit must retire its recovery journal.'
     Assert-True (([regex]::Matches($source, 'Assert-FluxoraReleaseChildEnvironment')).Count -eq 2) 'Both production child-command helpers must fail closed if the signing environment reappears.'
@@ -1926,13 +1972,46 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($source.Contains('Assert-FluxoraFileSnapshots')) 'Version files must remain byte-identical after the version transaction is sealed.'
     Assert-True ($source.Contains("'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'")) 'Committed tree paths must be reverified before tagging and push.'
     Assert-True ($source.Contains("'commit', '--no-verify'")) 'Repository hooks must not mutate the release index during commit.'
-    Assert-True ($source.Contains("'test', '--release', '--locked'")) 'Production Rust tests must reject lockfile drift.'
-    Assert-True ($source.Contains("'--bin', 'FluxoraUpdater'")) 'Production gate must run the native Tauri updater boundary suite.'
     Assert-True (-not $source.Contains("'dotnet'")) 'Production release must not depend on dotnet after the native migration.'
     Assert-True (-not $source.Contains('Fluxora.Updater.Tests')) 'Production release must not route validation through removed C# updater tests.'
     Assert-True ($source.Contains("'--draft=false'")) 'Only the verified draft may be published.'
     Assert-True (-not $source.Contains('--clobber')) 'Production release must never overwrite an existing asset.'
     Assert-True (-not $source.Contains('--force')) 'Production release must never force-push or force-rewrite a release.'
+
+    $buildSource = Get-Content -LiteralPath (Join-Path $projectRoot 'Build.ps1') -Raw
+    Assert-True ($buildSource.Contains('[switch]$RunTests')) 'Local build tests must require the explicit -RunTests switch.'
+    Assert-True ($buildSource.Contains('$backendTestsOption = if ($RunTests)')) 'The backend test target build must follow the explicit -RunTests switch.'
+    Assert-True ($buildSource.Contains('"-DBUILD_TESTING=$backendTestsOption"')) 'The conventional CMake test switch must follow -RunTests so dependency tests cannot leak from the cache.'
+    Assert-True ($buildSource.Contains('"-DFLUXORA_BUILD_TESTS=$backendTestsOption"')) 'CMake must receive an explicit test-target build policy so cached test settings cannot leak into publication builds.'
+    Assert-True ($buildSource.Contains("'-DZLIB_BUILD_EXAMPLES=OFF'")) 'Publication builds must not compile or register zlib example-test binaries.'
+    Assert-Equal ([regex]::Matches($buildSource, 'if \(\$RunTests -and \$Runtime -like ''win-\*''\)')).Count 2 'Both build-coupled test steps must be guarded by the manual -RunTests switch.'
+
+    $buildTokens = $null
+    $buildErrors = $null
+    $buildAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $projectRoot 'Build.ps1'),
+        [ref]$buildTokens,
+        [ref]$buildErrors)
+    Assert-Equal $buildErrors.Count 0 'Build.ps1 must remain parseable while enforcing manual tests.'
+    $testCommandLiterals = @($buildAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.StringConstantExpressionAst] -and
+            $node.Value -ceq 'test'
+    }, $true))
+    Assert-Equal $testCommandLiterals.Count 3 'Build.ps1 must expose exactly the updater, Setup and native AI Cargo tests as manual build-coupled checks.'
+    foreach ($testCommandLiteral in $testCommandLiterals) {
+        $ancestor = $testCommandLiteral.Parent
+        $guardedByRunTests = $false
+        while ($null -ne $ancestor) {
+            if ($ancestor -is [Management.Automation.Language.IfStatementAst] -and
+                $ancestor.Extent.Text.Contains('$RunTests')) {
+                $guardedByRunTests = $true
+                break
+            }
+            $ancestor = $ancestor.Parent
+        }
+        Assert-True $guardedByRunTests "Cargo test command at line $($testCommandLiteral.Extent.StartLineNumber) must be guarded by -RunTests."
+    }
 }
 
 Invoke-Case 'production release progress streams child output and reports timed step state' {

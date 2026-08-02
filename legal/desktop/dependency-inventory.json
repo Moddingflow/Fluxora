@@ -28,7 +28,7 @@
     },
     {
       "path": "Build.ps1",
-      "sha256": "31cf020feb8dee357b9dc7fe1bedbf3c58294f4ed8940cf89a02d3ec48496c26"
+      "sha256": "43afaa28511fc093e215920d695ef76f08919e20b1f81eed50a362b124d9c55b"
     },
     {
       "path": "backend/CMakeLists.txt",

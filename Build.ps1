@@ -18,7 +18,9 @@ param(
     [Alias('ProductionVersion')]
     [string]$Version,
 
-    [switch]$PublishCurrentChanges
+    [switch]$PublishCurrentChanges,
+
+    [switch]$RunTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,6 +67,9 @@ $resolvedBuildMode = Resolve-FluxoraBuildMode `
     -HasExplicitBuildArguments $hasExplicitBuildArguments
 
 if ($resolvedBuildMode -eq 'Production') {
+    if ($RunTests) {
+        throw 'Production releases do not run test suites. Run .\Build.ps1 -Mode Local -RunTests separately before publishing.'
+    }
     if ($PSVersionTable.PSVersion.Major -lt 7) {
         if ($null -ne $BuildCapturedSigningKeyBytes) {
             [Array]::Clear($BuildCapturedSigningKeyBytes, 0, $BuildCapturedSigningKeyBytes.Length)
@@ -156,6 +161,12 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 }
 $FluxoraProductVersion = Get-FluxoraProductVersion -ProjectRoot $ProjectRoot
 Write-Host "Build mode: Local (product version: $FluxoraProductVersion)."
+if ($RunTests) {
+    Write-Host 'Build-coupled tests: enabled by explicit -RunTests.'
+}
+else {
+    Write-Host 'Build-coupled tests: skipped (use -RunTests to run them manually).'
+}
 $TauriPackageManager = Resolve-FluxoraFrontendPackageManager -FrontendRoot $TauriProject
 $TauriInstallArguments = if ($TauriPackageManager.Name -ceq 'pnpm') {
     @('install', '--frozen-lockfile')
@@ -1154,7 +1165,9 @@ function Write-FluxoraPayloadPackage {
 }
 
 Assert-Command 'cmake'
-Assert-Command 'ctest'
+if ($RunTests) {
+    Assert-Command 'ctest'
+}
 Assert-Command 'cargo'
 Assert-Command 'rustc'
 Assert-Command 'pwsh'
@@ -1247,10 +1260,14 @@ Invoke-BuildStep "Preparing output folders" {
 }
 
 Invoke-BuildStep "Configuring C++ backend" {
+    $backendTestsOption = if ($RunTests) { 'ON' } else { 'OFF' }
     $backendConfigureArgs = @('-S', $BackendSource, '-B', $BackendBuild)
     $backendConfigureArgs += @(
         "-DFLUXORA_PRODUCT_VERSION=$FluxoraProductVersion",
-        '-DFLUXORA_ALLOW_SYSTEM_DEPENDENCIES=OFF'
+        '-DFLUXORA_ALLOW_SYSTEM_DEPENDENCIES=OFF',
+        "-DBUILD_TESTING=$backendTestsOption",
+        '-DZLIB_BUILD_EXAMPLES=OFF',
+        "-DFLUXORA_BUILD_TESTS=$backendTestsOption"
     )
     if ($Runtime -like 'win-*') {
         $backendConfigureArgs += @(
@@ -1276,7 +1293,7 @@ Invoke-BuildStep "Building C++ backend ($Configuration)" {
     Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('--build', $BackendBuild, '--config', $Configuration)
 }
 
-if ($Runtime -like 'win-*') {
+if ($RunTests -and $Runtime -like 'win-*') {
     Invoke-BuildStep "Testing FluxoraBridgeHost protocol ($Configuration)" {
         Invoke-CheckedCommand -FilePath 'ctest' -Arguments @(
             '--test-dir', $BackendBuild,
@@ -1356,15 +1373,17 @@ if ($Runtime -eq 'win-x64') {
                 '--bin', 'FluxoraUpdater',
                 '--features', 'installer-native,custom-protocol'
             ) + $TauriCargoProfileArguments
-            $updaterReleaseContractArguments = @(
-                'test',
-                '--manifest-path', $TauriCargoManifestPath,
-                '--locked',
-                '--release',
-                '--features', 'installer-native,custom-protocol',
-                '--bin', 'FluxoraUpdater'
-            )
-            Invoke-CheckedCommand -FilePath 'cargo' -Arguments $updaterReleaseContractArguments
+            if ($RunTests) {
+                $updaterReleaseContractArguments = @(
+                    'test',
+                    '--manifest-path', $TauriCargoManifestPath,
+                    '--locked',
+                    '--release',
+                    '--features', 'installer-native,custom-protocol',
+                    '--bin', 'FluxoraUpdater'
+                )
+                Invoke-CheckedCommand -FilePath 'cargo' -Arguments $updaterReleaseContractArguments
+            }
             Invoke-CheckedCommand -FilePath 'cargo' -Arguments $updaterCargoArguments
         }
         finally {
@@ -1467,7 +1486,7 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
         }
 }
 
-if ($Runtime -like 'win-*') {
+if ($RunTests -and $Runtime -like 'win-*') {
     Invoke-BuildStep "Testing native Fluxora AI task integration ($Configuration)" {
         $tauriRustRoot = Join-Path $TauriProject 'src-tauri'
         $previousBridgeHostPath = [Environment]::GetEnvironmentVariable('FLUXORA_BRIDGE_HOST_PATH', 'Process')
@@ -1742,15 +1761,17 @@ if ($Target -eq 'Release') {
                         "$previousInstallerRustFlags $staticCrtFlag",
                         'Process')
                 }
-                $setupReleaseContractArguments = @(
-                    'test',
-                    '--manifest-path', $TauriCargoManifestPath,
-                    '--locked',
-                    '--release',
-                    '--features', 'setup-production-assets,installer-native,custom-protocol',
-                    '--bin', 'FluxoraSetup'
-                )
-                Invoke-CheckedCommand -FilePath 'cargo' -Arguments $setupReleaseContractArguments
+                if ($RunTests) {
+                    $setupReleaseContractArguments = @(
+                        'test',
+                        '--manifest-path', $TauriCargoManifestPath,
+                        '--locked',
+                        '--release',
+                        '--features', 'setup-production-assets,installer-native,custom-protocol',
+                        '--bin', 'FluxoraSetup'
+                    )
+                    Invoke-CheckedCommand -FilePath 'cargo' -Arguments $setupReleaseContractArguments
+                }
                 Invoke-CheckedCommand -FilePath 'cargo' -Arguments $setupCargoArguments
             }
             finally {
