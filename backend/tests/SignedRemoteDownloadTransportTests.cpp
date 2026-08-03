@@ -212,6 +212,48 @@ namespace fluxora::tests
         EXPECT_TRUE(network.lastHeaders.empty());
     }
 
+    TEST(SignedRemoteDownloadTransportTests, ExternalRangeUsesNoConditionalHeaderAndRemainsSizeBound)
+    {
+        FakeResolver resolver;
+        FakeNetwork network;
+        network.response = {
+            206,
+            {{"content-length", "2"}, {"content-range", "bytes 1-2/3"}},
+            publicAddress()};
+        network.body = {'b', 'c'};
+        NeverCancelled cancellation;
+        SignedRemoteDownloadTransport transport(resolver, network);
+        ResolvedDownloadGrant grant = validGrant();
+        grant.representationProviderId = "github";
+        grant.fallbackAvailable = false;
+        grant.headSupported = false;
+        grant.rangeSupported = true;
+        grant.conditionalRequestsSupported = false;
+        SignedRemoteDownloadRequest request = validRequest();
+        request.rangeStart = 1U;
+        std::string streamed;
+
+        const SignedRemoteDownloadResponse response = transport.execute(
+            grant,
+            request,
+            cancellation,
+            [&](std::span<const std::byte> chunk)
+            {
+                streamed.append(
+                    reinterpret_cast<const char*>(chunk.data()),
+                    chunk.size());
+                return true;
+            });
+
+        EXPECT_EQ(response.outcome, SignedRemoteTransportOutcome::Success);
+        EXPECT_EQ(response.statusCode, 206U);
+        EXPECT_EQ(response.representationProviderId, "github");
+        EXPECT_EQ(streamed, "bc");
+        ASSERT_EQ(network.lastHeaders.size(), 1U);
+        EXPECT_EQ(network.lastHeaders.front().name, "Range");
+        EXPECT_EQ(network.lastHeaders.front().value, "bytes=1-");
+    }
+
     TEST(SignedRemoteDownloadTransportTests, RejectsNonCanonicalOrOverlongSignedUrlsBeforeDns)
     {
         const std::vector<std::string> rejectedUrls{

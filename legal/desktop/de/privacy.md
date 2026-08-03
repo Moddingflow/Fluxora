@@ -70,6 +70,8 @@ Wenn Sie ein ModdingFlow-Konto verbinden, nutzt Fluxora einen Authorization-Code
 
 Wenn Sie den ModdingFlow-Katalog verwenden, einen Installationsplan auflösen oder einen Download anfordern, sendet Fluxora die dafür benötigten Kennungen und Parameter. Empfangen werden können Spiel-, Mod-, Versions- und Artefaktkennungen, Abhängigkeitsergebnisse, Grants, Jobkennungen, Ablaufzeit, Byte-Größe, Hashes und kurzlebige signierte Transport-URLs. Eine signierte Transport-URL wird für den angeforderten Transfer im Speicher verwendet und nicht als dauerhafte Dateiidentität behandelt.
 
+Für ein als externe Provider-Referenz registriertes Artefakt kann ModdingFlow stattdessen eine serverseitig validierte Provider-Identität, Referenzrevision und Provider-Download-URL zurückgeben. Nach Ihrer Bestätigung des Installationsplans verbindet sich Fluxora direkt mit diesem benannten Provider oder dessen Auslieferungshost und kann übliche Verbindungsmetadaten sowie begrenzte HTTP-Range-Anfragen senden. Fluxora fügt diesem Transfer weder ein ModdingFlow-Token noch Provider-Zugangsdaten oder einen Browser-Fallback hinzu. Stabile Provider-/Referenzkennungen, erwartete Größe, SHA-256 und fortsetzbarer Transferstatus können lokal gespeichert werden; die Provider-URL bleibt ein Transportdetail im Arbeitsspeicher und ist keine dauerhafte Dateiidentität.
+
 ### Nexus Mods
 
 Wenn Sie Nexus Mods verbinden, kann Fluxora Anzeigename, Benutzerkennung, Token-Typ und Ablaufzeit, OAuth Access-/Refresh-Tokens oder einen persönlichen API-Schlüssel verarbeiten. Dauerhaft gespeicherte Geheimnisse werden, soweit verfügbar, mit Windows-Datenschutzfunktionen geschützt. Die Anwendung sendet Spieldomain, relevante Mod-/Dateikennungen und die angeforderte API-Operation an Nexus Mods.

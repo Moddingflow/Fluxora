@@ -70,6 +70,8 @@ Fluxora намеренно не собирает данные платёжных
 
 Когда вы открываете каталог ModdingFlow, запрашиваете install plan или download, Fluxora отправляет необходимые для операции идентификаторы и параметры. Приложение может получить идентификаторы игры, мода, версии и артефакта, dependency results, grants, job IDs, expiry, byte size, hashes и короткоживущие signed transport URLs. Signed URL используется в памяти для запрошенной передачи и не считается постоянной идентичностью файла.
 
+Для артефакта, зарегистрированного как ссылка на внешнего provider, ModdingFlow вместо этого может вернуть проверенные сервером identity provider, revision ссылки и provider download URL. После подтверждения install plan Fluxora подключается напрямую к названному provider или его CDN и может передавать обычные metadata соединения и ограниченные HTTP Range-запросы. Fluxora не добавляет к такой передаче ModdingFlow token, credentials provider или browser fallback. Стабильные provider/reference IDs, ожидаемый размер, SHA-256 и состояние возобновляемой передачи могут храниться локально; provider URL остаётся транспортной деталью в памяти и не считается постоянной идентичностью файла.
+
 ### Nexus Mods
 
 При подключении Nexus Mods Fluxora может обрабатывать display name, user ID, token type и expiry, OAuth access/refresh tokens либо personal API key. Постоянные secret values защищаются средствами защиты данных Windows, когда они доступны. Приложение отправляет в Nexus Mods game domain, относящиеся к операции mod/file IDs и запрошенный API method.

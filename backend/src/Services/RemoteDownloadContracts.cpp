@@ -123,6 +123,11 @@ namespace fluxora
                 !validator.value.starts_with("W/");
         }
 
+        if (validator.kind == RepresentationValidatorKind::ContentSha256)
+        {
+            return isCanonicalRemoteDownloadSha256(validator.value);
+        }
+
         return validator.kind == RepresentationValidatorKind::LastModified &&
             validator.value.size() <= 128U;
     }
@@ -188,6 +193,9 @@ namespace fluxora
             grant.primaryUrl.empty() || grant.primaryUrl.size() > maximumUrlLength ||
             grant.headUrl.empty() || grant.headUrl.size() > maximumUrlLength ||
             grant.fallbackUrls.size() > maximumFallbackUrls ||
+            (!grant.fallbackAvailable && !grant.fallbackUrls.empty()) ||
+            (grant.conditionalRequestsSupported && !grant.headSupported) ||
+            (grant.conditionalRequestsSupported && !grant.rangeSupported) ||
             std::any_of(grant.fallbackUrls.begin(), grant.fallbackUrls.end(), [](const std::string& url)
             {
                 return url.empty() || url.size() > maximumUrlLength;
@@ -221,6 +229,7 @@ namespace fluxora
             grant.representationProviderId == request.currentRepresentationProviderId ||
             grant.expectedSize != request.expectedSize ||
             grant.expectedSha256 != request.expectedSha256 ||
+            grant.fallbackAvailable ||
             !grant.fallbackUrls.empty() ||
             !grant.transportHeaders.empty())
         {

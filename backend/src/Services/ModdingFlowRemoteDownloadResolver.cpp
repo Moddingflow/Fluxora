@@ -24,6 +24,8 @@ namespace fluxora
             "If-None-Match",
             "If-Modified-Since",
             "If-Unmodified-Since"};
+        constexpr std::array<std::string_view, 5U> externalRepresentationProviders{
+            "github", "modrinth", "hangar", "codeberg", "modio"};
 
         [[noreturn]] void throwInvalidRequest(std::wstring_view operationId)
         {
@@ -296,10 +298,12 @@ namespace fluxora
                 std::string digest = jsonString(digestValue, 256U);
                 const std::size_t expectedLength = algorithm == "sha256"
                     ? 64U
-                    : algorithm == "sha1" ? 40U : algorithm == "md5" ? 32U : 0U;
+                    : algorithm == "sha512"
+                        ? 128U
+                        : algorithm == "sha1" ? 40U : algorithm == "md5" ? 32U : 0U;
                 if (expectedLength == 0U)
                 {
-                    continue;
+                    throw std::runtime_error("Download hash algorithm is unsupported.");
                 }
                 if (!isLowerHex(digest, expectedLength))
                 {
@@ -331,6 +335,23 @@ namespace fluxora
             {
                 throw std::runtime_error("Download conditional-header contract is invalid.");
             }
+        }
+
+        void validateNoConditionalHeaders(const JsonValue& value)
+        {
+            if (!value.isArray() || !value.asArray().empty())
+            {
+                throw std::runtime_error(
+                    "External download must not advertise conditional headers.");
+            }
+        }
+
+        bool isExternalRepresentationProvider(std::string_view value) noexcept
+        {
+            return std::find(
+                externalRepresentationProviders.begin(),
+                externalRepresentationProviders.end(),
+                value) != externalRepresentationProviders.end();
         }
 
         int fixedDigits(std::string_view value, std::size_t offset, std::size_t count)
@@ -480,7 +501,8 @@ namespace fluxora
 
         RepresentationContract parseRepresentation(
             const JsonValue& value,
-            std::string_view expectedHeadUrl)
+            std::string_view expectedHeadUrl,
+            bool external)
         {
             const std::string provider = requiredString(value, L"provider", 32U);
             const std::string scope = requiredString(value, L"etag_scope", 32U);
@@ -489,7 +511,10 @@ namespace fluxora
             const std::string headUrl = requiredString(value, L"head_url", maximumUrlBytes);
             const bool requiresHeadBeforeRange = requiredBoolean(
                 value, L"requires_head_before_range");
-            if ((provider != "cloudflare_r2" && provider != "bunny_pull_cdn") ||
+            const bool providerAllowed = external
+                ? isExternalRepresentationProvider(provider)
+                : provider == "cloudflare_r2" || provider == "bunny_pull_cdn";
+            if (!providerAllowed ||
                 scope != provider || etag != ifMatch || headUrl != expectedHeadUrl ||
                 !isSafeSignedHttpsUrl(headUrl))
             {
@@ -534,17 +559,23 @@ namespace fluxora
                 requireMember(artifact, L"hashes", JsonValue::Type::Object));
             const JsonValue& downloadMetadata = requireMember(
                 artifact, L"download_metadata", JsonValue::Type::Object);
+            const std::string artifactSource = requiredString(
+                artifact, L"artifact_source", 32U);
+            const bool externalReference =
+                artifactSource == "external_provider_reference";
             const std::string resolveEndpoint =
                 "/v1/downloads/" + request.artifactId + "/resolve";
             const std::string fallbackEndpoint =
                 "/v1/downloads/" + request.artifactId + "/fallback";
+            const bool artifactRangeSupported = requiredBoolean(
+                downloadMetadata, L"range_supported");
             if (artifactSize == 0U || !isLowerHex(artifactSha, 64U) ||
                 artifactHashes.at("sha256") != artifactSha ||
-                requiredString(artifact, L"artifact_source", 32U) != "r2_blob" ||
+                (artifactSource != "r2_blob" && !externalReference) ||
                 requiredString(artifact, L"status", 32U) != "published" ||
                 requiredString(artifact, L"scan_status", 32U) != "clean" ||
                 requiredString(downloadMetadata, L"resolve_endpoint", 160U) != resolveEndpoint ||
-                !requiredBoolean(downloadMetadata, L"range_supported"))
+                (!externalReference && !artifactRangeSupported))
             {
                 throw std::runtime_error("Download artifact is not eligible.");
             }
@@ -562,10 +593,16 @@ namespace fluxora
                 requiredString(grant, L"id", 36U) != grantId ||
                 requiredString(grant, L"artifact_id", 36U) != request.artifactId ||
                 requiredString(grant, L"status", 32U) != "active" ||
-                requiredString(grant, L"resolve_endpoint", 160U) != resolveEndpoint ||
-                requiredString(grant, L"fallback_endpoint", 160U) != fallbackEndpoint)
+                requiredString(grant, L"resolve_endpoint", 160U) != resolveEndpoint)
             {
                 throw std::runtime_error("Download job or grant provenance is inconsistent.");
+            }
+            const std::optional<std::string> grantFallbackEndpoint = nullableString(
+                grant, L"fallback_endpoint", 160U, true);
+            if ((!externalReference && grantFallbackEndpoint != fallbackEndpoint) ||
+                (externalReference && grantFallbackEndpoint.has_value()))
+            {
+                throw std::runtime_error("Download fallback capability is inconsistent.");
             }
             static_cast<void>(requiredUnsigned(job, L"attempt_count"));
             static_cast<void>(requiredUnsigned(job, L"rate_limit_count"));
@@ -593,14 +630,25 @@ namespace fluxora
             const std::string sha = requiredString(data, L"sha256", 64U);
             const std::map<std::string, std::string> hashes = parseHashes(
                 requireMember(data, L"hashes", JsonValue::Type::Object));
+            const bool rangeSupported = requiredBoolean(data, L"range_supported");
+            const std::string acceptRanges = requiredString(data, L"accept_ranges", 16U);
             if (size != artifactSize || sha != artifactSha || hashes != artifactHashes ||
-                requiredString(data, L"accept_ranges", 16U) != "bytes" ||
-                !requiredBoolean(data, L"range_supported"))
+                rangeSupported != artifactRangeSupported ||
+                acceptRanges != (rangeSupported ? "bytes" : "none") ||
+                (!externalReference && !rangeSupported))
             {
                 throw std::runtime_error("Download verification metadata is inconsistent.");
             }
-            validateConditionalHeaders(requireMember(
-                data, L"conditional_headers", JsonValue::Type::Array));
+            const JsonValue& conditionalHeaders = requireMember(
+                data, L"conditional_headers", JsonValue::Type::Array);
+            if (externalReference)
+            {
+                validateNoConditionalHeaders(conditionalHeaders);
+            }
+            else
+            {
+                validateConditionalHeaders(conditionalHeaders);
+            }
 
             const std::string primaryUrl = requiredString(data, L"primary_url", maximumUrlBytes);
             const std::string headUrl = requiredString(data, L"head_url", maximumUrlBytes);
@@ -614,8 +662,16 @@ namespace fluxora
 
             const RepresentationContract representation = parseRepresentation(
                 requireMember(data, L"representation", JsonValue::Type::Object),
-                headUrl);
-            if (fallbackUrl)
+                headUrl,
+                externalReference);
+            bool fallbackAvailable = true;
+            bool headSupported = true;
+            bool conditionalRequestsSupported = true;
+            if (externalReference && fallbackUrl.has_value())
+            {
+                throw std::runtime_error("External download advertised a forbidden fallback URL.");
+            }
+            if (!externalReference && fallbackUrl)
             {
                 const JsonValue& fallback = requireMember(
                     data, L"fallback", JsonValue::Type::Object);
@@ -623,6 +679,65 @@ namespace fluxora
                 {
                     throw std::runtime_error("Download fallback representation scope is invalid.");
                 }
+            }
+            if (externalReference)
+            {
+                const JsonValue& transport = requireMember(
+                    data, L"transport", JsonValue::Type::Object);
+                const JsonValue& primary = requireMember(
+                    data, L"primary", JsonValue::Type::Object);
+                const JsonValue& fallback = requireMember(
+                    data, L"fallback", JsonValue::Type::Object);
+                const JsonValue& capabilities = requireMember(
+                    data, L"capabilities", JsonValue::Type::Object);
+                const std::string transportProvider = requiredString(
+                    transport, L"provider", 32U);
+                const std::string transportUrl = requiredString(
+                    transport, L"url", maximumUrlBytes);
+                const std::string referenceId = requiredString(
+                    transport, L"reference_id", 36U);
+                const std::uint64_t referenceRevision = requiredUnsigned(
+                    transport, L"reference_revision");
+                headSupported = requiredBoolean(capabilities, L"head_supported");
+                const bool capabilityRange = requiredBoolean(
+                    capabilities, L"range_supported");
+                const bool resumeSupported = requiredBoolean(
+                    capabilities, L"resume_supported");
+                const bool conditionalSupported = requiredBoolean(
+                    capabilities, L"conditional_requests");
+                const bool capabilityFallback = requiredBoolean(
+                    capabilities, L"fallback_available");
+                if (requiredString(data, L"artifact_source", 32U) != artifactSource ||
+                    requiredString(transport, L"kind", 64U) != artifactSource ||
+                    !isExternalRepresentationProvider(transportProvider) ||
+                    transportProvider != representation.provider ||
+                    !isCanonicalUuid(referenceId) || referenceRevision == 0U ||
+                    transportUrl != primaryUrl || !isSafeSignedHttpsUrl(transportUrl) ||
+                    requiredString(transport, L"expires_at", 64U) != expiresAtText ||
+                    requiredUnsigned(transport, L"ttl_seconds") != ttlSeconds ||
+                    requiredString(primary, L"provider", 32U) != transportProvider ||
+                    requiredString(primary, L"url", maximumUrlBytes) != primaryUrl ||
+                    requiredString(primary, L"headUrl", maximumUrlBytes) != headUrl ||
+                    nullableString(primary, L"etag", 512U, true).has_value() ||
+                    requiredString(primary, L"etag_scope", 32U) != transportProvider ||
+                    nullableString(primary, L"if_match", 512U, true).has_value() ||
+                    representation.etag.has_value() || representation.ifMatch.has_value() ||
+                    representation.requiresHeadBeforeRange ||
+                    requiredBoolean(fallback, L"available") ||
+                    nullableString(fallback, L"endpoint", 160U, true).has_value() ||
+                    nullableString(fallback, L"legacy_endpoint", 160U, true).has_value() ||
+                    requiredString(fallback, L"reason", 64U) != artifactSource ||
+                    nullableString(data, L"fallback_endpoint", 160U, true).has_value() ||
+                    requiredString(data, L"url", maximumUrlBytes) != primaryUrl ||
+                    capabilityRange != rangeSupported ||
+                    resumeSupported != rangeSupported || conditionalSupported ||
+                    capabilityFallback)
+                {
+                    throw std::runtime_error(
+                        "External download transport capabilities are inconsistent.");
+                }
+                fallbackAvailable = false;
+                conditionalRequestsSupported = false;
             }
             const JsonValue& verification = requireMember(
                 data, L"verification", JsonValue::Type::Object);
@@ -632,9 +747,21 @@ namespace fluxora
             {
                 throw std::runtime_error("Download verification block is inconsistent.");
             }
+            if (externalReference)
+            {
+                const std::string scannerPolicy = requiredString(
+                    verification, L"scanner_policy_version", 128U);
+                const std::string verifiedAt = requiredString(
+                    verification, L"verified_at", 64U);
+                if (scannerPolicy.empty())
+                {
+                    throw std::runtime_error("External scanner policy is missing.");
+                }
+                static_cast<void>(parseUtcMilliseconds(verifiedAt));
+            }
 
             const JsonValue& resume = requireMember(data, L"resume", JsonValue::Type::Object);
-            if (!requiredBoolean(resume, L"range_supported") ||
+            if (requiredBoolean(resume, L"range_supported") != rangeSupported ||
                 requiredString(resume, L"provider", 32U) != representation.provider ||
                 requiredString(resume, L"etag_scope", 32U) != representation.provider ||
                 nullableString(resume, L"etag", 512U, true) != representation.etag ||
@@ -647,9 +774,23 @@ namespace fluxora
             {
                 throw std::runtime_error("Download resume metadata is inconsistent.");
             }
-            static_cast<void>(requiredBoolean(resume, L"requires_head_before_range"));
-            validateConditionalHeaders(requireMember(
-                resume, L"conditional_headers", JsonValue::Type::Array));
+            const bool resumeRequiresHead = requiredBoolean(
+                resume, L"requires_head_before_range");
+            const JsonValue& resumeConditionalHeaders = requireMember(
+                resume, L"conditional_headers", JsonValue::Type::Array);
+            if (externalReference)
+            {
+                if (resumeRequiresHead || representation.requiresHeadBeforeRange)
+                {
+                    throw std::runtime_error(
+                        "External download advertised a fabricated representation precondition.");
+                }
+                validateNoConditionalHeaders(resumeConditionalHeaders);
+            }
+            else
+            {
+                validateConditionalHeaders(resumeConditionalHeaders);
+            }
 
             ResolvedDownloadGrant result{
                 .providerId = std::string(providerId),
@@ -658,6 +799,10 @@ namespace fluxora
                 .grantId = grantId,
                 .primaryUrl = primaryUrl,
                 .headUrl = headUrl,
+                .fallbackAvailable = fallbackAvailable,
+                .headSupported = headSupported,
+                .rangeSupported = rangeSupported,
+                .conditionalRequestsSupported = conditionalRequestsSupported,
                 .expiresAtUnixMs = expiresAt,
                 .expectedSize = size,
                 .expectedSha256 = sha,
@@ -807,7 +952,8 @@ namespace fluxora
 
             const RepresentationContract representation = parseRepresentation(
                 requireMember(data, L"representation", JsonValue::Type::Object),
-                headUrl);
+                headUrl,
+                false);
             if (representation.provider != responseProvider ||
                 representation.etag.has_value() || representation.ifMatch.has_value() ||
                 !representation.requiresHeadBeforeRange)
@@ -851,6 +997,10 @@ namespace fluxora
                 .grantId = request.grantId,
                 .primaryUrl = downloadUrl,
                 .headUrl = headUrl,
+                .fallbackAvailable = false,
+                .headSupported = true,
+                .rangeSupported = true,
+                .conditionalRequestsSupported = true,
                 .expiresAtUnixMs = expiresAt,
                 .expectedSize = size,
                 .expectedSha256 = sha,
@@ -957,9 +1107,16 @@ namespace fluxora
         }
         if (request.providerId != providerId || !isCanonicalUuid(request.artifactId) ||
             !isCanonicalUuid(request.modId) || !isCanonicalUuid(request.versionId) ||
-            !isCanonicalUuid(request.jobId) || !isCanonicalUuid(request.grantId) ||
-            (request.currentRepresentationProviderId != "cloudflare_r2" &&
-                request.currentRepresentationProviderId != fallbackRepresentationProviderId))
+            !isCanonicalUuid(request.jobId) || !isCanonicalUuid(request.grantId))
+        {
+            throwInvalidRequest(request.operationId);
+        }
+        if (isExternalRepresentationProvider(request.currentRepresentationProviderId))
+        {
+            return std::nullopt;
+        }
+        if (request.currentRepresentationProviderId != "cloudflare_r2" &&
+            request.currentRepresentationProviderId != fallbackRepresentationProviderId)
         {
             throwInvalidRequest(request.operationId);
         }

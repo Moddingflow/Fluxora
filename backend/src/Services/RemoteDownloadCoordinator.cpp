@@ -118,7 +118,7 @@ namespace fluxora
             .grantExpiresAtUnixMs = grant.expiresAtUnixMs,
             .phase = RemoteArtifactResumePhase::AwaitingRepresentation};
 
-        if (previous != nullptr &&
+        if (grant.rangeSupported && previous != nullptr &&
             previous->providerId == state.providerId &&
             previous->artifactId == state.artifactId &&
             previous->expectedSize == state.expectedSize &&

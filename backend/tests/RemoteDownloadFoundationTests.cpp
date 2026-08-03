@@ -86,6 +86,7 @@ namespace fluxora::tests
                 .grantId = request.grantId,
                 .primaryUrl = "https://fallback.example.invalid/signed-get?token=secret",
                 .headUrl = "https://fallback.example.invalid/signed-head?token=secret",
+                .fallbackAvailable = false,
                 .expiresAtUnixMs = 1'900'000'000'000ULL,
                 .expectedSize = request.expectedSize,
                 .expectedSha256 = request.expectedSha256,

@@ -136,6 +136,55 @@ namespace fluxora::tests
                 resolveEndpoint + R"("}}})";
         }
 
+        std::string externalSuccessJson()
+        {
+            const std::string resolveEndpoint =
+                "/v1/downloads/" + std::string(artifactId) + "/resolve";
+            constexpr std::string_view providerUrl =
+                "https://objects.githubusercontent.com/archive.7z?signature=provider-secret";
+            constexpr std::string_view referenceId =
+                "77777777-7777-4777-8777-777777777777";
+            return R"({"ok":true,"data":{"mod":{"id":")" + std::string(modId) +
+                R"("},"version":{"id":")" + std::string(versionId) +
+                R"(","mod_id":")" + std::string(modId) +
+                R"(","artifact_ids":[")" + std::string(artifactId) +
+                R"("]},"artifact":{"id":")" + std::string(artifactId) +
+                R"(","mod_id":")" + std::string(modId) +
+                R"(","version_id":")" + std::string(versionId) +
+                R"(","size_bytes":1024,"sha256":")" + std::string(sha256) +
+                R"(","hashes":{"sha256":")" + std::string(sha256) +
+                R"("},"artifact_source":"external_provider_reference","status":"published","scan_status":"clean","download_metadata":{"resolve_endpoint":")" +
+                resolveEndpoint + R"(","range_supported":true}},"distribution":{"service":"moddingflow"},"artifact_source":"external_provider_reference","artifact_id":")" +
+                std::string(artifactId) + R"(","download_session_id":")" +
+                std::string(grantId) + R"(","download_job":{"id":")" +
+                std::string(jobId) + R"(","grant_id":")" + std::string(grantId) +
+                R"(","artifact_id":")" + std::string(artifactId) +
+                R"(","status":"grant_active","bytes_received":0,"attempt_count":1,"rate_limit_count":0,"provider_effect_count":1,"next_attempt_at":null},"download_grant":{"access":"public","id":")" +
+                std::string(grantId) + R"(","artifact_id":")" + std::string(artifactId) +
+                R"(","expires_at":"2026-07-30T00:10:00.000Z","ttl_seconds":600,"refresh_after_seconds":480,"resolve_endpoint":")" +
+                resolveEndpoint + R"(","fallback_endpoint":null,"status":"active"},"transport":{"kind":"external_provider_reference","provider":"github","reference_id":")" +
+                std::string(referenceId) + R"(","reference_revision":1,"url":")" +
+                std::string(providerUrl) + R"(","expires_at":"2026-07-30T00:10:00.000Z","ttl_seconds":600},"primary":{"provider":"github","url":")" +
+                std::string(providerUrl) + R"(","headUrl":")" + std::string(providerUrl) +
+                R"(","etag":null,"etag_scope":"github","if_match":null},"primary_url":")" +
+                std::string(providerUrl) + R"(","url":")" + std::string(providerUrl) +
+                R"(","head_url":")" + std::string(providerUrl) +
+                R"(","fallback_endpoint":null,"fallback_url":null,"fallback":{"available":false,"endpoint":null,"legacy_endpoint":null,"reason":"external_provider_reference"},"capabilities":{"head_supported":false,"range_supported":true,"resume_supported":true,"conditional_requests":false,"fallback_available":false},"expires_at":"2026-07-30T00:10:00.000Z","expires_in":600,"refresh_after_seconds":480,"sha256":")" +
+                std::string(sha256) + R"(","hashes":{"sha256":")" +
+                std::string(sha256) +
+                R"("},"size_bytes":1024,"accept_ranges":"bytes","conditional_headers":[],"range_supported":true,"representation":{"provider":"github","etag":null,"etag_scope":"github","if_match":null,"head_url":")" +
+                std::string(providerUrl) +
+                R"(","requires_head_before_range":false},"verification":{"sha256":")" +
+                std::string(sha256) + R"(","hashes":{"sha256":")" +
+                std::string(sha256) +
+                R"("},"size_bytes":1024,"scanner_policy_version":"external-scan-v1","verified_at":"2026-07-30T00:00:00.000Z"},"resume":{"range_supported":true,"etag":null,"provider":"github","etag_scope":"github","if_match":null,"requires_head_before_range":false,"sha256":")" +
+                std::string(sha256) + R"(","hashes":{"sha256":")" +
+                std::string(sha256) + R"("},"head_url":")" +
+                std::string(providerUrl) +
+                R"(","conditional_headers":[],"chunk_size_hint_bytes":8388608,"signed_url_expiry_refresh":")" +
+                resolveEndpoint + R"("}}})";
+        }
+
         ModdingFlowPublicApiResponse successResponse()
         {
             return {
@@ -353,12 +402,63 @@ namespace fluxora::tests
         EXPECT_EQ(grant.expectedSize, 1024U);
         EXPECT_EQ(grant.expectedSha256, sha256);
         EXPECT_EQ(grant.expiresAtUnixMs, 1'785'370'200'000ULL);
+        EXPECT_TRUE(grant.fallbackAvailable);
+        EXPECT_TRUE(grant.headSupported);
+        EXPECT_TRUE(grant.rangeSupported);
+        EXPECT_TRUE(grant.conditionalRequestsSupported);
         ASSERT_EQ(grant.fallbackUrls.size(), 1U);
         EXPECT_EQ(
             grant.fallbackUrls.front(),
             "https://fallback.example.invalid/archive.7z?signature=fallback-secret");
         EXPECT_TRUE(grant.transportHeaders.empty());
         EXPECT_EQ(grant.operationId, L"operation-download-resolve");
+    }
+
+    TEST(ModdingFlowRemoteDownloadResolverTests, ResolvesExternalReferenceWithoutFallbackOrConditionalClaims)
+    {
+        RecordingDownloadClient client;
+        client.responses.push_back(responseFromJson(externalSuccessJson()));
+        ModdingFlowRemoteDownloadResolver resolver(client, {
+            .nowUnixMilliseconds = [] { return nowUnixMs; }});
+
+        const ResolvedDownloadGrant grant = resolver.resolve(validRequest());
+
+        EXPECT_EQ(grant.providerId, "moddingflow");
+        EXPECT_EQ(grant.representationProviderId, "github");
+        EXPECT_EQ(grant.artifactId, artifactId);
+        EXPECT_EQ(grant.grantId, grantId);
+        EXPECT_EQ(
+            grant.primaryUrl,
+            "https://objects.githubusercontent.com/archive.7z?signature=provider-secret");
+        EXPECT_EQ(grant.primaryUrl, grant.headUrl);
+        EXPECT_FALSE(grant.fallbackAvailable);
+        EXPECT_FALSE(grant.headSupported);
+        EXPECT_TRUE(grant.rangeSupported);
+        EXPECT_FALSE(grant.conditionalRequestsSupported);
+        EXPECT_TRUE(grant.fallbackUrls.empty());
+        EXPECT_TRUE(grant.transportHeaders.empty());
+        EXPECT_EQ(grant.expectedSize, 1024U);
+        EXPECT_EQ(grant.expectedSha256, sha256);
+
+        RemoteDownloadFallbackRequest fallback = validFallbackRequest();
+        fallback.currentRepresentationProviderId = "github";
+        EXPECT_FALSE(resolver.resolveFallback(fallback).has_value());
+        EXPECT_EQ(client.requests.size(), 1U);
+    }
+
+    TEST(ModdingFlowRemoteDownloadResolverTests, RejectsFabricatedExternalFallbackCapability)
+    {
+        RecordingDownloadClient client;
+        client.responses.push_back(responseFromJson(replaceOnce(
+            externalSuccessJson(),
+            "\"fallback_available\":false",
+            "\"fallback_available\":true")));
+        ModdingFlowRemoteDownloadResolver resolver(client, {
+            .nowUnixMilliseconds = [] { return nowUnixMs; }});
+
+        expectCode(ModdingFlowApiErrorCode::ProtocolFailure, [&] {
+            static_cast<void>(resolver.resolve(validRequest()));
+        });
     }
 
     TEST(ModdingFlowRemoteDownloadResolverTests, RestrictedResolveRetriesOnceWithScopedBearer)

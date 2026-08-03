@@ -134,7 +134,43 @@ namespace fluxora::tests
             result.primaryUrl = "https://fallback-on-demand.example.invalid/artifact";
             result.headUrl = "https://fallback-on-demand.example.invalid/artifact/head";
             result.fallbackUrls.clear();
+            result.fallbackAvailable = false;
             result.transportHeaders.clear();
+            return result;
+        }
+
+        ResolvedDownloadGrant externalGrantFor(
+            const std::vector<std::byte>& payload,
+            bool rangeSupported = true)
+        {
+            ResolvedDownloadGrant result = grantFor(
+                payload,
+                "external-grant",
+                "github");
+            result.headUrl = result.primaryUrl;
+            result.fallbackUrls.clear();
+            result.fallbackAvailable = false;
+            result.headSupported = false;
+            result.rangeSupported = rangeSupported;
+            result.conditionalRequestsSupported = false;
+            result.transportHeaders.clear();
+            return result;
+        }
+
+        RemoteArtifactResumeState externalCheckpointFor(
+            const std::vector<std::byte>& payload,
+            std::uint64_t bytesReceived)
+        {
+            RemoteArtifactResumeState result = checkpointFor(
+                payload,
+                bytesReceived,
+                "github");
+            result.grantId = "external-grant";
+            if (result.validator.has_value())
+            {
+                result.validator->kind = RepresentationValidatorKind::ContentSha256;
+                result.validator->value = shaOf(payload);
+            }
             return result;
         }
 
@@ -498,6 +534,65 @@ namespace fluxora::tests
         EXPECT_EQ(transport.requests[0].method, SignedRemoteHttpMethod::Head);
         EXPECT_EQ(transport.requests[1].method, SignedRemoteHttpMethod::Get);
         EXPECT_FALSE(transport.requests[1].rangeStart.has_value());
+    }
+
+    TEST(RemoteDownloadTransferServiceTests, ExternalReferenceSkipsHeadAndFallbackBeforeFinalHashPromotion)
+    {
+        const std::vector<std::byte> payload = bytesOf("external-provider-payload");
+        FakeTransferHarness harness(payload);
+        harness.resolver->grants.push_back(externalGrantFor(payload));
+        harness.transport.exchanges.push_back({
+            .method = SignedRemoteHttpMethod::Get,
+            .target = SignedRemoteTargetKind::Primary,
+            .response = okFull(payload.size()),
+            .body = payload});
+        NeverCancelled cancellation;
+
+        const RemoteDownloadTransferResult result =
+            harness.service.transfer(harness.request, cancellation);
+
+        EXPECT_EQ(result.outcome, RemoteDownloadTransferOutcome::Completed)
+            << result.message;
+        ASSERT_EQ(harness.transport.requests.size(), 1U);
+        EXPECT_EQ(harness.transport.requests.front().method, SignedRemoteHttpMethod::Get);
+        EXPECT_FALSE(harness.transport.requests.front().rangeStart.has_value());
+        EXPECT_FALSE(harness.transport.requests.front().ifMatch.has_value());
+        EXPECT_EQ(harness.resolver->fallbackCalls, 0U);
+        EXPECT_EQ(harness.files.files.at(harness.request.destinationPath), payload);
+    }
+
+    TEST(RemoteDownloadTransferServiceTests, ExternalReferenceResumesByHashWithoutIfMatch)
+    {
+        const std::vector<std::byte> payload = bytesOf("external-provider-resume");
+        FakeTransferHarness harness(payload);
+        const std::uint64_t checkpoint = 7U;
+        harness.resolver->grants.push_back(externalGrantFor(payload));
+        harness.files.files[harness.request.partialPath] = std::vector<std::byte>(
+            payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(checkpoint));
+        harness.sidecars.save(
+            harness.request.partialPath,
+            externalCheckpointFor(payload, checkpoint));
+        SignedRemoteDownloadResponse response = okRange(checkpoint, payload.size());
+        response.validator.reset();
+        harness.transport.exchanges.push_back({
+            .method = SignedRemoteHttpMethod::Get,
+            .target = SignedRemoteTargetKind::Primary,
+            .response = response,
+            .body = std::vector<std::byte>(
+                payload.begin() + static_cast<std::ptrdiff_t>(checkpoint), payload.end())});
+        NeverCancelled cancellation;
+
+        const RemoteDownloadTransferResult result =
+            harness.service.transfer(harness.request, cancellation);
+
+        EXPECT_EQ(result.outcome, RemoteDownloadTransferOutcome::Completed)
+            << result.message;
+        ASSERT_EQ(harness.transport.requests.size(), 1U);
+        ASSERT_TRUE(harness.transport.requests.front().rangeStart.has_value());
+        EXPECT_EQ(*harness.transport.requests.front().rangeStart, checkpoint);
+        EXPECT_FALSE(harness.transport.requests.front().ifMatch.has_value());
+        EXPECT_EQ(harness.resolver->fallbackCalls, 0U);
+        EXPECT_EQ(harness.files.files.at(harness.request.destinationPath), payload);
     }
 
     TEST(RemoteDownloadCoordinatorFallbackTests, CreatesFreshZeroByteStateForDistinctRepresentationScope)

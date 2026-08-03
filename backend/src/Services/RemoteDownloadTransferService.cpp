@@ -392,7 +392,8 @@ namespace fluxora
             reportProgress(state.bytesReceived, state.expectedSize);
             const auto queueOnDemandFallback = [&]()
             {
-                if (resolveAttempt + 1U >= request.maximumResolveAttempts ||
+                if (!grant.fallbackAvailable ||
+                    resolveAttempt + 1U >= request.maximumResolveAttempts ||
                     cancellation.isCancellationRequested())
                 {
                     return false;
@@ -453,120 +454,162 @@ namespace fluxora
                     "Remote download partial file could not be reset.");
             }
 
-            SignedRemoteDownloadResponse head;
-            try
+            if (!grant.conditionalRequestsSupported)
             {
-                head = transport_(
-                    grant,
-                    SignedRemoteDownloadRequest{
-                        .method = SignedRemoteHttpMethod::Head,
-                        .target = {.kind = SignedRemoteTargetKind::Head},
-                        .policy = request.transportPolicy,
-                        .operationId = request.artifact.operationId},
-                    cancellation,
-                    {});
-            }
-            catch (...)
-            {
-                return finish(
-                    RemoteDownloadTransferOutcome::TransportFailure,
-                    "Remote download representation probe failed.",
-                    previous.has_value() ? previous->bytesReceived : 0U,
-                    previous.has_value());
-            }
-
-            if (cancellation.isCancellationRequested() ||
-                head.outcome == SignedRemoteTransportOutcome::Cancelled)
-            {
-                return finish(
-                    RemoteDownloadTransferOutcome::Cancelled,
-                    "Remote download was cancelled.",
-                    previous.has_value() ? previous->bytesReceived : 0U,
-                    previous.has_value());
-            }
-
-            if (isRetryableNetworkOutcome(head.outcome))
-            {
-                if (queueOnDemandFallback())
-                {
-                    continue;
-                }
-                interruptedAfterSafeCheckpoint = previous.has_value();
-                continue;
-            }
-
-            const RemoteRepresentationDecision headDecision =
-                decideRemoteHeadRepresentation(state, head);
-            if (headDecision.action == RemoteRepresentationAction::RetryLater)
-            {
+                const RepresentationValidator contentIdentity{
+                    .providerId = grant.representationProviderId,
+                    .kind = RepresentationValidatorKind::ContentSha256,
+                    .value = grant.expectedSha256};
                 try
                 {
-                    if (!files_.exists(partialPath))
+                    if (grant.rangeSupported && state.bytesReceived > 0U &&
+                        state.validator == contentIdentity)
                     {
-                        files_.truncate(partialPath, 0U);
+                        RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
+                            state,
+                            RemoteDownloadResumeDecision::Append,
+                            contentIdentity);
                     }
-                    const std::uint64_t retryAt = retryTimestamp(
-                        clock_(), head, request.maximumRetryAfterSeconds);
-                    RemoteDownloadCoordinator::scheduleRetry(state, retryAt);
-                    sidecars_.save(partialPath, state);
-                    return finish(
-                        RemoteDownloadTransferOutcome::RetryScheduled,
-                        "Remote download provider requested a bounded retry.",
-                        state.bytesReceived,
-                        true,
-                        retryAt);
+                    else
+                    {
+                        const bool hadPrevious = previous.has_value();
+                        RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
+                            state,
+                            RemoteDownloadResumeDecision::Restart,
+                            contentIdentity);
+                        files_.truncate(partialPath, 0U);
+                        if (hadPrevious)
+                        {
+                            sidecars_.remove(partialPath);
+                        }
+                        previous.reset();
+                    }
                 }
                 catch (...)
                 {
                     removeResumeArtifacts();
                     return finish(
-                        RemoteDownloadTransferOutcome::FileFailure,
-                        "Remote download retry checkpoint could not be persisted.");
+                        RemoteDownloadTransferOutcome::ProtocolFailure,
+                        "External download content identity was inconsistent.");
                 }
             }
-            if (headDecision.action == RemoteRepresentationAction::RestartAndResolve)
+            else
             {
-                RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
-                    state, RemoteDownloadResumeDecision::ReResolve);
-                removeResumeArtifacts();
-                previous.reset();
-                exhaustedAfterRefresh = true;
-                continue;
-            }
-            if (headDecision.action == RemoteRepresentationAction::Reject ||
-                !head.validator.has_value() ||
-                head.validator->kind != RepresentationValidatorKind::StrongEtag)
-            {
-                removeResumeArtifacts();
-                return finish(
-                    RemoteDownloadTransferOutcome::ProtocolFailure,
-                    "Remote download representation probe was not resumable.");
-            }
+                SignedRemoteDownloadResponse head;
+                try
+                {
+                    head = transport_(
+                        grant,
+                        SignedRemoteDownloadRequest{
+                            .method = SignedRemoteHttpMethod::Head,
+                            .target = {.kind = SignedRemoteTargetKind::Head},
+                            .policy = request.transportPolicy,
+                            .operationId = request.artifact.operationId},
+                        cancellation,
+                        {});
+                }
+                catch (...)
+                {
+                    return finish(
+                        RemoteDownloadTransferOutcome::TransportFailure,
+                        "Remote download representation probe failed.",
+                        previous.has_value() ? previous->bytesReceived : 0U,
+                        previous.has_value());
+                }
 
-            try
-            {
-                if (headDecision.action == RemoteRepresentationAction::Append)
+                if (cancellation.isCancellationRequested() ||
+                    head.outcome == SignedRemoteTransportOutcome::Cancelled)
+                {
+                    return finish(
+                        RemoteDownloadTransferOutcome::Cancelled,
+                        "Remote download was cancelled.",
+                        previous.has_value() ? previous->bytesReceived : 0U,
+                        previous.has_value());
+                }
+
+                if (isRetryableNetworkOutcome(head.outcome))
+                {
+                    if (queueOnDemandFallback())
+                    {
+                        continue;
+                    }
+                    interruptedAfterSafeCheckpoint = previous.has_value();
+                    continue;
+                }
+
+                const RemoteRepresentationDecision headDecision =
+                    decideRemoteHeadRepresentation(state, head);
+                if (headDecision.action == RemoteRepresentationAction::RetryLater)
+                {
+                    try
+                    {
+                        if (!files_.exists(partialPath))
+                        {
+                            files_.truncate(partialPath, 0U);
+                        }
+                        const std::uint64_t retryAt = retryTimestamp(
+                            clock_(), head, request.maximumRetryAfterSeconds);
+                        RemoteDownloadCoordinator::scheduleRetry(state, retryAt);
+                        sidecars_.save(partialPath, state);
+                        return finish(
+                            RemoteDownloadTransferOutcome::RetryScheduled,
+                            "Remote download provider requested a bounded retry.",
+                            state.bytesReceived,
+                            true,
+                            retryAt);
+                    }
+                    catch (...)
+                    {
+                        removeResumeArtifacts();
+                        return finish(
+                            RemoteDownloadTransferOutcome::FileFailure,
+                            "Remote download retry checkpoint could not be persisted.");
+                    }
+                }
+                if (headDecision.action == RemoteRepresentationAction::RestartAndResolve)
                 {
                     RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
-                        state,
-                        RemoteDownloadResumeDecision::Append,
-                        head.validator);
+                        state, RemoteDownloadResumeDecision::ReResolve);
+                    removeResumeArtifacts();
+                    previous.reset();
+                    exhaustedAfterRefresh = true;
+                    continue;
                 }
-                else
+                if (headDecision.action == RemoteRepresentationAction::Reject ||
+                    !head.validator.has_value() ||
+                    head.validator->kind != RepresentationValidatorKind::StrongEtag)
                 {
-                    RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
-                        state,
-                        RemoteDownloadResumeDecision::Restart,
-                        head.validator);
-                    files_.truncate(partialPath, 0U);
+                    removeResumeArtifacts();
+                    return finish(
+                        RemoteDownloadTransferOutcome::ProtocolFailure,
+                        "Remote download representation probe was not resumable.");
                 }
-            }
-            catch (...)
-            {
-                removeResumeArtifacts();
-                return finish(
-                    RemoteDownloadTransferOutcome::ProtocolFailure,
-                    "Remote download representation decision was inconsistent.");
+
+                try
+                {
+                    if (headDecision.action == RemoteRepresentationAction::Append)
+                    {
+                        RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
+                            state,
+                            RemoteDownloadResumeDecision::Append,
+                            head.validator);
+                    }
+                    else
+                    {
+                        RemoteDownloadCoordinator::applyVerifiedRepresentationDecision(
+                            state,
+                            RemoteDownloadResumeDecision::Restart,
+                            head.validator);
+                        files_.truncate(partialPath, 0U);
+                    }
+                }
+                catch (...)
+                {
+                    removeResumeArtifacts();
+                    return finish(
+                        RemoteDownloadTransferOutcome::ProtocolFailure,
+                        "Remote download representation decision was inconsistent.");
+                }
             }
 
             bool completedBody = state.bytesReceived == state.expectedSize;
@@ -678,7 +721,9 @@ namespace fluxora
                                 .rangeStart = ranged
                                     ? std::optional<std::uint64_t>(requestStart)
                                     : std::nullopt,
-                                .ifMatch = ranged ? representationState.validator : std::nullopt,
+                                .ifMatch = ranged && grant.conditionalRequestsSupported
+                                    ? representationState.validator
+                                    : std::nullopt,
                                 .policy = request.transportPolicy,
                                 .operationId = request.artifact.operationId},
                             cancellation,
@@ -769,8 +814,24 @@ namespace fluxora
 
                     if (ranged)
                     {
-                        const RemoteRepresentationDecision decision =
-                            decideRemoteRepresentation(representationState, response);
+                        const bool hashBoundRangeMatches =
+                            !grant.conditionalRequestsSupported &&
+                            target.kind == SignedRemoteTargetKind::Primary &&
+                            response.outcome == SignedRemoteTransportOutcome::Success &&
+                            response.method == SignedRemoteHttpMethod::Get &&
+                            response.target.kind == SignedRemoteTargetKind::Primary &&
+                            response.providerId == state.providerId &&
+                            response.representationProviderId ==
+                                grant.representationProviderId &&
+                            response.statusCode == 206U &&
+                            response.contentRange.has_value() &&
+                            response.contentRange->start == requestStart &&
+                            response.contentRange->total == state.expectedSize;
+                        const RemoteRepresentationDecision decision = hashBoundRangeMatches
+                            ? RemoteRepresentationDecision{
+                                .action = RemoteRepresentationAction::Append,
+                                .reason = RemoteRepresentationReason::ExactPartialRepresentation}
+                            : decideRemoteRepresentation(representationState, response);
                         if (decision.action == RemoteRepresentationAction::RetryLater &&
                             acceptedBytes == 0U)
                         {
@@ -876,8 +937,14 @@ namespace fluxora
                         response.method == SignedRemoteHttpMethod::Get &&
                         response.target.kind == SignedRemoteTargetKind::Primary &&
                         response.providerId == state.providerId &&
-                        state.validator.has_value() && response.validator == state.validator &&
+                        state.validator.has_value() &&
                         response.representationProviderId == state.validator->providerId &&
+                        ((grant.conditionalRequestsSupported &&
+                            response.validator == state.validator) ||
+                            (!grant.conditionalRequestsSupported &&
+                                state.validator->kind ==
+                                    RepresentationValidatorKind::ContentSha256 &&
+                                state.validator->value == state.expectedSha256)) &&
                         response.statusCode == 200U &&
                         response.contentLength == state.expectedSize &&
                         response.bytesStreamed == state.expectedSize &&

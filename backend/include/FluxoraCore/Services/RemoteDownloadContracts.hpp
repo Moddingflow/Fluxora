@@ -43,7 +43,11 @@ namespace fluxora
     enum class RepresentationValidatorKind
     {
         StrongEtag,
-        LastModified
+        LastModified,
+        // Server-attested artifact identity used only when an external
+        // provider has no conditional-request validator.  Final bytes are
+        // still verified against this SHA-256 before publication to disk.
+        ContentSha256
     };
 
     struct RepresentationValidator
@@ -68,6 +72,12 @@ namespace fluxora
         std::string primaryUrl;
         std::string headUrl;
         std::vector<std::string> fallbackUrls;
+        // Server-authoritative transport capabilities.  A source-hosted
+        // reference must never be upgraded into a manager fallback path.
+        bool fallbackAvailable{true};
+        bool headSupported{true};
+        bool rangeSupported{true};
+        bool conditionalRequestsSupported{true};
         std::map<std::string, std::string> transportHeaders;
         std::uint64_t expiresAtUnixMs{0};
         std::uint64_t expectedSize{0};

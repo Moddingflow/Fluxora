@@ -719,9 +719,13 @@ namespace fluxora
                         metadata_.validator->kind == RepresentationValidatorKind::StrongEtag &&
                         request_.ifMatch->kind == metadata_.validator->kind &&
                         request_.ifMatch->value == metadata_.validator->value;
+                    const bool hashBoundExternalRange =
+                        !grant_.conditionalRequestsSupported &&
+                        grant_.rangeSupported &&
+                        !request_.ifMatch.has_value();
                     bodyAllowed_ = request_.method == SignedRemoteHttpMethod::Get &&
                         request_.target.kind == SignedRemoteTargetKind::Primary &&
-                        validatorMatches;
+                        (validatorMatches || hashBoundExternalRange);
                 }
                 else if (head.statusCode == 200U && !request_.rangeStart.has_value())
                 {
@@ -834,22 +838,30 @@ namespace fluxora
             }
             if (request.method == SignedRemoteHttpMethod::Head)
             {
-                return request.target.kind == SignedRemoteTargetKind::Head &&
+                return grant.headSupported &&
+                    request.target.kind == SignedRemoteTargetKind::Head &&
                     !request.rangeStart.has_value() && !request.ifMatch.has_value();
             }
-            if (request.target.kind == SignedRemoteTargetKind::Head ||
-                request.rangeStart.has_value() != request.ifMatch.has_value())
+            if (request.target.kind == SignedRemoteTargetKind::Head)
             {
                 return false;
             }
             if (request.rangeStart.has_value())
             {
-                return *request.rangeStart < grant.expectedSize &&
+                if (*request.rangeStart >= grant.expectedSize || !grant.rangeSupported)
+                {
+                    return false;
+                }
+                if (!grant.conditionalRequestsSupported)
+                {
+                    return !request.ifMatch.has_value();
+                }
+                return request.ifMatch.has_value() &&
                     request.ifMatch->providerId == grant.representationProviderId &&
                     request.ifMatch->kind == RepresentationValidatorKind::StrongEtag &&
                     isValidRepresentationValidator(*request.ifMatch);
             }
-            return true;
+            return !request.ifMatch.has_value();
         }
 
         [[nodiscard]] SignedRemoteTransportOutcome mapNetworkOutcome(
@@ -1741,7 +1753,10 @@ namespace fluxora
             {
                 networkRequest.headers.push_back({
                     "Range", "bytes=" + std::to_string(*request.rangeStart) + "-"});
-                networkRequest.headers.push_back({"If-Match", request.ifMatch->value});
+                if (request.ifMatch.has_value())
+                {
+                    networkRequest.headers.push_back({"If-Match", request.ifMatch->value});
+                }
             }
 
             response.statusCode = 0U;

@@ -570,9 +570,16 @@ namespace fluxora
 
         std::string validatorKindText(RepresentationValidatorKind kind)
         {
-            return kind == RepresentationValidatorKind::StrongEtag
-                ? "strong-etag"
-                : "last-modified";
+            switch (kind)
+            {
+            case RepresentationValidatorKind::StrongEtag:
+                return "strong-etag";
+            case RepresentationValidatorKind::LastModified:
+                return "last-modified";
+            case RepresentationValidatorKind::ContentSha256:
+                return "content-sha256";
+            }
+            throw std::invalid_argument("Remote download validator kind is invalid.");
         }
 
         RepresentationValidatorKind parseValidatorKind(std::string_view value)
@@ -584,6 +591,10 @@ namespace fluxora
             if (value == "last-modified")
             {
                 return RepresentationValidatorKind::LastModified;
+            }
+            if (value == "content-sha256")
+            {
+                return RepresentationValidatorKind::ContentSha256;
             }
             throw std::runtime_error("Remote download sidecar validator kind is invalid.");
         }

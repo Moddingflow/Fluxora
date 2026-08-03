@@ -4,7 +4,7 @@
   "inputs": [
     {
       "path": "legal/desktop/manifest.json",
-      "sha256": "b10c03ee158d510d7fc168e18450438341a34797440da7a124e7d119a7aa968e"
+      "sha256": "4b1c63fdfd5ccc90a0687549387eb3aa710284ad30f35d1fbd0526e64a08c48b"
     },
     {
       "path": "legal/desktop/license-policy.json",

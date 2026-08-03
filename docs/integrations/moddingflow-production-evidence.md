@@ -60,6 +60,13 @@ Use a controlled large immutable artifact and a controllable origin. Preserve on
 6. Confirm exact size and SHA-256 gates precede atomic final promotion and installer visibility. Hash mismatch, truncation and unsafe archive contents must not install.
 7. Re-run existing Nexus download, resume, duplicate and install-source scenarios.
 
+For each enabled `external_provider_reference` provider, repeat with a public free test artifact and record only nonsecret identifiers and hashes:
+
+8. Confirm the resolve response has an exact provider/reference revision, short-lived provider transport, exact size/hash, current server attestation and truthful capability flags; stale, blocked, deleted, withdrawn or mismatched references must fail before a URL is returned.
+9. Confirm Fluxora sends no OAuth/cookie header to the provider, never invokes Bunny/R2 or browser fallback, and performs no HEAD or `If-Match` when conditional requests are unavailable.
+10. Interrupt once with Range support and once without it. The first run may resume from the hash-bound checkpoint; the second must restart from byte zero. Both must verify the final SHA-256 before atomic promotion.
+11. Exercise provider `404`, `429` with `Retry-After`, `5xx`, redirect-to-private-address, size drift and hash drift. Freshness expiry and any identity drift must remain fail-closed.
+
 ## Rollout and rollback
 
 Enable capabilities independently and in order: account connection for internal builds, catalog/download for alpha, deploy the strict Website manager flow with its button disabled, release the compatible installer and pass Gate B, then enable `MODDINGFLOW_MANAGER_HANDOFF_ENABLED` for a bounded beta cohort. The deprecated `FLUXORA_HANDOFF_ENABLED` alias may be read for the single transition deployment only and must not survive the next deployment. Stop on token leakage, browser fallback, default-handler takeover, resume corruption, unexplained hash mismatch, OAuth success below the agreed threshold, refresh-reuse spikes, Nexus regression, wrong-artifact handoff, or material API 5xx/429 regression.
