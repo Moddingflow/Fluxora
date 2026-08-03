@@ -2898,6 +2898,28 @@ function Test-FluxoraPublicReleaseAnnouncement {
         [ref]$publishedAt)
 }
 
+function New-FluxoraReleasePublicationPostflightResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Version,
+
+        [bool] $LatestAliasConfirmed,
+
+        [bool] $AuthoritativeLatestConfirmed,
+
+        [AllowNull()]
+        [object] $Announcement
+    )
+
+    return [pscustomobject]@{
+        version = $Version
+        latest_alias_confirmed = $LatestAliasConfirmed
+        authoritative_latest_confirmed = $AuthoritativeLatestConfirmed
+        announcement_confirmed = $null -ne $Announcement
+        announcement = $Announcement
+    }
+}
+
 function Wait-FluxoraReleasePublicationPostflight {
     [CmdletBinding()]
     param(
@@ -2978,9 +3000,11 @@ function Wait-FluxoraReleasePublicationPostflight {
         }
 
         if ($latestManifestConfirmed -and $null -ne $confirmedAnnouncement) {
-            $confirmedAnnouncement | Add-Member -NotePropertyName 'latest_alias_confirmed' -NotePropertyValue $true -Force
-            $confirmedAnnouncement | Add-Member -NotePropertyName 'authoritative_latest_confirmed' -NotePropertyValue $authoritativeLatestConfirmed -Force
-            return $confirmedAnnouncement
+            return New-FluxoraReleasePublicationPostflightResult `
+                -Version $ExpectedVersion `
+                -LatestAliasConfirmed $true `
+                -AuthoritativeLatestConfirmed $authoritativeLatestConfirmed `
+                -Announcement $confirmedAnnouncement
         }
 
         $current = [DateTimeOffset](& $Now)
@@ -2996,15 +3020,21 @@ function Wait-FluxoraReleasePublicationPostflight {
         & $Sleep $sleepMilliseconds
     } while ($true)
 
+    if ($latestManifestConfirmed) {
+        return New-FluxoraReleasePublicationPostflightResult `
+            -Version $ExpectedVersion `
+            -LatestAliasConfirmed $true `
+            -AuthoritativeLatestConfirmed $authoritativeLatestConfirmed `
+            -Announcement $confirmedAnnouncement
+    }
     if ($authoritativeLatestConfirmed -and $null -ne $confirmedAnnouncement) {
-        $confirmedAnnouncement | Add-Member -NotePropertyName 'latest_alias_confirmed' -NotePropertyValue $false -Force
-        $confirmedAnnouncement | Add-Member -NotePropertyName 'authoritative_latest_confirmed' -NotePropertyValue $true -Force
-        return $confirmedAnnouncement
+        return New-FluxoraReleasePublicationPostflightResult `
+            -Version $ExpectedVersion `
+            -LatestAliasConfirmed $false `
+            -AuthoritativeLatestConfirmed $true `
+            -Announcement $confirmedAnnouncement
     }
-    if ($null -eq $confirmedAnnouncement) {
-        throw "Fluxora $ExpectedVersion is published, announcement unconfirmed in the public release signal table."
-    }
-    throw "Fluxora $ExpectedVersion is published, but neither the authoritative GitHub latest release nor its public signed manifest is confirmed."
+    throw "Fluxora $ExpectedVersion is published, but neither its public signed latest manifest nor its public release announcement is confirmed."
 }
 
 Export-ModuleMember -Function @(

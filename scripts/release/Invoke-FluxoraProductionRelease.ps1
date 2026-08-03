@@ -891,15 +891,19 @@ try {
             }
             return $rows[0]
         }.GetNewClosure()
-        $announcement = Wait-FluxoraReleasePublicationPostflight `
+        $postflight = Wait-FluxoraReleasePublicationPostflight `
             -ExpectedVersion $targetVersion `
             -ReadLatestSignedManifestVersion $readLatestSignedManifestVersion `
             -ReadLatestReleaseTag $readLatestReleaseTag `
             -ReadPublicAnnouncement $readPublicAnnouncement `
             -TimeoutSeconds 120 `
             -PollIntervalSeconds 5
-        if ([bool]$announcement.latest_alias_confirmed) {
-            Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$announcement.version)."
+        if ([bool]$postflight.latest_alias_confirmed -and
+            [bool]$postflight.announcement_confirmed) {
+            Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$postflight.version)."
+        }
+        elseif ([bool]$postflight.latest_alias_confirmed) {
+            Write-Warning "Confirmed the public signed latest manifest for $tag, but its optional public stable announcement is still propagating. GitHub update discovery remains available and clients retain their polling fallback; the published release is valid and must not be retried."
         }
         else {
             Write-Warning "GitHub confirms $tag as the authoritative latest release and its public stable announcement is live, but the public latest-download alias is still propagating. The published release is valid; do not retry or reuse this SemVer."

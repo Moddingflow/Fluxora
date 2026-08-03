@@ -1765,21 +1765,24 @@ Invoke-Case 'published release postflight tolerates delayed public latest alias 
     Assert-Equal ([bool]$result.authoritative_latest_confirmed) $true 'The result must record authoritative GitHub latest confirmation.'
 }
 
-Invoke-Case 'published release postflight fails closed when announcement stays unconfirmed' {
+Invoke-Case 'published release postflight tolerates missing announcement when signed latest is confirmed' {
     $script:postflightTimeoutClock = [DateTimeOffset]::Parse('2026-08-02T12:00:00Z')
-    Assert-Throws {
-        Wait-FluxoraReleasePublicationPostflight `
-            -ExpectedVersion '1.2.3' `
-            -TimeoutSeconds 10 `
-            -PollIntervalSeconds 5 `
-            -ReadLatestSignedManifestVersion { '1.2.3' } `
-            -ReadPublicAnnouncement { $null } `
-            -Now { $script:postflightTimeoutClock } `
-            -Sleep {
-                param([int] $Milliseconds)
-                $script:postflightTimeoutClock = $script:postflightTimeoutClock.AddMilliseconds($Milliseconds)
-            }
-    } '*announcement unconfirmed*'
+    $result = Wait-FluxoraReleasePublicationPostflight `
+        -ExpectedVersion '1.2.3' `
+        -TimeoutSeconds 10 `
+        -PollIntervalSeconds 5 `
+        -ReadLatestSignedManifestVersion { '1.2.3' } `
+        -ReadLatestReleaseTag { 'v1.2.3' } `
+        -ReadPublicAnnouncement { $null } `
+        -Now { $script:postflightTimeoutClock } `
+        -Sleep {
+            param([int] $Milliseconds)
+            $script:postflightTimeoutClock = $script:postflightTimeoutClock.AddMilliseconds($Milliseconds)
+        }
+
+    Assert-Equal ([string]$result.version) '1.2.3' 'The confirmed signed latest version must remain the postflight authority.'
+    Assert-Equal ([bool]$result.latest_alias_confirmed) $true 'The result must record the public signed latest confirmation.'
+    Assert-Equal ([bool]$result.announcement_confirmed) $false 'The result must disclose that the optional announcement is still pending.'
 }
 
 Invoke-Case 'controlled release checkpoint rejects likely secrets before commit' {

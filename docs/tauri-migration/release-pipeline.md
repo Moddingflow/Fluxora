@@ -336,14 +336,20 @@ Production mode is fail-closed and non-forceful:
    becomes visible to clients only at this final publish step.
 7. After publication, poll the public GitHub `latest/download` manifest and
    signature, verify their detached signature with the embedded public key and
-   require the exact target version. Then poll the public Supabase REST read
-   until the matching stable announcement row is visible. Success is reported
-   only after both postflights. Once `gh release edit --draft=false` succeeds
-   (or a probe proves it succeeded), `$releasePublished` makes failure
-   irreversible: the script reports `published, announcement unconfirmed`,
-   forbids retrying or reusing that SemVer, and directs the owner to repair the
-   latest alias, webhook, or announcement rather than pretending the release is
-   unpublished.
+   require the exact target version. Poll the public Supabase REST read in the
+   same bounded postflight for the matching stable announcement row. The signed
+   GitHub manifest is the update authority; the Supabase announcement is only a
+   latency hint and clients retain startup, focus and 15-minute GitHub polling.
+   A delayed announcement therefore produces an explicit warning after the
+   bounded wait but does not turn an authenticated, publicly discoverable
+   release into a failed build. A release still fails closed when neither the
+   signed public manifest nor the independently confirmed latest release plus
+   announcement can prove a usable public path. Once
+   `gh release edit --draft=false` succeeds (or a probe proves it succeeded),
+   `$releasePublished` makes any real postflight failure irreversible: the
+   script forbids retrying or reusing that SemVer and directs the owner to repair
+   the latest alias, webhook or announcement rather than pretending the release
+   is unpublished.
 
 There is no honest single transaction across Git, GitHub Releases and local
 files. Before a push, production mode restores local version edits on failure or
