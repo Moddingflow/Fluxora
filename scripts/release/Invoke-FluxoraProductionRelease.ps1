@@ -481,6 +481,7 @@ $commitCreated = $false
 $remotePushed = $false
 $draftCreated = $false
 $releasePublished = $false
+$releasePostflightPending = $false
 New-FluxoraVersionRecoveryJournal `
     -ProjectRoot $projectRoot `
     -JournalPath $versionRecoveryJournalPath `
@@ -898,6 +899,9 @@ try {
             -ReadPublicAnnouncement $readPublicAnnouncement `
             -TimeoutSeconds 120 `
             -PollIntervalSeconds 5
+        $script:releasePostflightPending = -not (
+            [bool]$postflight.latest_alias_confirmed -and
+            [bool]$postflight.announcement_confirmed)
         if ([bool]$postflight.latest_alias_confirmed -and
             [bool]$postflight.announcement_confirmed) {
             Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$postflight.version)."
@@ -905,8 +909,11 @@ try {
         elseif ([bool]$postflight.latest_alias_confirmed) {
             Write-Warning "Confirmed the public signed latest manifest for $tag, but its optional public stable announcement is still propagating. GitHub update discovery remains available and clients retain their polling fallback; the published release is valid and must not be retried."
         }
-        else {
+        elseif ([bool]$postflight.announcement_confirmed) {
             Write-Warning "GitHub confirms $tag as the authoritative latest release and its public stable announcement is live, but the public latest-download alias is still propagating. The published release is valid; do not retry or reuse this SemVer."
+        }
+        else {
+            Write-Warning "Fluxora $tag is published and every uploaded asset was verified before publication, but the public latest alias and optional announcement could not be re-read within the bounded postflight. Public propagation remains pending; do not retry or reuse this SemVer."
         }
     }
 }
@@ -931,7 +938,8 @@ catch {
         }
     }
     if ($releasePublished) {
-        Write-Warning "Fluxora $tag is published, but its public release postflight is unconfirmed. Do not retry or reuse this SemVer; repair the latest alias, webhook, or public announcement postflight."
+        $script:releasePostflightPending = $true
+        Write-Warning "Fluxora $tag is already published and verified, but its diagnostic public postflight encountered an unexpected local error. The published release will not be reported as failed; do not retry or reuse this SemVer."
     }
     elseif ($remotePushed) {
         Write-Warning "The release commit/tag were already pushed. They were not rewritten. Draft created: $draftCreated. Resolve or resume '$tag' explicitly."
@@ -945,10 +953,9 @@ catch {
     if ($null -ne $recoveryFailure) {
         throw "Production release failed, and exact version recovery also failed. The recovery journal remains at '$versionRecoveryJournalPath'. Release error: $($releaseFailure.Exception.Message) Recovery error: $($recoveryFailure.Exception.Message)"
     }
-    if ($releasePublished) {
-        throw "Production release $tag is published, but its public release postflight is unconfirmed. Do not retry or reuse this SemVer. Postflight error: $($releaseFailure.Exception.Message)"
+    if (-not $releasePublished) {
+        throw $releaseFailure
     }
-    throw $releaseFailure
 }
 finally {
     if ($null -ne $capturedSigningKeyBytes) {
@@ -962,4 +969,9 @@ finally {
 }
 
 Write-Host ''
-Write-Host "Production release $tag completed successfully."
+if ($releasePostflightPending) {
+    Write-Host "Production release $tag published successfully. Public postflight confirmation remains pending. Do not retry or reuse this SemVer."
+}
+else {
+    Write-Host "Production release $tag completed successfully."
+}

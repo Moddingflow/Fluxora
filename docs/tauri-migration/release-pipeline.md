@@ -340,16 +340,17 @@ Production mode is fail-closed and non-forceful:
    same bounded postflight for the matching stable announcement row. The signed
    GitHub manifest is the update authority; the Supabase announcement is only a
    latency hint and clients retain startup, focus and 15-minute GitHub polling.
-   A delayed announcement therefore produces an explicit warning after the
-   bounded wait but does not turn an authenticated, publicly discoverable
-   release into a failed build. A release still fails closed when neither the
-   signed public manifest nor the independently confirmed latest release plus
-   announcement can prove a usable public path. Once
+   Delayed or temporarily unreadable public signals therefore produce an
+   explicit pending-propagation warning after the bounded wait but do not turn a
+   release into a failed build. The release assets were already downloaded from
+   the draft and verified against their signed inventory before publication,
+   while the publication step separately proves that GitHub accepted the exact
+   tag. All pre-publication gates continue to fail closed. Once
    `gh release edit --draft=false` succeeds (or a probe proves it succeeded),
-   `$releasePublished` makes any real postflight failure irreversible: the
-   script forbids retrying or reusing that SemVer and directs the owner to repair
-   the latest alias, webhook or announcement rather than pretending the release
-   is unpublished.
+   `$releasePublished` makes the result irreversible: diagnostic postflight
+   failures must return success-with-warning, forbid retrying or reusing that
+   SemVer, and direct the owner to observe or repair public propagation rather
+   than falsely reporting an already published release as failed.
 
 There is no honest single transaction across Git, GitHub Releases and local
 files. Before a push, production mode restores local version edits on failure or

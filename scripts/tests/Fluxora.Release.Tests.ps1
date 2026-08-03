@@ -1785,6 +1785,27 @@ Invoke-Case 'published release postflight tolerates missing announcement when si
     Assert-Equal ([bool]$result.announcement_confirmed) $false 'The result must disclose that the optional announcement is still pending.'
 }
 
+Invoke-Case 'published release postflight reports pending when every public probe remains unconfirmed' {
+    $script:fullyPendingPostflightClock = [DateTimeOffset]::Parse('2026-08-03T12:00:00Z')
+    $result = Wait-FluxoraReleasePublicationPostflight `
+        -ExpectedVersion '1.2.3' `
+        -TimeoutSeconds 10 `
+        -PollIntervalSeconds 5 `
+        -ReadLatestSignedManifestVersion { '1.2.2' } `
+        -ReadLatestReleaseTag { $null } `
+        -ReadPublicAnnouncement { $null } `
+        -Now { $script:fullyPendingPostflightClock } `
+        -Sleep {
+            param([int] $Milliseconds)
+            $script:fullyPendingPostflightClock = $script:fullyPendingPostflightClock.AddMilliseconds($Milliseconds)
+        }
+
+    Assert-Equal ([string]$result.version) '1.2.3' 'The irreversible published version must remain explicit in pending diagnostics.'
+    Assert-Equal ([bool]$result.latest_alias_confirmed) $false 'A pending result must not claim latest-alias confirmation.'
+    Assert-Equal ([bool]$result.authoritative_latest_confirmed) $false 'A pending result must not claim authoritative latest confirmation.'
+    Assert-Equal ([bool]$result.announcement_confirmed) $false 'A pending result must not claim announcement confirmation.'
+}
+
 Invoke-Case 'controlled release checkpoint rejects likely secrets before commit' {
     Assert-FluxoraReleaseStagedPaths -Paths @(
         'Build.ps1',
@@ -2144,7 +2165,9 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($source.Contains('Assert-FluxoraPostCheckpointStatus')) 'Post-checkpoint Graphify drift must use the narrow tracked-file allowlist.'
     Assert-True ($source.Contains('Wait-FluxoraReleasePublicationPostflight')) 'A published release must wait for latest-alias and public announcement confirmation.'
     Assert-True ($source.Contains('$releasePublished = $false')) 'Publisher recovery must distinguish publication from pre-publication failure.'
-    Assert-True ($source.Contains('published, but its public release postflight is unconfirmed')) 'Post-publication failure must report the irreversible published state precisely.'
+    Assert-True ($source.Contains('$releasePostflightPending = $false')) 'Publisher status must distinguish confirmed and pending public postflight states.'
+    Assert-True (-not [regex]::IsMatch($source, 'if \(\$releasePublished\)\s*\{\s*throw "Production release')) 'Post-publication diagnostics must not report an already verified published release as failed.'
+    Assert-True ($source.Contains('published successfully. Public postflight confirmation remains pending')) 'Pending public propagation must finish with an explicit successful publication status.'
     Assert-True ($source.Contains('Do not retry or reuse this SemVer')) 'Post-publication recovery must forbid same-SemVer retry guidance.'
     Assert-True (-not $source.Contains('--clobber')) 'Production release must never overwrite an existing asset.'
     Assert-True (-not $source.Contains('--force')) 'Production release must never force-push or force-rewrite a release.'

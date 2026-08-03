@@ -3034,7 +3034,11 @@ function Wait-FluxoraReleasePublicationPostflight {
             -AuthoritativeLatestConfirmed $true `
             -Announcement $confirmedAnnouncement
     }
-    throw "Fluxora $ExpectedVersion is published, but neither its public signed latest manifest nor its public release announcement is confirmed."
+    return New-FluxoraReleasePublicationPostflightResult `
+        -Version $ExpectedVersion `
+        -LatestAliasConfirmed $false `
+        -AuthoritativeLatestConfirmed $authoritativeLatestConfirmed `
+        -Announcement $confirmedAnnouncement
 }
 
 Export-ModuleMember -Function @(
