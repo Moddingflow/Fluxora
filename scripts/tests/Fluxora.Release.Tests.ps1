@@ -1737,6 +1737,34 @@ Invoke-Case 'published release postflight waits for latest signed manifest and p
     Assert-Equal $script:announcementAttempts 2 'Public metadata must be polled after the latest alias is confirmed.'
 }
 
+Invoke-Case 'published release postflight tolerates delayed public latest alias after authoritative confirmation' {
+    $script:delayedAliasClock = [DateTimeOffset]::Parse('2026-08-03T12:00:00Z')
+    $result = Wait-FluxoraReleasePublicationPostflight `
+        -ExpectedVersion '1.2.3' `
+        -TimeoutSeconds 10 `
+        -PollIntervalSeconds 5 `
+        -ReadLatestReleaseTag { 'v1.2.3' } `
+        -ReadLatestSignedManifestVersion { '1.2.2' } `
+        -ReadPublicAnnouncement {
+            return [pscustomobject]@{
+                github_release_id = 123456789
+                channel = 'stable'
+                version = '1.2.3'
+                tag_name = 'v1.2.3'
+                published_at = '2026-08-03T12:00:00Z'
+            }
+        } `
+        -Now { $script:delayedAliasClock } `
+        -Sleep {
+            param([int] $Milliseconds)
+            $script:delayedAliasClock = $script:delayedAliasClock.AddMilliseconds($Milliseconds)
+        }
+
+    Assert-Equal ([string]$result.version) '1.2.3' 'A published release must retain the matching stable announcement.'
+    Assert-Equal ([bool]$result.latest_alias_confirmed) $false 'The result must disclose that public latest alias propagation is still pending.'
+    Assert-Equal ([bool]$result.authoritative_latest_confirmed) $true 'The result must record authoritative GitHub latest confirmation.'
+}
+
 Invoke-Case 'published release postflight fails closed when announcement stays unconfirmed' {
     $script:postflightTimeoutClock = [DateTimeOffset]::Parse('2026-08-02T12:00:00Z')
     Assert-Throws {
@@ -2113,7 +2141,7 @@ Invoke-Case 'production publisher is parseable and publishes only after draft ha
     Assert-True ($source.Contains('Assert-FluxoraPostCheckpointStatus')) 'Post-checkpoint Graphify drift must use the narrow tracked-file allowlist.'
     Assert-True ($source.Contains('Wait-FluxoraReleasePublicationPostflight')) 'A published release must wait for latest-alias and public announcement confirmation.'
     Assert-True ($source.Contains('$releasePublished = $false')) 'Publisher recovery must distinguish publication from pre-publication failure.'
-    Assert-True ($source.Contains('published, announcement unconfirmed')) 'Post-publication failure must report the irreversible published state precisely.'
+    Assert-True ($source.Contains('published, but its public release postflight is unconfirmed')) 'Post-publication failure must report the irreversible published state precisely.'
     Assert-True ($source.Contains('Do not retry or reuse this SemVer')) 'Post-publication recovery must forbid same-SemVer retry guidance.'
     Assert-True (-not $source.Contains('--clobber')) 'Production release must never overwrite an existing asset.'
     Assert-True (-not $source.Contains('--force')) 'Production release must never force-push or force-rewrite a release.'

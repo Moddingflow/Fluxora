@@ -2907,6 +2907,8 @@ function Wait-FluxoraReleasePublicationPostflight {
         [Parameter(Mandatory = $true)]
         [scriptblock] $ReadLatestSignedManifestVersion,
 
+        [scriptblock] $ReadLatestReleaseTag = { return $null },
+
         [Parameter(Mandatory = $true)]
         [scriptblock] $ReadPublicAnnouncement,
 
@@ -2929,6 +2931,8 @@ function Wait-FluxoraReleasePublicationPostflight {
     }
     $deadline = [DateTimeOffset](& $Now).AddSeconds($TimeoutSeconds)
     $latestManifestConfirmed = $false
+    $authoritativeLatestConfirmed = $false
+    $confirmedAnnouncement = $null
     do {
         if (-not $latestManifestConfirmed) {
             try {
@@ -2943,20 +2947,40 @@ function Wait-FluxoraReleasePublicationPostflight {
             }
         }
 
-        if ($latestManifestConfirmed) {
+        if (-not $authoritativeLatestConfirmed) {
+            try {
+                $latestReleaseTags = @(& $ReadLatestReleaseTag)
+                if ($latestReleaseTags.Count -eq 1 -and
+                    [string]$latestReleaseTags[0] -ceq "v$ExpectedVersion") {
+                    $authoritativeLatestConfirmed = $true
+                }
+            }
+            catch {
+                # The authenticated GitHub control-plane probe is retried with the public alias.
+            }
+        }
+
+        if ($null -eq $confirmedAnnouncement) {
             try {
                 $announcementRows = @(& $ReadPublicAnnouncement)
                 foreach ($row in $announcementRows) {
                     if (Test-FluxoraPublicReleaseAnnouncement `
                         -Row $row `
                         -ExpectedVersion $ExpectedVersion) {
-                        return $row
+                        $confirmedAnnouncement = $row
+                        break
                     }
                 }
             }
             catch {
                 # The public read path is retried without disclosing its API key.
             }
+        }
+
+        if ($latestManifestConfirmed -and $null -ne $confirmedAnnouncement) {
+            $confirmedAnnouncement | Add-Member -NotePropertyName 'latest_alias_confirmed' -NotePropertyValue $true -Force
+            $confirmedAnnouncement | Add-Member -NotePropertyName 'authoritative_latest_confirmed' -NotePropertyValue $authoritativeLatestConfirmed -Force
+            return $confirmedAnnouncement
         }
 
         $current = [DateTimeOffset](& $Now)
@@ -2972,10 +2996,15 @@ function Wait-FluxoraReleasePublicationPostflight {
         & $Sleep $sleepMilliseconds
     } while ($true)
 
-    if (-not $latestManifestConfirmed) {
-        throw "Fluxora $ExpectedVersion is published, but the GitHub latest signed manifest is unconfirmed."
+    if ($authoritativeLatestConfirmed -and $null -ne $confirmedAnnouncement) {
+        $confirmedAnnouncement | Add-Member -NotePropertyName 'latest_alias_confirmed' -NotePropertyValue $false -Force
+        $confirmedAnnouncement | Add-Member -NotePropertyName 'authoritative_latest_confirmed' -NotePropertyValue $true -Force
+        return $confirmedAnnouncement
     }
-    throw "Fluxora $ExpectedVersion is published, announcement unconfirmed in the public release signal table."
+    if ($null -eq $confirmedAnnouncement) {
+        throw "Fluxora $ExpectedVersion is published, announcement unconfirmed in the public release signal table."
+    }
+    throw "Fluxora $ExpectedVersion is published, but neither the authoritative GitHub latest release nor its public signed manifest is confirmed."
 }
 
 Export-ModuleMember -Function @(

@@ -874,6 +874,10 @@ try {
                 -PublicKeyPath $publicKeyPath
             return [string]$latestManifest.version
         }.GetNewClosure()
+        $readLatestReleaseTag = {
+            return ((Invoke-ReleaseCommand -FilePath 'gh' -Arguments @(
+                'api', "repos/$repository/releases/latest", '--jq', '.tag_name')) -join '').Trim()
+        }.GetNewClosure()
         $readPublicAnnouncement = {
             $encodedVersion = [Uri]::EscapeDataString($targetVersion)
             $announcementUri = "$releaseSignalSupabaseUrl/rest/v1/fluxora_desktop_releases?select=github_release_id,channel,version,tag_name,published_at&channel=eq.stable&version=eq.$encodedVersion&limit=1"
@@ -890,10 +894,16 @@ try {
         $announcement = Wait-FluxoraReleasePublicationPostflight `
             -ExpectedVersion $targetVersion `
             -ReadLatestSignedManifestVersion $readLatestSignedManifestVersion `
+            -ReadLatestReleaseTag $readLatestReleaseTag `
             -ReadPublicAnnouncement $readPublicAnnouncement `
             -TimeoutSeconds 120 `
             -PollIntervalSeconds 5
-        Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$announcement.version)."
+        if ([bool]$announcement.latest_alias_confirmed) {
+            Write-Host "Confirmed signed latest manifest and public stable announcement for $([string]$announcement.version)."
+        }
+        else {
+            Write-Warning "GitHub confirms $tag as the authoritative latest release and its public stable announcement is live, but the public latest-download alias is still propagating. The published release is valid; do not retry or reuse this SemVer."
+        }
     }
 }
 catch {
@@ -917,7 +927,7 @@ catch {
         }
     }
     if ($releasePublished) {
-        Write-Warning "Fluxora $tag is published, announcement unconfirmed. Do not retry or reuse this SemVer; repair the latest alias, webhook, or public announcement postflight."
+        Write-Warning "Fluxora $tag is published, but its public release postflight is unconfirmed. Do not retry or reuse this SemVer; repair the latest alias, webhook, or public announcement postflight."
     }
     elseif ($remotePushed) {
         Write-Warning "The release commit/tag were already pushed. They were not rewritten. Draft created: $draftCreated. Resolve or resume '$tag' explicitly."
@@ -932,7 +942,7 @@ catch {
         throw "Production release failed, and exact version recovery also failed. The recovery journal remains at '$versionRecoveryJournalPath'. Release error: $($releaseFailure.Exception.Message) Recovery error: $($recoveryFailure.Exception.Message)"
     }
     if ($releasePublished) {
-        throw "Production release $tag is published, announcement unconfirmed. Do not retry or reuse this SemVer. Postflight error: $($releaseFailure.Exception.Message)"
+        throw "Production release $tag is published, but its public release postflight is unconfirmed. Do not retry or reuse this SemVer. Postflight error: $($releaseFailure.Exception.Message)"
     }
     throw $releaseFailure
 }
