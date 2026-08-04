@@ -1,9 +1,3 @@
-
-
-https://github.com/user-attachments/assets/0b86cd60-5b97-4c37-b05d-1429bf1faec2
-
-
-
 <div align="center">
   <img src="Icons/Fluxora.png" alt="Fluxora logo" width="104" />
 
@@ -30,24 +24,32 @@ The active product UI lives in `frontend-tauri/`. The C++ core in `backend/` own
 
 - **Native mod workspace**: manage installed mods, separators, enable state, profile order, plugin load order, lazy file trees and overwrite relationships.
 
-<img width="1914" height="1027" alt="{D28C82DA-B9BF-4DA0-8C8F-11FEFF574298}" src="https://github.com/user-attachments/assets/a1499fcb-3e3d-41eb-b927-66eccfbec882" />
+<img width="1920" height="1080" alt="Fluxora mod and plugin workspace" src="https://github.com/user-attachments/assets/b404f71b-7fed-421b-a03e-f9c486e050ab" />
 
 
 - **Nexus Mods workflow**: OAuth/API-key compatibility, NXM link capture, download queue management, local archive import and install actions.
 
-<img width="741" height="119" alt="image" src="https://github.com/user-attachments/assets/48a10dd7-c45d-42b8-b86a-6f90f980612b" />
+<img width="1920" height="1080" alt="Fluxora Nexus Mods download queue" src="https://github.com/user-attachments/assets/a868b520-b376-4200-a359-219d143be3c3" />
 
 
 - **Install experience**: archive layout analysis, FOMOD flows, replace/merge decisions, placement details and operation progress.
+
+<img width="1920" height="1080" alt="Fluxora archive installation and FOMOD poster" src="https://github.com/user-attachments/assets/f9b04e62-b10c-45af-aac1-201b7afd3228" />
+
+https://github.com/user-attachments/assets/5c621378-af15-4a36-b6e2-20b112158fe9
 - **Skyrim automation**: VFS launch support, automatic Parallax Gen, TexGen and DynDOLOD output setup, and No Grass In Objects grass cache generation.
+
+<img width="1920" height="1080" alt="Fluxora VFS and Skyrim automation poster" src="https://github.com/user-attachments/assets/64080940-1404-4b4f-9f36-8800258949f7" />
+
+https://github.com/user-attachments/assets/4fd2963a-6326-439a-af62-5fdf455856de
 - **Build portability**: import existing Mod Organizer 2 builds and export or install `.fluxpack` packages for one-click build sharing.
 
-<img width="461" height="315" alt="image" src="https://github.com/user-attachments/assets/929401e1-65e1-4d0a-a2d4-283fc20e6205" />
+<img width="1920" height="1080" alt="Fluxora Mod Organizer 2 import and FluxPack export" src="https://github.com/user-attachments/assets/8dea104b-c472-4e31-8cbc-172b0ff3996c" />
 
 
 - **AI-assisted modding**: local build context, Nexus/web-backed research, requirements audits, recommendations and troubleshooting through the Fluxora AI host.
 
-<img width="611" height="993" alt="{1DF7AD36-65A1-46DD-B130-DA4A5D08EC45}" src="https://github.com/user-attachments/assets/10044136-88d2-4ccd-b915-e49adf248883" />
+<img width="611" height="993" alt="Fluxora AI diagnostics" src="https://github.com/user-attachments/assets/b19743fe-03a4-4fea-994e-6b16e7ea3a86" />
 
 
 - **Secure desktop boundary**: renderer code uses a typed `window.fluxora` facade instead of direct filesystem, shell, Node.js or native module access.
