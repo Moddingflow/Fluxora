@@ -6,6 +6,7 @@ import type {
   FluxoraPlacementOverride,
   FluxoraPlacementTarget
 } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 
 export type PlacementRowKind = 'system-root' | 'directory' | 'file' | 'attention-root';
 
@@ -137,7 +138,8 @@ const mutableNode = (
 export const buildInstallPlacementRows = (
   preview: FluxoraContentLayoutPreview,
   edits: FluxoraPlacementEditsV2,
-  collapsed: ReadonlySet<string> = new Set()
+  collapsed: ReadonlySet<string> = new Set(),
+  language?: string | null
 ): InstallPlacementRow[] => {
   const files = new Map(edits.files.map((file) => [file.sourcePath.toLocaleLowerCase(), file]));
   const excludedSourcePaths = new Set(
@@ -147,7 +149,7 @@ export const buildInstallPlacementRows = (
     'root:gameRoot',
     null,
     'system-root',
-    preview.gameDisplayName.trim() || 'Game root',
+    preview.gameDisplayName.trim() || translateForLanguage(language, 'placement.gameRoot'),
     0,
     'gameRoot',
     '',
@@ -167,11 +169,20 @@ export const buildInstallPlacementRows = (
   const roots = [gameRoot];
   const blockedEntries = preview.entries.filter((entry) => entry.target === 'blocked');
   if (blockedEntries.length > 0) {
-    roots.push(mutableNode('root:attention', null, 'attention-root', 'Needs attention', 0, 'blocked', '', {
-      system: true,
-      blocked: true,
-      problemCount: blockedEntries.length
-    }));
+    roots.push(mutableNode(
+      'root:attention',
+      null,
+      'attention-root',
+      translateForLanguage(language, 'placement.attention'),
+      0,
+      'blocked',
+      '',
+      {
+        system: true,
+        blocked: true,
+        problemCount: blockedEntries.length
+      }
+    ));
   }
 
   const nodeByKey = new Map<string, MutableNode>([
@@ -604,21 +615,10 @@ export const placementAssessmentMessage = (
   language: string
 ): string | null => {
   if (!preview.assessment) return null;
-  const locale: 'ru' | 'en' | 'de' = language.toLocaleLowerCase().startsWith('de')
-    ? 'de'
-    : language.toLocaleLowerCase().startsWith('en')
-      ? 'en'
-      : 'ru';
-  if (preview.assessment.status === 'ready') {
-    return locale === 'ru'
-      ? 'Архив подходит под структуру игры'
-      : locale === 'de'
-        ? 'Das Archiv entspricht der Spielstruktur'
-        : 'The archive matches the game structure';
-  }
-  return locale === 'ru'
-    ? 'Архив не подходит под структуру игры'
-    : locale === 'de'
-      ? 'Das Archiv entspricht nicht der Spielstruktur'
-      : 'The archive does not match the game structure';
+  return translateForLanguage(
+    language,
+    preview.assessment.status === 'ready'
+      ? 'placement.assessment.ready'
+      : 'placement.assessment.blocked'
+  );
 };

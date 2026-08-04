@@ -15,9 +15,9 @@ describe('right pane redesign', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain("type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';");
-    expect(app).toContain("label: 'Плагины'");
-    expect(app).toContain("label: 'Данные'");
-    expect(app).toContain("label: 'Загрузки'");
+    expect(app).toContain("label: t('app.tab.plugins')");
+    expect(app).toContain("label: t('app.tab.data')");
+    expect(app).toContain("label: t('app.tab.downloads')");
     expect(app).not.toContain("label: 'Сборка'");
     expect(app).toContain('renderPluginsRightPane');
     expect(app).toContain('renderDataRightPane');
@@ -27,7 +27,7 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('aria-label="Selected plugin detail"');
     expect(app).toContain('className="right-pane-section"');
     expect(app).toContain('className="right-pane-data-tree file-tree"');
-    expect(app).toContain('aria-label="Effective game root"');
+    expect(app).toContain("aria-label={t('app.ui.effectiveGameRoot')}");
     expect(app).toContain('visibleEffectiveFileTreeWindow.items.map(renderEffectiveFileTreeRow)');
     expect(app).toContain('renderEffectiveFileTreeSkeletonRows');
     expect(app).not.toContain('Project paths and selected mod files');
@@ -53,14 +53,14 @@ describe('right pane redesign', () => {
     expect(app).toContain("const dataTreeVisible = buildWorkspaceVisible && activeRightPane === 'data';");
     expect(app).toContain('requestKey: effectiveFileTreeRequestKey');
     expect(dataPane).toContain('role="tree"');
-    expect(dataPane).toContain('aria-label="Effective game root"');
-    expect(app).toContain('effectiveFileTreeSourceLabel(entry)');
+    expect(dataPane).toContain("aria-label={t('app.ui.effectiveGameRoot')}");
+    expect(app).toContain('effectiveFileTreeSourceLabel(entry, appLocale)');
     expect(app).toContain('openEffectiveFileTreeEntry(entry)');
     expect(app).toContain('createVirtualWindow(effectiveFileTreeRows');
     expect(dataPane).toContain('aria-busy={showInitialSkeleton || effectiveFileTreeState ===');
     expect(dataPane).toContain('renderEffectiveFileTreeSkeletonRows()');
-    expect(dataPane).toContain('Данные недоступны.');
-    expect(dataPane).toContain('Нет файлов в дереве.');
+    expect(dataPane).toContain("t('app.ui.dataUnavailable')");
+    expect(dataPane).toContain("t('app.ui.noTreeFiles')");
     expect(dataPane).not.toContain('selectedModItem');
     expect(dataPane).not.toContain('loadModFileTree');
     expect(dataPane).not.toContain('right-pane-path-list');
@@ -88,7 +88,7 @@ describe('right pane redesign', () => {
       app.match(/<header className="build-pane__header build-pane__header--tabs">[\s\S]*?<\/header>/)?.[0] ??
       '';
     const retryBlock =
-      app.match(/onClick=\{\(\) =>\s+void loadEffectiveFileTree[\s\S]*?Повторить/)?.[0] ??
+      app.match(/onClick=\{\(\) =>\s+void loadEffectiveFileTree[\s\S]*?t\('app\.ui\.retry'\)/)?.[0] ??
       '';
 
     expect(loadTree).toContain('effectiveFileTreeFailedRequestKeyRef.current === requestKey');
@@ -155,13 +155,13 @@ describe('right pane redesign', () => {
   it('keeps the plugin table free of noisy type, state and action columns', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const pluginTableHeader =
-      app.match(/aria-label="Plugin load order"[\s\S]*?<div\s+className="mod-table__body"/)?.[0] ??
+      app.match(/className="mod-table plugin-table"[\s\S]*?<PluginsListSurface/)?.[0] ??
       '';
 
-    expect(pluginTableHeader).toContain('<span role="columnheader">Order</span>');
-    expect(pluginTableHeader).toContain('<span role="columnheader">Plugin</span>');
-    expect(pluginTableHeader).toContain('<span role="columnheader">Source</span>');
-    expect(pluginTableHeader).toContain('<span role="columnheader">Статус</span>');
+    expect(pluginTableHeader).toContain("<span role=\"columnheader\">{t('app.ui.order')}</span>");
+    expect(pluginTableHeader).toContain("<span role=\"columnheader\">{t('app.ui.plugin')}</span>");
+    expect(pluginTableHeader).toContain("<span role=\"columnheader\">{t('app.ui.source')}</span>");
+    expect(pluginTableHeader).toContain("<span role=\"columnheader\">{t('app.ui.status')}</span>");
     expect(pluginTableHeader).not.toContain('<span role="columnheader">Type</span>');
     expect(pluginTableHeader).not.toContain('<span role="columnheader">State</span>');
     expect(pluginTableHeader).not.toContain('<span role="columnheader">Actions</span>');
@@ -174,11 +174,11 @@ describe('right pane redesign', () => {
     expect(app).toContain("import infoCircleIcon from '../../../Icons/info-circle.svg';");
     expect(app).toContain('className="plugins-pane-toolbar"');
     expect(app).toContain('showPluginMissingMastersStatus ? (');
-    expect(app).toContain('aria-label="Skyrim plugin slot information"');
-    expect(app).toContain('Кол-во плагинов (включенных)');
-    expect(app).toContain('Кол-во лёгких плагинов');
+    expect(app).toContain("aria-label={t('app.ui.pluginSlotInfo')}");
+    expect(app).toContain("t('app.ui.enabledPluginCount')");
+    expect(app).toContain("t('app.ui.lightPluginCount')");
     expect(app).toContain('{enabledPluginSlotCounts.light} / 4096');
-    expect(app).toContain('Кол-во тяжёлых плагинов');
+    expect(app).toContain("t('app.ui.fullPluginCount')");
     expect(app).toContain('{enabledPluginSlotCounts.heavy} / 256');
     expect(app).not.toContain('rightPaneTabCount');
     expect(app).not.toContain('return String(pluginCount);');

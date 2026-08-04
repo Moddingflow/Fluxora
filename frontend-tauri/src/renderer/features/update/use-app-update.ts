@@ -22,6 +22,7 @@ export interface UseAppUpdateOptions {
   automaticChecks?: boolean;
   acknowledgeRendererHealth?: boolean;
   releaseSignals?: boolean;
+  language?: string | null;
 }
 
 export interface UseAppUpdateResult {
@@ -43,6 +44,7 @@ export const useAppUpdate = ({
   enabled,
   automaticChecks = true,
   acknowledgeRendererHealth = true,
+  language,
   releaseSignals = true
 }: UseAppUpdateOptions): UseAppUpdateResult => {
   const [rendererState, setRendererState] = useState<AppUpdateRendererState>(initialState);
@@ -60,6 +62,7 @@ export const useAppUpdate = ({
     const coordinator = createAppUpdateCoordinator({
       api,
       createOperationId: createRendererOperationId,
+      language,
       onStatus: (status, userInitiated) => setRendererState({ status, userInitiated })
     });
     coordinatorRef.current = coordinator;
@@ -102,7 +105,7 @@ export const useAppUpdate = ({
         coordinatorRef.current = null;
       }
     };
-  }, [acknowledgeRendererHealth, api, automaticChecks, enabled, releaseSignals]);
+  }, [acknowledgeRendererHealth, api, automaticChecks, enabled, language, releaseSignals]);
 
   const activate = useCallback(
     () => coordinatorRef.current?.activate() ?? Promise.resolve(),
@@ -118,7 +121,8 @@ export const useAppUpdate = ({
       rendererState.status,
       rendererState.userInitiated,
       activate,
-      cancel
+      cancel,
+      language
     )
-  }), [activate, cancel, rendererState]);
+  }), [activate, cancel, language, rendererState]);
 };

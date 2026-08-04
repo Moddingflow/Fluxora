@@ -290,6 +290,7 @@ const sanitizePostInstallUpdateProgress = (
   if (!isRecord(value)) {
     throw nativeFailure('setup.update.invalidProgress', 'setup.update.error.invalidNativeResponse');
   }
+  const errorPhase = 'error' as const;
   const phaseByState = {
     checking: 'checking',
     'up-to-date': 'up-to-date',
@@ -300,7 +301,7 @@ const sanitizePostInstallUpdateProgress = (
     'handoff-committed': 'handoff-committed',
     'launching-bundled': 'launching-bundled',
     cancelled: 'cancelled',
-    error: 'error',
+    error: errorPhase,
     'launch-error': 'launch-error'
   } as const;
   const untrustedState = text(value.state);

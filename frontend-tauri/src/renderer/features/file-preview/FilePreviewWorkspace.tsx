@@ -11,6 +11,7 @@ import type {
   FluxoraNifPreviewAssetHandle,
   FluxoraNifPreviewVariant
 } from '../../../shared/fluxora-api';
+import type { TranslationKey } from '../../../localization';
 import {
   createDecodedDdsPreviewTexture,
   createDdsPreviewTexture,
@@ -32,6 +33,7 @@ import { NifPreviewResourceCache } from './nif-preview-resource-cache';
 import { NifPreviewWorkerClient } from './nif-preview-worker-client';
 import type { WorkerNifModel } from './nif-preview-worker-protocol';
 import { previewKindById } from './preview-kind-registry';
+import { useLocalization } from '../../../localization/react';
 
 interface FilePreviewWorkspaceProps {
   projectDirectory: string;
@@ -41,6 +43,21 @@ interface FilePreviewWorkspaceProps {
   initialProfileName: string;
   initialKind: string;
 }
+
+const nifPreviewWarningKeys = new Set<TranslationKey>([
+  'preview.warning.skinnedStatic',
+  'preview.warning.noSupportedBlocks',
+  'preview.warning.fixtureParseFailed',
+  'preview.warning.noGeometry',
+  'preview.warning.noDiffuseTexture'
+]);
+
+const localizedNifPreviewWarning = (
+  warning: string,
+  t: (key: TranslationKey) => string
+): string => nifPreviewWarningKeys.has(warning as TranslationKey)
+  ? t(warning as TranslationKey)
+  : t('preview.warning.generic');
 
 type PreviewRenderState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -154,7 +171,9 @@ export const FilePreviewWorkspace = ({
   initialProfileName,
   initialKind
 }: FilePreviewWorkspaceProps) => {
+  const { t } = useLocalization();
   const descriptor = previewKindById(initialKind);
+  const previewTitle = t(descriptor.titleKey);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -208,7 +227,7 @@ export const FilePreviewWorkspace = ({
       renderer = new THREE.WebGLRenderer({ antialias: true });
     } catch {
       setRenderState('error');
-      setMessage('WebGL is unavailable for this preview window.');
+      setMessage(t('preview.webglUnavailable'));
       return undefined;
     }
 
@@ -275,7 +294,7 @@ export const FilePreviewWorkspace = ({
       rendererRef.current = null;
       modelGroupRef.current = null;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const worker = new NifPreviewWorkerClient();
@@ -315,7 +334,7 @@ export const FilePreviewWorkspace = ({
     const renderer = rendererRef.current;
     const worker = workerRef.current;
     if (!renderer || !worker) {
-      throw new Error('Preview renderer is unavailable.');
+      throw new Error(t('preview.rendererUnavailable'));
     }
     const support = detectDdsGpuSupport(renderer);
     const anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
@@ -332,7 +351,7 @@ export const FilePreviewWorkspace = ({
       if (canUploadCompressed(header.format, support)) {
         texture = createDdsPreviewTexture(bytes, { gpuSupport: support, anisotropy, srgb });
       } else if (header.format === 'bc7') {
-        throw new Error('BC7 texture skipped because EXT_texture_compression_bptc is unavailable.');
+        throw new Error(t('preview.bc7Unavailable'));
       } else {
         const transferable = cache.takeRaw(handle.contentKey) ?? bytes;
         const decoded = await worker.decodeDds(transferable, generation);
@@ -350,7 +369,7 @@ export const FilePreviewWorkspace = ({
 
     cache.setTexture(handle.contentKey, texture);
     return texture;
-  }, [logPerformance, readAssetBytes]);
+  }, [logPerformance, readAssetBytes, t]);
 
   const prepareTextures = useCallback(async (
     sessionId: string,
@@ -366,7 +385,7 @@ export const FilePreviewWorkspace = ({
     model.meshes.forEach((mesh, index) => {
       const texturePath = selectNifPreviewTexturePath(mesh, model, modelRelativePath);
       if (!texturePath && model.texturePaths.length > 1) {
-        nextWarnings.push(`Texture could not be matched confidently for ${mesh.name}.`);
+        nextWarnings.push(t('preview.textureMatch', { name: mesh.name }));
       }
       if (!texturePath) {
         return;
@@ -389,7 +408,7 @@ export const FilePreviewWorkspace = ({
       return;
     }
     batch.missing.forEach((missing) => {
-      nextWarnings.push(`Texture not found: ${missing}`);
+      nextWarnings.push(t('preview.textureMissing', { path: missing }));
     });
 
     await mapNifPreviewWithConcurrency(batch.assets, 3, async (handle) => {
@@ -404,10 +423,8 @@ export const FilePreviewWorkspace = ({
           material.color.set(0xffffff);
           material.needsUpdate = true;
         });
-      } catch (error) {
-        nextWarnings.push(error instanceof Error
-          ? `${handle.relativePath}: ${error.message}`
-          : `Texture could not be decoded: ${handle.relativePath}`);
+      } catch {
+        nextWarnings.push(t('preview.textureDecode', { path: handle.relativePath }));
       }
     });
 
@@ -417,7 +434,7 @@ export const FilePreviewWorkspace = ({
         `texturesReady requested=${texturePaths.length} loaded=${batch.assets.length} missing=${batch.missing.length} durationMs=${Math.round(performance.now() - startedAt)}`
       );
     }
-  }, [loadTexture, logPerformance]);
+  }, [loadTexture, logPerformance, t]);
 
   const renderPreparedModel = useCallback(async (
     sessionId: string,
@@ -430,7 +447,7 @@ export const FilePreviewWorkspace = ({
     const worker = workerRef.current;
     const cache = cacheRef.current as NifPreviewResourceCache;
     if (!group || !camera || !worker) {
-      throw new Error('Preview renderer is unavailable.');
+      throw new Error(t('preview.rendererUnavailable'));
     }
 
     const modelStartedAt = performance.now();
@@ -475,7 +492,10 @@ export const FilePreviewWorkspace = ({
     clearGroup(group);
     renderedMeshes.forEach((mesh) => group.add(mesh));
     fitCameraToGroup(camera, controlsRef.current, group);
-    setWarnings(unique(parsed.model.warnings));
+    const localizedWarnings = parsed.model.warnings.map((warning) =>
+      localizedNifPreviewWarning(warning, t)
+    );
+    setWarnings(unique(localizedWarnings));
     setRenderState('ready');
     setMessage(null);
     void nextFrame().then(() => {
@@ -492,22 +512,22 @@ export const FilePreviewWorkspace = ({
       modelRelativePath,
       renderedMeshes,
       generation,
-      parsed.model.warnings
-    ).catch((error) => {
+      localizedWarnings
+    ).catch(() => {
       if (generation === generationRef.current) {
         setWarnings((current) => unique([
           ...current,
-          error instanceof Error ? error.message : 'Textures could not be prepared.'
+          t('preview.texturesPrepare')
         ]));
       }
     });
-  }, [logPerformance, prepareTextures, readAssetBytes]);
+  }, [logPerformance, prepareTextures, readAssetBytes, t]);
 
   useEffect(() => {
     if (!projectDirectory || !initialRelativePath || !initialModPath) {
       setVariants([]);
       setRenderState('error');
-      setMessage('Preview source is unavailable.');
+      setMessage(t('preview.sourceUnavailable'));
       return undefined;
     }
 
@@ -542,10 +562,10 @@ export const FilePreviewWorkspace = ({
         result.variants[result.activeIndex]?.relativePath ?? initialRelativePath,
         generation
       );
-    }).catch((error) => {
+    }).catch(() => {
       if (!cancelled && generation === generationRef.current) {
         setRenderState('error');
-        setMessage(error instanceof Error ? error.message : 'Preview could not be started.');
+        setMessage(t('preview.startFailed'));
       }
     });
 
@@ -564,7 +584,8 @@ export const FilePreviewWorkspace = ({
     initialModPath,
     initialRelativePath,
     projectDirectory,
-    renderPreparedModel
+    renderPreparedModel,
+    t
   ]);
 
   const switchVariant = useCallback((nextIndex: number) => {
@@ -585,43 +606,43 @@ export const FilePreviewWorkspace = ({
         variant.relativePath || initialRelativePath,
         generation
       ))
-      .catch((error) => {
+      .catch(() => {
         if (generation === generationRef.current) {
           setRenderState('error');
-          setMessage(error instanceof Error ? error.message : 'Preview variant could not be prepared.');
+          setMessage(t('preview.variantFailed'));
         }
       });
-  }, [activeIndex, initialRelativePath, renderPreparedModel, variants]);
+  }, [activeIndex, initialRelativePath, renderPreparedModel, t, variants]);
 
   return (
-    <section className="file-preview-window" aria-label={descriptor.title}>
+    <section className="file-preview-window" aria-label={previewTitle}>
       <header className="file-preview-header">
         <div className="file-preview-source" data-testid="file-preview-source-mod">
-          <span>Source mod</span>
+          <span>{t('preview.sourceMod')}</span>
           <strong>{sourceLabel}</strong>
         </div>
         <div className="file-preview-title">
           <span className="asset-icon file-preview-kind-icon" aria-hidden="true" style={iconStyle} />
-          <h2>{descriptor.title}</h2>
+          <h2>{previewTitle}</h2>
         </div>
         <div className="file-preview-nav">
           <button
-            aria-label="Previous mod variant"
+            aria-label={t('preview.previousVariant')}
             className="icon-button"
             disabled={!canGoPrevious}
             onClick={() => switchVariant(Math.max(0, activeIndex - 1))}
-            title="Previous mod variant"
+            title={t('preview.previousVariant')}
             type="button"
           >
             <ChevronLeft size={18} aria-hidden="true" />
           </button>
           <span>{variantPosition}</span>
           <button
-            aria-label="Next mod variant"
+            aria-label={t('preview.nextVariant')}
             className="icon-button"
             disabled={!canGoNext}
             onClick={() => switchVariant(Math.min(variants.length - 1, activeIndex + 1))}
-            title="Next mod variant"
+            title={t('preview.nextVariant')}
             type="button"
           >
             <ChevronRight size={18} aria-hidden="true" />
@@ -636,11 +657,11 @@ export const FilePreviewWorkspace = ({
       <footer className="file-preview-footer">
         <span>{visibleFileName}</span>
         <span>{activeVariant?.relativePath || initialRelativePath}</span>
-        <span>{activeVariant?.enabled === false ? 'Disabled mod' : activeProfileName}</span>
+        <span>{activeVariant?.enabled === false ? t('preview.disabledMod') : activeProfileName}</span>
       </footer>
 
       {warnings.length ? (
-        <ul className="file-preview-warnings" aria-label="Preview warnings">
+        <ul className="file-preview-warnings" aria-label={t('preview.warnings')}>
           {warnings.slice(0, 4).map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
       ) : null}

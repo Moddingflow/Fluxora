@@ -7,6 +7,7 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 
 export interface BuildPathDraft extends FluxoraBuildPathSettingsSaveRequest {
   projectDirectory: string;
@@ -74,29 +75,36 @@ export const pathLooksLikeWindowsExecutable = (value: string): boolean =>
 
 export const validateBuildPathDraft = (
   draft: BuildPathDraft,
-  platform: NodeJS.Platform | 'unknown'
+  platform: NodeJS.Platform | 'unknown',
+  language?: string | null
 ): string | null => {
   if (!draft.projectDirectory.trim()) {
-    return 'Project directory is required.';
+    return translateForLanguage(language, 'build.paths.required', {
+      field: translateForLanguage(language, 'build.paths.project')
+    });
   }
 
   if (!draft.gameExecutablePath.trim()) {
-    return 'Game executable is required.';
+    return translateForLanguage(language, 'build.paths.required', {
+      field: translateForLanguage(language, 'build.paths.gameExecutable')
+    });
   }
 
   if (platform === 'win32' && !pathLooksLikeWindowsExecutable(draft.gameExecutablePath)) {
-    return 'Game executable must point to an .exe file on Windows.';
+    return translateForLanguage(language, 'build.paths.windowsExecutable');
   }
 
-  for (const [label, value] of [
-    ['Game directory', draft.gameDirectory],
-    ['Mods directory', draft.modsDirectory],
-    ['Profiles directory', draft.profilesDirectory],
-    ['Downloads directory', draft.downloadsDirectory],
-    ['Overwrite directory', draft.overwriteDirectory]
+  for (const [key, value] of [
+    ['build.paths.gameDirectory', draft.gameDirectory],
+    ['build.paths.mods', draft.modsDirectory],
+    ['build.paths.profiles', draft.profilesDirectory],
+    ['build.paths.downloads', draft.downloadsDirectory],
+    ['build.paths.overwrite', draft.overwriteDirectory]
   ] as const) {
     if (!value.trim()) {
-      return `${label} is required.`;
+      return translateForLanguage(language, 'build.paths.required', {
+        field: translateForLanguage(language, key)
+      });
     }
   }
 
@@ -117,12 +125,13 @@ const enabledFeatureStates = new Set(['available', 'limited', 'runtime-shell']);
 export const buildActionAvailability = (
   bridgeStatus: NativeBridgeStatus | null,
   featureIds: string[],
-  label: string
+  label: string,
+  language?: string | null
 ): BuildActionAvailability => {
   if (!bridgeStatus?.ready) {
     return {
       available: false,
-      reason: 'Native bridge is not ready.'
+      reason: translateForLanguage(language, 'capability.bridgeNotReady')
     };
   }
 
@@ -146,27 +155,33 @@ export const buildActionAvailability = (
 
   return {
     available: false,
-    reason: feature.reason || `${label} is not available in this bridge build.`
+    reason: feature.reason || translateForLanguage(language, 'capability.unavailableInBridge', {
+      feature: label
+    })
   };
 };
 
 export const buildHeaderCapabilityView = (
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): BuildHeaderCapabilityView => {
   const packageAction = buildActionAvailability(
     bridgeStatus,
     ['fluxPackExport', 'fluxPack'],
-    'FluxPack export'
+    translateForLanguage(language, 'capability.fluxPackExport'),
+    language
   );
   const refreshAction = buildActionAvailability(
     bridgeStatus,
     ['modsCheckUpdates', 'mods'],
-    'Mod update checks'
+    translateForLanguage(language, 'capability.modUpdateChecks'),
+    language
   );
   const settingsAction = buildActionAvailability(
     bridgeStatus,
     ['buildPathsSave', 'buildPaths'],
-    'Build settings'
+    translateForLanguage(language, 'build.settings'),
+    language
   );
 
   return {
@@ -206,7 +221,8 @@ const modLooksLikeNgio = (mod: Pick<FluxoraInstalledMod, 'id' | 'name'>): boolea
 export const ngioGrassCacheActionView = (
   project: FluxoraProject | null,
   installedMods: ReadonlyArray<Pick<FluxoraInstalledMod, 'id' | 'name' | 'isEnabled'>>,
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): NgioGrassCacheActionView => {
   if (!isSkyrimProject(project)) {
     return {
@@ -228,7 +244,8 @@ export const ngioGrassCacheActionView = (
   const availability = buildActionAvailability(
     bridgeStatus,
     ['grassCacheGeneration', 'grassCache'],
-    'NGIO grass cache generation'
+    translateForLanguage(language, 'capability.ngioGrassCache'),
+    language
   );
   return {
     visible: true,
@@ -364,24 +381,32 @@ const formatFluxPackBytes = (bytes: number | undefined): string => {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
 
-const fluxPackCompressionLabel = (mode: FluxoraFluxPackSummary['compressionMode']): string => {
-  if (mode === 'fast') return 'Быстро';
-  if (mode === 'smallest') return 'Минимальный размер';
-  if (mode === 'optimal') return 'Оптимально';
-  return 'Без сжатия';
+const fluxPackCompressionLabel = (
+  mode: FluxoraFluxPackSummary['compressionMode'],
+  language: string
+): string => {
+  if (mode === 'fast') return translateForLanguage(language, 'fluxpack.summary.compression.fast');
+  if (mode === 'smallest') return translateForLanguage(language, 'fluxpack.summary.compression.smallest');
+  if (mode === 'optimal') return translateForLanguage(language, 'fluxpack.summary.compression.optimal');
+  return translateForLanguage(language, 'fluxpack.summary.compression.none');
 };
 
-export const fluxPackSummaryFacts = (summary: FluxoraFluxPackSummary): Array<[string, string]> => [
-  ['Build', summary.buildName || '-'],
-  ['Format', String(summary.formatVersion)],
-  ['Package type', summary.packageType === 'full' ? 'Полная' : 'Рецепт'],
-  ['Compression', fluxPackCompressionLabel(summary.compressionMode)],
-  ['Stored', formatFluxPackBytes(summary.storedPayloadBytes)],
-  ['Deduplicated', formatFluxPackBytes(summary.deduplicatedPayloadBytes)],
-  ['Chunks', String(summary.uniqueChunkCount ?? 0)],
-  ['Sources', String(summary.sourceArchiveCount)],
-  ['Bundled mods', String(summary.bundledModCount ?? 0)],
-  ['Generated assets', String(summary.generatedAssetCount)],
-  ['Configs', String(summary.customConfigCount)],
-  ['Install steps', String(summary.installStepCount)]
+export const fluxPackSummaryFacts = (
+  summary: FluxoraFluxPackSummary,
+  language = 'en-US'
+): Array<[string, string]> => [
+  [translateForLanguage(language, 'fluxpack.summary.build'), summary.buildName || '-'],
+  [translateForLanguage(language, 'fluxpack.summary.format'), String(summary.formatVersion)],
+  [translateForLanguage(language, 'fluxpack.summary.packageType'), summary.packageType === 'full'
+    ? translateForLanguage(language, 'fluxpack.summary.package.full')
+    : translateForLanguage(language, 'fluxpack.summary.package.recipe')],
+  [translateForLanguage(language, 'fluxpack.summary.compression'), fluxPackCompressionLabel(summary.compressionMode, language)],
+  [translateForLanguage(language, 'fluxpack.summary.stored'), formatFluxPackBytes(summary.storedPayloadBytes)],
+  [translateForLanguage(language, 'fluxpack.summary.deduplicated'), formatFluxPackBytes(summary.deduplicatedPayloadBytes)],
+  [translateForLanguage(language, 'fluxpack.summary.chunks'), String(summary.uniqueChunkCount ?? 0)],
+  [translateForLanguage(language, 'fluxpack.summary.sources'), String(summary.sourceArchiveCount)],
+  [translateForLanguage(language, 'fluxpack.summary.bundledMods'), String(summary.bundledModCount ?? 0)],
+  [translateForLanguage(language, 'fluxpack.summary.generatedAssets'), String(summary.generatedAssetCount)],
+  [translateForLanguage(language, 'fluxpack.summary.configs'), String(summary.customConfigCount)],
+  [translateForLanguage(language, 'fluxpack.summary.installSteps'), String(summary.installStepCount)]
 ];

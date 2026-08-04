@@ -1,4 +1,5 @@
 import type { FluxoraAiHostStatus } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 
 export const FLUXORA_AI_PROVIDER_ID = 'gemini' as const;
 export const FLUXORA_AI_MODEL_ID = 'gemini-3.1-flash-lite' as const;
@@ -36,13 +37,16 @@ const hostStatusErrorDetail = (status: FluxoraAiHostStatus): string | undefined 
 };
 
 export const aiProviderDiagnostic = (
-  status: FluxoraAiHostStatus | null
+  status: FluxoraAiHostStatus | null,
+  language = 'en-US'
 ): AiProviderDiagnostic | null => {
+  const t = (key: Parameters<typeof translateForLanguage>[1]) =>
+    translateForLanguage(language, key);
   if (!status) {
     return {
       level: 'warning',
-      title: 'AI status is loading',
-      message: 'Fluxora is checking Gemini availability.'
+      title: t('ai.diagnostic.loading.title'),
+      message: t('ai.diagnostic.loading.message')
     };
   }
 
@@ -50,12 +54,8 @@ export const aiProviderDiagnostic = (
     return {
       detail: hostStatusErrorDetail(status),
       level: 'error',
-      title: 'Managed AI unavailable',
-      message: status.error && 'userMessage' in status.error && status.error.userMessage
-        ? status.error.userMessage
-        : status.error && 'message' in status.error
-          ? status.error.message
-          : 'Gemini is unavailable.'
+      title: t('ai.diagnostic.unavailable.title'),
+      message: t('ai.diagnostic.unavailable.message')
     };
   }
 
@@ -63,44 +63,44 @@ export const aiProviderDiagnostic = (
     case 'connectionRequired':
       return {
         level: 'error',
-        title: 'Reconnect ModdingFlow',
-        message: 'Reconnect once to grant the new agent:run permission for managed Fluxora AI.'
+        title: t('ai.diagnostic.reconnect.title'),
+        message: t('ai.diagnostic.reconnect.message')
       };
     case 'premiumRequired':
       return {
         level: 'error',
-        title: 'Premium required',
-        message: 'Managed Fluxora AI is available only with an active Premium subscription.'
+        title: t('ai.diagnostic.premium.title'),
+        message: t('ai.diagnostic.premium.message')
       };
     case 'quotaExhausted':
       return {
         level: 'error',
-        title: 'Managed AI quota exhausted',
-        message: 'The managed-cost allowance is exhausted until the displayed reset date.'
+        title: t('ai.diagnostic.quota.title'),
+        message: t('ai.diagnostic.quota.message')
       };
     case 'searchQuotaExhausted':
       return {
         level: 'error',
-        title: 'Search quota exhausted',
-        message: 'The managed Google Search allowance is exhausted until the displayed reset date.'
+        title: t('ai.diagnostic.searchQuota.title'),
+        message: t('ai.diagnostic.searchQuota.message')
       };
     case 'rateLimited':
       return {
         level: 'error',
-        title: 'Managed AI rate limited',
-        message: 'Wait briefly before starting another managed request.'
+        title: t('ai.diagnostic.rate.title'),
+        message: t('ai.diagnostic.rate.message')
       };
     case 'temporaryServerError':
       return {
         level: 'error',
-        title: 'Managed AI temporarily unavailable',
-        message: 'The Website gateway or accounting service is temporarily unavailable.'
+        title: t('ai.diagnostic.temporary.title'),
+        message: t('ai.diagnostic.temporary.message')
       };
     case 'disabled':
       return {
         level: 'error',
-        title: 'Managed AI is not enabled',
-        message: 'Managed Fluxora AI is not enabled for this account or rollout stage.'
+        title: t('ai.diagnostic.disabled.title'),
+        message: t('ai.diagnostic.disabled.message')
       };
     case 'available':
     case 'byok':
@@ -112,16 +112,16 @@ export const aiProviderDiagnostic = (
   if (!provider || !model) {
     return {
       level: 'error',
-      title: 'AI contract mismatch',
-      message: 'The AI host did not expose the required Gemini 3.1 Flash-Lite model.'
+      title: t('ai.diagnostic.contract.title'),
+      message: t('ai.diagnostic.contract.message')
     };
   }
 
   if (!provider.connected) {
     return {
       level: 'error',
-      title: 'Managed AI unavailable',
-      message: 'The managed Gemini status check failed. Try again in a moment.'
+      title: t('ai.diagnostic.unavailable.title'),
+      message: t('ai.diagnostic.unavailable.message')
     };
   }
 

@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 
 import type { InstallerLanguage } from '../../../installer/contracts';
+import { translateForLanguage } from '../../../localization';
 import type { LegalDocumentKind } from '../../../installer/setup/setup-flow';
 import {
   legalDocumentKinds,
@@ -68,19 +69,9 @@ export function LegalDocumentsPanel({
 }: LegalDocumentsPanelProps) {
   const legalDocument = offlineLegalDocument(language, selected);
   const accessibilityLabels = {
-    en: {
-      panel: 'Legal documents',
-      tabs: 'Legal document tabs'
-    },
-    de: {
-      panel: 'Rechtliche Dokumente',
-      tabs: 'Registerkarten für rechtliche Dokumente'
-    },
-    ru: {
-      panel: 'Юридические документы',
-      tabs: 'Вкладки юридических документов'
-    }
-  }[language];
+    panel: translateForLanguage(language, 'legal.documents.panel'),
+    tabs: translateForLanguage(language, 'legal.documents.tabs')
+  };
 
   return (
     <section

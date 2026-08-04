@@ -8,6 +8,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent
@@ -21,6 +22,7 @@ import {
   languageOptions,
   type LanguageOption
 } from '../../settings-workspace-state';
+import { useLocalization } from '../../../localization/react';
 
 const languageFlagAssets: Record<string, string> = {
   de: flagGermany,
@@ -47,29 +49,30 @@ const languageMenuBorderHeight = 2;
 const languageMenuVerticalPadding = 12;
 const languageMenuOptionHeight = 42;
 const languageMenuOptionGap = 4;
-const languageMenuContentHeight =
-  languageMenuBorderHeight +
-  languageMenuVerticalPadding +
-  languageOptions.length * languageMenuOptionHeight +
-  Math.max(0, languageOptions.length - 1) * languageMenuOptionGap;
-
 const optionText = (language: LanguageOption) =>
   `${language.nativeLabel} - ${language.label}`;
 
 export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProps) {
+  const { locale, t } = useLocalization();
+  const options = useMemo(() => languageOptions(locale), [locale]);
+  const languageMenuContentHeight =
+    languageMenuBorderHeight +
+    languageMenuVerticalPadding +
+    options.length * languageMenuOptionHeight +
+    Math.max(0, options.length - 1) * languageMenuOptionGap;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const selectedLanguage =
-    languageOptions.find((language) => language.code === value) ?? languageOptions[0];
+    options.find((language) => language.code === value) ?? options[0];
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedCode, setHighlightedCode] = useState(selectedLanguage.code);
   const highlightedLanguage =
-    languageOptions.find((language) => language.code === highlightedCode) ?? selectedLanguage;
+    options.find((language) => language.code === highlightedCode) ?? selectedLanguage;
   const selectedIndex = Math.max(
     0,
-    languageOptions.findIndex((language) => language.code === selectedLanguage.code)
+    options.findIndex((language) => language.code === selectedLanguage.code)
   );
   const highlightedOptionId = `${listboxId}-${highlightedLanguage.code}`;
   const [menuPosition, setMenuPosition] = useState<LanguageMenuPosition | null>(null);
@@ -111,7 +114,7 @@ export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProp
     );
 
     setMenuPosition({ height, left, top, width });
-  }, []);
+  }, [languageMenuContentHeight]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -183,14 +186,14 @@ export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProp
   };
 
   const moveHighlight = (offset: number) => {
-    const currentIndex = languageOptions.findIndex(
+    const currentIndex = options.findIndex(
       (language) => language.code === highlightedCode
     );
     const startIndex = currentIndex >= 0 && isOpen ? currentIndex : selectedIndex;
     const nextIndex =
-      (startIndex + offset + languageOptions.length) % languageOptions.length;
+      (startIndex + offset + options.length) % options.length;
 
-    setHighlightedCode(languageOptions[nextIndex].code);
+    setHighlightedCode(options[nextIndex].code);
     updateMenuPosition();
     window.requestAnimationFrame(() => setIsOpen(true));
   };
@@ -211,13 +214,13 @@ export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProp
         break;
       case 'Home':
         event.preventDefault();
-        setHighlightedCode(languageOptions[0].code);
+        setHighlightedCode(options[0].code);
         updateMenuPosition();
         window.requestAnimationFrame(() => setIsOpen(true));
         break;
       case 'End':
         event.preventDefault();
-        setHighlightedCode(languageOptions[languageOptions.length - 1].code);
+        setHighlightedCode(options[options.length - 1].code);
         updateMenuPosition();
         window.requestAnimationFrame(() => setIsOpen(true));
         break;
@@ -259,7 +262,7 @@ export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProp
           aria-controls={listboxId}
           aria-expanded={isOpen}
           aria-haspopup="listbox"
-          aria-label="Language"
+          aria-label={t('settings.language.control')}
           className="language-select__button"
           data-open={isOpen ? 'true' : 'false'}
           disabled={disabled}
@@ -297,7 +300,7 @@ export function LanguageSelect({ disabled, onChange, value }: LanguageSelectProp
                   width: menuPosition.width
                 }}
               >
-                {languageOptions.map((language) => {
+                {options.map((language) => {
                   const isSelected = language.code === selectedLanguage.code;
                   const isHighlighted = language.code === highlightedCode;
 

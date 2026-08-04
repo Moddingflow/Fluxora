@@ -3,6 +3,7 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 
 export type ProfilesWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 export type ExecutablesWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -109,12 +110,15 @@ export const filterProfileNames = (items: string[], searchText: string): string[
   });
 };
 
-export const executableTitle = (entry: FluxoraExecutable | null): string => {
+export const executableTitle = (
+  entry: FluxoraExecutable | null,
+  language = 'en-US'
+): string => {
   if (!entry) {
-    return 'No executable selected';
+    return translateForLanguage(language, 'executable.noneSelected');
   }
 
-  return entry.displayName || entry.id || entry.executablePath || 'Executable';
+  return entry.displayName || entry.id || entry.executablePath || translateForLanguage(language, 'executable.fallback');
 };
 
 export const selectedExecutable = (
@@ -154,7 +158,8 @@ export const filterExecutables = (
 
 export const profilesCapabilityView = (
   project: FluxoraProject | null,
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): ProfilesCapabilityView => {
   const featureState = bridgeStatus?.capabilities?.features.profiles?.state;
   const bridgeAvailable =
@@ -163,21 +168,21 @@ export const profilesCapabilityView = (
   if (!project) {
     return {
       bridgeAvailable,
-      reason: 'Open a build before using profiles.'
+      reason: translateForLanguage(language, 'capability.openBuildProfiles')
     };
   }
 
   if (!bridgeStatus?.ready) {
     return {
       bridgeAvailable: false,
-      reason: 'Native bridge is not ready.'
+      reason: translateForLanguage(language, 'capability.bridgeNotReady')
     };
   }
 
   if (!bridgeAvailable) {
     return {
       bridgeAvailable: false,
-      reason: 'This Fluxora bridge build does not expose profile methods.'
+      reason: translateForLanguage(language, 'capability.profileMethodsUnavailable')
     };
   }
 
@@ -189,7 +194,8 @@ export const profilesCapabilityView = (
 
 export const executablesCapabilityView = (
   project: FluxoraProject | null,
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): ExecutablesCapabilityView => {
   const managementState = bridgeStatus?.capabilities?.features.executables?.state;
   const launchState = bridgeStatus?.capabilities?.features.executableLaunch?.state;
@@ -202,8 +208,8 @@ export const executablesCapabilityView = (
     return {
       bridgeAvailable,
       launchAvailable: false,
-      launchReason: 'Open a build before launching.',
-      reason: 'Open a build before using executables.'
+      launchReason: translateForLanguage(language, 'capability.openBuildLaunch'),
+      reason: translateForLanguage(language, 'capability.openBuildExecutables')
     };
   }
 
@@ -211,8 +217,8 @@ export const executablesCapabilityView = (
     return {
       bridgeAvailable: false,
       launchAvailable: false,
-      launchReason: 'Native bridge is not ready.',
-      reason: 'Native bridge is not ready.'
+      launchReason: translateForLanguage(language, 'capability.bridgeNotReady'),
+      reason: translateForLanguage(language, 'capability.bridgeNotReady')
     };
   }
 
@@ -220,8 +226,8 @@ export const executablesCapabilityView = (
     return {
       bridgeAvailable: false,
       launchAvailable: false,
-      launchReason: 'Executable launch is unavailable.',
-      reason: 'This Fluxora bridge build does not expose executable methods.'
+      launchReason: translateForLanguage(language, 'capability.launchUnavailable'),
+      reason: translateForLanguage(language, 'capability.executableMethodsUnavailable')
     };
   }
 
@@ -230,7 +236,7 @@ export const executablesCapabilityView = (
     launchAvailable,
     launchReason: launchAvailable
       ? ''
-      : 'Launching is currently implemented by the native core only on Windows.',
+      : translateForLanguage(language, 'capability.launchWindowsOnly'),
     reason: ''
   };
 };

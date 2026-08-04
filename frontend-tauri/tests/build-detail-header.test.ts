@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { BuildDetailHeader } from '../src/renderer/features/build/BuildDetailHeader';
+import { renderLocalized } from './localization-test-utils';
 import type { FluxoraExecutable, FluxoraProject } from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,7 +72,10 @@ const defaultProps = {
 
 const renderHeader = (
   overrides: Partial<React.ComponentProps<typeof BuildDetailHeader>> = {}
-) => renderToStaticMarkup(React.createElement(BuildDetailHeader, { ...defaultProps, ...overrides }));
+) => {
+  const props = { ...defaultProps, ...overrides };
+  return renderLocalized(React.createElement(BuildDetailHeader, props), props.language);
+};
 
 describe('build detail header redesign', () => {
   it('renders the UI-kit build shell controls on real project data', () => {
@@ -154,12 +157,12 @@ describe('build detail header redesign', () => {
       grassCacheVisible: true,
       language: 'ru'
     });
-    expect(markup).toContain('aria-label="No Grass In Objects Grass Cache Generation"');
+    expect(markup).toContain('aria-label="No Grass In Objects grass cache generation"');
     expect(markup).toContain('class="build-header__grass-trigger"');
     expect(markup).toContain('build-header__grass-icon');
     expect(markup).toContain('data-icon="sprout"');
     expect(markup).toContain('data:image/svg+xml');
-    expect(markup).not.toContain('title="No Grass In Objects Grass Cache Generation"');
+    expect(markup).not.toContain('title="No Grass In Objects grass cache generation"');
     expect(ruMarkup).toContain('aria-label="Генерация кэша травы No Grass In Objects"');
     expect(ruMarkup).not.toContain('title="Генерация кэша травы No Grass In Objects"');
   });
@@ -171,7 +174,7 @@ describe('build detail header redesign', () => {
 
     expect(app).toContain('renderGrassCacheConfirmation()');
     expect(app).toContain('window.fluxora.grassCache.generate');
-    expect(app).toContain('Сейчас начнётся генерация кэша травы');
+    expect(app).toContain("t('app.dialog.grassDescription')");
     expect(app).not.toContain('window.confirm(`Generate grass cache');
     expect(header).toContain('window.innerHeight');
     expect(header).toContain('data-placement={grassTooltipPosition.placement}');

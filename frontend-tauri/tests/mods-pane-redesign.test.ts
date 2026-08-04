@@ -23,10 +23,10 @@ describe('mods pane redesign', () => {
     );
 
     expect(app).toContain('className="mod-list mod-list--table"');
-    expect(app).toContain('role="table" aria-label="Mod order"');
+    expect(app).toContain("role=\"table\" aria-label={t('app.ui.modOrder')}");
     expect(app).toContain('items={displayedModItems}');
     expect(app).toContain('<StatusDot');
-    expect(app).toContain('modTableStatusView(item)');
+    expect(app).toContain('modTableStatusView(item, appLocale)');
     expect(app).toContain("const visibleConflictHighlight =");
     expect(app).toContain("rowView?.visibleConflictHighlight ?? 'none'");
     expect(app).toContain('data-conflict-highlight={visibleConflictHighlight}');
@@ -75,16 +75,15 @@ describe('mods pane redesign', () => {
   it('exposes selected and bulk enable actions from plugin context menus', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
-    expect(app).toContain('Включить все моды');
-    expect(app).toContain('Выключить все моды');
+    expect(app).toContain("t('app.ui.enableAllMods')");
+    expect(app).toContain("t('app.ui.disableAllMods')");
     expect(app).toContain('void setAllModsEnabled(true)');
     expect(app).toContain('void setAllModsEnabled(false)');
-    expect(app).toContain('Включить все плагины');
-    expect(app).toContain('Выключить все плагины');
+    expect(app).toContain("t('app.ui.enableAllPlugins')");
+    expect(app).toContain("t('app.ui.disableAllPlugins')");
     expect(app).toContain('void setAllPluginsEnabled(true)');
     expect(app).toContain('void setAllPluginsEnabled(false)');
-    expect(app).toContain('Включить выбранный плагин');
-    expect(app).toContain('Включить выбранные плагины');
+    expect(app).toContain("t('app.ui.enableSelectedPlugin', { count: selectedPluginItems.length })");
     expect(app).toContain('void setSelectedPluginsEnabled(true)');
     expect(app).toContain("createRendererOperationId('plugins_set_selected_enabled')");
     expect(app).toContain('window.fluxora.plugins.setAllEnabled');
@@ -113,9 +112,9 @@ describe('mods pane redesign', () => {
     expect(app).toMatch(
       /className="pane-menu-trigger"[\s\S]*?rowContextMenuPositionFromAnchor\(\s*event\.currentTarget\.getBoundingClientRect\(\)\s*\)/
     );
-    expect(app).toContain('aria-label="Действия со сборкой"');
-    expect(app).toContain('<span>Создать разделитель</span>');
-    expect(app).toContain('<span>Создать пустой мод</span>');
+    expect(app).toContain("aria-label={t('app.ui.buildActions')}");
+    expect(app).toContain("<span>{t('app.ui.createSeparator')}</span>");
+    expect(app).toContain("<span>{t('app.ui.createEmptyMod')}</span>");
     expect(app).toContain("openModCreationDialog('separator')");
     expect(app).toContain("openModCreationDialog('empty-mod')");
     expect(app).toContain('createModSeparatorAtEnd({');
@@ -123,8 +122,8 @@ describe('mods pane redesign', () => {
     expect(app).not.toContain("runModMutation('Creating separator'");
     expect(app).toContain('<ModCreationDialog');
     expect(app).not.toContain("window.prompt('New mod name')");
-    expect(app).toContain('<span>Упаковать</span>');
-    expect(app).toContain('<span>Установить</span>');
+    expect(app).toContain("<span>{t('app.ui.package')}</span>");
+    expect(app).toContain("<span>{t('app.ui.install')}</span>");
     expect(app).toMatch(/const packageBuildDisabled =\s*\n\s*!selectedProject \|\|\s*\n\s*!buildHeaderCapabilities\.packageAvailable \|\|\s*\n\s*Boolean\(operationOverlay\?\.isRunning\)/);
     expect(app).toMatch(/renderModsToolbarMenu[\s\S]*?void packageFluxPack\(\);[\s\S]*?void installFluxPack\(\);/);
     expect(app).toContain("import menuHardDriveDownloadIcon from '../../../Icons/hard-drive-download.svg';");
@@ -144,12 +143,11 @@ describe('mods pane redesign', () => {
     expect(modCreateDialogStyles).not.toContain('box-shadow');
     expect(styles).toMatch(/\.mod-create-dialog \.flx-input:focus-within \{\s*box-shadow: none;\s*\}/);
 
-    expect(dialog).toContain("title: 'Создать разделитель'");
-    expect(dialog).toContain("title: 'Создать пустой мод'");
+    expect(dialog).toContain("t(`modCreation.${state.kind}.${field}` as TranslationKey)");
     expect(dialog).toContain('MOD_CREATION_NAME_MAX_LENGTH = 255');
     expect(dialog).toContain('maxLength={MOD_CREATION_NAME_MAX_LENGTH}');
     expect(dialog).toContain('<Button disabled={!state.name.trim()} size="sm" type="submit">');
-    expect(dialog).toContain('OK');
+    expect(dialog).toContain("{t('common.ok')}");
   });
 
   it('keeps the table surface visually aligned with the build-page UI-kit', () => {

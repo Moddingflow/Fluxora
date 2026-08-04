@@ -2,6 +2,10 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraTextFileDocument
 } from '../../../shared/fluxora-api';
+import {
+  translateForLanguage,
+  type TranslationKey
+} from '../../../localization';
 
 const textEditorExtensions = new Set([
   '.txt', '.json', '.jsonc', '.json5', '.ini', '.xml', '.yaml', '.yml', '.toml',
@@ -19,77 +23,82 @@ const textEditorFileNames = new Set([
   '.stylelintrc', '.yarnrc', 'changelog', 'license', 'readme'
 ]);
 
-const languageByExtension: Record<string, TextEditorLanguage> = {
-  '.bat': { id: 'bat', label: 'Batch' },
-  '.bash': { id: 'shell', label: 'Shell Script' },
-  '.c': { id: 'cpp', label: 'C' },
-  '.cc': { id: 'cpp', label: 'C++' },
-  '.cjs': { id: 'javascript', label: 'JavaScript' },
-  '.cmd': { id: 'bat', label: 'Batch' },
-  '.conf': { id: 'ini', label: 'Configuration' },
-  '.config': { id: 'xml', label: 'XML' },
-  '.cpp': { id: 'cpp', label: 'C++' },
-  '.cs': { id: 'csharp', label: 'C#' },
-  '.css': { id: 'css', label: 'CSS' },
-  '.csv': { id: 'plaintext', label: 'CSV' },
-  '.cfg': { id: 'ini', label: 'Configuration' },
-  '.env': { id: 'ini', label: 'Environment' },
-  '.gitignore': { id: 'plaintext', label: 'Ignore' },
-  '.gql': { id: 'graphql', label: 'GraphQL' },
-  '.go': { id: 'go', label: 'Go' },
-  '.graphql': { id: 'graphql', label: 'GraphQL' },
-  '.h': { id: 'cpp', label: 'C/C++ Header' },
-  '.hpp': { id: 'cpp', label: 'C++ Header' },
-  '.htm': { id: 'html', label: 'HTML' },
-  '.html': { id: 'html', label: 'HTML' },
-  '.ini': { id: 'ini', label: 'INI' },
-  '.java': { id: 'java', label: 'Java' },
-  '.js': { id: 'javascript', label: 'JavaScript' },
-  '.json': { id: 'json', label: 'JSON' },
-  '.json5': { id: 'json', label: 'JSON5' },
-  '.jsonc': { id: 'json', label: 'JSON with Comments' },
-  '.jsx': { id: 'javascript', label: 'JavaScript React' },
-  '.kt': { id: 'kotlin', label: 'Kotlin' },
-  '.kts': { id: 'kotlin', label: 'Kotlin Script' },
-  '.less': { id: 'less', label: 'Less' },
-  '.lock': { id: 'plaintext', label: 'Lock File' },
-  '.log': { id: 'plaintext', label: 'Log' },
-  '.lua': { id: 'lua', label: 'Lua' },
-  '.markdown': { id: 'markdown', label: 'Markdown' },
-  '.md': { id: 'markdown', label: 'Markdown' },
-  '.meta': { id: 'plaintext', label: 'Metadata' },
-  '.mjs': { id: 'javascript', label: 'JavaScript' },
-  '.php': { id: 'php', label: 'PHP' },
-  '.po': { id: 'plaintext', label: 'Gettext' },
-  '.pot': { id: 'plaintext', label: 'Gettext Template' },
-  '.properties': { id: 'ini', label: 'Properties' },
-  '.ps1': { id: 'powershell', label: 'PowerShell' },
-  '.psc': { id: 'papyrus', label: 'Papyrus' },
-  '.py': { id: 'python', label: 'Python' },
-  '.rb': { id: 'ruby', label: 'Ruby' },
-  '.rs': { id: 'rust', label: 'Rust' },
-  '.sass': { id: 'scss', label: 'Sass' },
-  '.scss': { id: 'scss', label: 'SCSS' },
-  '.sh': { id: 'shell', label: 'Shell Script' },
-  '.sql': { id: 'sql', label: 'SQL' },
-  '.strings': { id: 'plaintext', label: 'Strings' },
-  '.svelte': { id: 'html', label: 'Svelte' },
-  '.swift': { id: 'swift', label: 'Swift' },
-  '.toml': { id: 'ini', label: 'TOML' },
-  '.ts': { id: 'typescript', label: 'TypeScript' },
-  '.tsx': { id: 'typescript', label: 'TypeScript React' },
-  '.txt': { id: 'plaintext', label: 'Plain Text' },
-  '.vue': { id: 'html', label: 'Vue' },
-  '.xml': { id: 'xml', label: 'XML' },
-  '.yaml': { id: 'yaml', label: 'YAML' },
-  '.yml': { id: 'yaml', label: 'YAML' },
-  '.zsh': { id: 'shell', label: 'Shell Script' }
+interface TextEditorLanguageDescriptor {
+  id: string;
+  labelKey: TranslationKey;
+}
+
+const languageByExtension: Record<string, TextEditorLanguageDescriptor> = {
+  '.bat': { id: 'bat', labelKey: 'editor.language.batch' },
+  '.bash': { id: 'shell', labelKey: 'editor.language.shell' },
+  '.c': { id: 'cpp', labelKey: 'editor.language.c' },
+  '.cc': { id: 'cpp', labelKey: 'editor.language.cpp' },
+  '.cjs': { id: 'javascript', labelKey: 'editor.language.javascript' },
+  '.cmd': { id: 'bat', labelKey: 'editor.language.batch' },
+  '.conf': { id: 'ini', labelKey: 'editor.language.configuration' },
+  '.config': { id: 'xml', labelKey: 'editor.language.xml' },
+  '.cpp': { id: 'cpp', labelKey: 'editor.language.cpp' },
+  '.cs': { id: 'csharp', labelKey: 'editor.language.csharp' },
+  '.css': { id: 'css', labelKey: 'editor.language.css' },
+  '.csv': { id: 'plaintext', labelKey: 'editor.language.csv' },
+  '.cfg': { id: 'ini', labelKey: 'editor.language.configuration' },
+  '.env': { id: 'ini', labelKey: 'editor.language.environment' },
+  '.gitignore': { id: 'plaintext', labelKey: 'editor.language.ignore' },
+  '.gql': { id: 'graphql', labelKey: 'editor.language.graphql' },
+  '.go': { id: 'go', labelKey: 'editor.language.go' },
+  '.graphql': { id: 'graphql', labelKey: 'editor.language.graphql' },
+  '.h': { id: 'cpp', labelKey: 'editor.language.headerC' },
+  '.hpp': { id: 'cpp', labelKey: 'editor.language.headerCpp' },
+  '.htm': { id: 'html', labelKey: 'editor.language.html' },
+  '.html': { id: 'html', labelKey: 'editor.language.html' },
+  '.ini': { id: 'ini', labelKey: 'editor.language.ini' },
+  '.java': { id: 'java', labelKey: 'editor.language.java' },
+  '.js': { id: 'javascript', labelKey: 'editor.language.javascript' },
+  '.json': { id: 'json', labelKey: 'editor.language.json' },
+  '.json5': { id: 'json', labelKey: 'editor.language.json5' },
+  '.jsonc': { id: 'json', labelKey: 'editor.language.jsonComments' },
+  '.jsx': { id: 'javascript', labelKey: 'editor.language.javascriptReact' },
+  '.kt': { id: 'kotlin', labelKey: 'editor.language.kotlin' },
+  '.kts': { id: 'kotlin', labelKey: 'editor.language.kotlinScript' },
+  '.less': { id: 'less', labelKey: 'editor.language.less' },
+  '.lock': { id: 'plaintext', labelKey: 'editor.language.lockFile' },
+  '.log': { id: 'plaintext', labelKey: 'editor.language.log' },
+  '.lua': { id: 'lua', labelKey: 'editor.language.lua' },
+  '.markdown': { id: 'markdown', labelKey: 'editor.language.markdown' },
+  '.md': { id: 'markdown', labelKey: 'editor.language.markdown' },
+  '.meta': { id: 'plaintext', labelKey: 'editor.language.metadata' },
+  '.mjs': { id: 'javascript', labelKey: 'editor.language.javascript' },
+  '.php': { id: 'php', labelKey: 'editor.language.php' },
+  '.po': { id: 'plaintext', labelKey: 'editor.language.gettext' },
+  '.pot': { id: 'plaintext', labelKey: 'editor.language.gettextTemplate' },
+  '.properties': { id: 'ini', labelKey: 'editor.language.properties' },
+  '.ps1': { id: 'powershell', labelKey: 'editor.language.powershell' },
+  '.psc': { id: 'papyrus', labelKey: 'editor.language.papyrus' },
+  '.py': { id: 'python', labelKey: 'editor.language.python' },
+  '.rb': { id: 'ruby', labelKey: 'editor.language.ruby' },
+  '.rs': { id: 'rust', labelKey: 'editor.language.rust' },
+  '.sass': { id: 'scss', labelKey: 'editor.language.sass' },
+  '.scss': { id: 'scss', labelKey: 'editor.language.scss' },
+  '.sh': { id: 'shell', labelKey: 'editor.language.shell' },
+  '.sql': { id: 'sql', labelKey: 'editor.language.sql' },
+  '.strings': { id: 'plaintext', labelKey: 'editor.language.strings' },
+  '.svelte': { id: 'html', labelKey: 'editor.language.svelte' },
+  '.swift': { id: 'swift', labelKey: 'editor.language.swift' },
+  '.toml': { id: 'ini', labelKey: 'editor.language.toml' },
+  '.ts': { id: 'typescript', labelKey: 'editor.language.typescript' },
+  '.tsx': { id: 'typescript', labelKey: 'editor.language.typescriptReact' },
+  '.txt': { id: 'plaintext', labelKey: 'editor.language.plainText' },
+  '.vue': { id: 'html', labelKey: 'editor.language.vue' },
+  '.xml': { id: 'xml', labelKey: 'editor.language.xml' },
+  '.yaml': { id: 'yaml', labelKey: 'editor.language.yaml' },
+  '.yml': { id: 'yaml', labelKey: 'editor.language.yaml' },
+  '.zsh': { id: 'shell', labelKey: 'editor.language.shell' }
 };
 
-const namedFileLanguages: Record<string, TextEditorLanguage> = {
-  changelog: { id: 'markdown', label: 'Markdown' },
-  license: { id: 'plaintext', label: 'Plain Text' },
-  readme: { id: 'markdown', label: 'Markdown' }
+const namedFileLanguages: Record<string, TextEditorLanguageDescriptor> = {
+  changelog: { id: 'markdown', labelKey: 'editor.language.markdown' },
+  license: { id: 'plaintext', labelKey: 'editor.language.plainText' },
+  readme: { id: 'markdown', labelKey: 'editor.language.markdown' }
 };
 
 export type TextEditorTabSource = 'mod' | 'file' | 'ai';
@@ -163,11 +172,18 @@ export const isTextEditorFileName = (name: string): boolean => {
   return extension.length > 0 && textEditorExtensions.has(extension);
 };
 
-export const textEditorLanguageForFile = (name: string): TextEditorLanguage => {
+export const textEditorLanguageForFile = (
+  name: string,
+  language?: string | null
+): TextEditorLanguage => {
   const normalized = fileNameFromPath(name).trim().toLowerCase();
-  return namedFileLanguages[normalized]
+  const descriptor = namedFileLanguages[normalized]
     ?? languageByExtension[extensionOf(normalized)]
-    ?? { id: 'plaintext', label: 'Plain Text' };
+    ?? { id: 'plaintext', labelKey: 'editor.language.plainText' as const };
+  return {
+    id: descriptor.id,
+    label: translateForLanguage(language, descriptor.labelKey)
+  };
 };
 
 export const textEditorTabId = (source: TextEditorTabSource, path: string): string =>
@@ -176,10 +192,11 @@ export const textEditorTabId = (source: TextEditorTabSource, path: string): stri
 export const createTextEditorTab = (
   document: FluxoraTextFileDocument,
   source: TextEditorTabSource,
-  modPath?: string
+  modPath?: string,
+  language?: string | null
 ): TextEditorTab => {
   const fileName = document.fileName || fileNameFromPath(document.path);
-  const language = textEditorLanguageForFile(fileName);
+  const editorLanguage = textEditorLanguageForFile(fileName, language);
   const identityPath = source === 'mod'
     ? `${modPath ?? ''}:${document.relativePath ?? document.path}`
     : document.path;
@@ -193,8 +210,8 @@ export const createTextEditorTab = (
     modPath,
     content: document.content,
     savedContent: document.content,
-    languageId: language.id,
-    languageLabel: language.label,
+    languageId: editorLanguage.id,
+    languageLabel: editorLanguage.label,
     state: 'idle'
   };
 };

@@ -204,11 +204,11 @@ const scanTexturePaths = (text: string): string[] => {
 const scanWarnings = (text: string, supportedBlocks: string[]): string[] => {
   const warnings: string[] = [];
   if (skinnedBlockNames.some((block) => text.includes(block))) {
-    warnings.push('Skinned NIF blocks are rendered as static bind-pose geometry; animation is not previewed.');
+    warnings.push('preview.warning.skinnedStatic');
   }
 
   if (!supportedBlocks.length) {
-    warnings.push('No supported static NIF blocks were detected.');
+    warnings.push('preview.warning.noSupportedBlocks');
   }
 
   return warnings;
@@ -1812,8 +1812,8 @@ export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
 
   try {
     meshes = parseStaticFixture(text) ?? [];
-  } catch (error) {
-    warnings.push(error instanceof Error ? error.message : 'Static NIF fixture could not be parsed.');
+  } catch {
+    warnings.push('preview.warning.fixtureParseFailed');
   }
 
   if (meshes.length === 0) {
@@ -1823,7 +1823,7 @@ export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
 
   if (meshes.length === 0) {
     if (document && hasOnlyEmptySseTriShapes(document)) {
-      warnings.push('NIF contains no renderable triangle geometry; the preview is intentionally empty.');
+      warnings.push('preview.warning.noGeometry');
     } else {
       throw new Error('NIF geometry could not be decoded. This model uses an unsupported geometry layout.');
     }
@@ -1835,7 +1835,7 @@ export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
   ]);
 
   if (meshes.length > 0 && texturePaths.length === 0) {
-    warnings.push('No diffuse texture path was found; fallback material will be used.');
+    warnings.push('preview.warning.noDiffuseTexture');
   }
 
   return {

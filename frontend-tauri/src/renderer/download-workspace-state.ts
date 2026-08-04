@@ -4,6 +4,7 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 import {
   emptyOrderSelectionState,
   pruneOrderSelection,
@@ -149,15 +150,21 @@ export const downloadDisplayName = (rawName: string): string => {
   return trimTrailingSeparators(stem);
 };
 
-export const downloadTitle = (entry: FluxoraDownloadEntry): string =>
+export const downloadTitle = (
+  entry: FluxoraDownloadEntry,
+  language?: string | null
+): string =>
   entry.hasResolvedFileName
-    ? downloadDisplayName(entry.fileName || entry.name || entry.id) || 'Download'
-    : 'Получаем название…';
+    ? downloadDisplayName(entry.fileName || entry.name || entry.id) || translateForLanguage(language, 'app.ui.download')
+    : translateForLanguage(language, 'app.ui.downloadResolvingName');
 
-export const downloadRawTitle = (entry: FluxoraDownloadEntry): string =>
+export const downloadRawTitle = (
+  entry: FluxoraDownloadEntry,
+  language?: string | null
+): string =>
   entry.hasResolvedFileName
-    ? entry.fileName || entry.name || entry.localPath || entry.id || 'Download'
-    : 'Получаем название…';
+    ? entry.fileName || entry.name || entry.localPath || entry.id || translateForLanguage(language, 'app.ui.download')
+    : translateForLanguage(language, 'app.ui.downloadResolvingName');
 
 export const selectedDownloadEntry = (
   items: FluxoraDownloadEntry[],
@@ -223,31 +230,41 @@ export const filterDownloadEntries = (
   });
 };
 
-export const downloadStatusText = (entry: FluxoraDownloadEntry | null): string => {
+export const downloadStatusText = (
+  entry: FluxoraDownloadEntry | null,
+  language = 'en-US'
+): string => {
   if (!entry) {
-    return 'No download selected';
+    return translateForLanguage(language, 'download.status.noneSelected');
   }
 
   switch (entry.transferState) {
     case 'downloading':
-      return entry.downloadSpeedText || entry.progressText || entry.transferMessage || 'Downloading';
+      return entry.downloadSpeedText || entry.progressText || entry.transferMessage || translateForLanguage(language, 'download.status.downloading');
     case 'queued':
-      return entry.transferMessage || 'Queued';
+      return entry.transferMessage || translateForLanguage(language, 'download.status.queued');
     case 'awaiting-decision':
-      return 'Нужно решение';
+      return translateForLanguage(language, 'download.status.needsDecision');
     case 'paused':
-      return entry.transferMessage || 'Paused';
+      return entry.transferMessage || translateForLanguage(language, 'download.status.paused');
     case 'canceled':
-      return entry.transferMessage || 'Canceled';
+      return entry.transferMessage || translateForLanguage(language, 'download.status.cancelled');
     case 'indexing':
-      return 'Indexing';
+      return translateForLanguage(language, 'download.status.indexing');
     case 'failed':
-      return entry.transferMessage || 'Failed';
+      return entry.transferMessage || translateForLanguage(language, 'download.status.failed');
     case 'idle':
     default:
       break;
   }
-  return entry.buildStatus ?? 'Waiting';
+  switch (entry.buildStatus) {
+    case 'Ready': return translateForLanguage(language, 'download.status.ready');
+    case 'Installing': return translateForLanguage(language, 'download.status.installing');
+    case 'Installed': return translateForLanguage(language, 'download.status.installed');
+    case 'Deleted': return translateForLanguage(language, 'download.status.deleted');
+    case 'Failed': return translateForLanguage(language, 'download.status.failed');
+    default: return translateForLanguage(language, 'download.status.waiting');
+  }
 };
 
 export const downloadProgressValue = (entry: FluxoraDownloadEntry): number => {
@@ -258,10 +275,15 @@ export const downloadProgressValue = (entry: FluxoraDownloadEntry): number => {
   return Math.max(0, Math.min(100, Math.round(entry.progressPercent)));
 };
 
-export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusView => {
+export const downloadStatusView = (
+  entry: FluxoraDownloadEntry,
+  language = 'en-US'
+): DownloadStatusView => {
   const progressValue = downloadProgressValue(entry);
   if (entry.transferState === 'downloading') {
-    const progressText = entry.progressText || (entry.hasKnownProgress ? `${progressValue}%` : 'Downloading');
+    const progressText = entry.progressText || (entry.hasKnownProgress
+      ? `${progressValue}%`
+      : translateForLanguage(language, 'download.status.downloading'));
     const text = entry.downloadSpeedText ? `${progressText} · ${entry.downloadSpeedText}` : progressText;
     return {
       text,
@@ -271,7 +293,7 @@ export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusV
     };
   }
 
-  const text = downloadStatusText(entry);
+  const text = downloadStatusText(entry, language);
   const tone: DownloadStatusView['tone'] =
     entry.buildStatus === 'Installed'
       ? 'installed'
@@ -297,7 +319,8 @@ export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusV
 
 export const downloadCapabilityView = (
   project: FluxoraProject | null,
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): DownloadCapabilityView => {
   const downloadsFeature = bridgeStatus?.capabilities?.features.downloads?.state;
   const bridgeAvailable =
@@ -310,7 +333,7 @@ export const downloadCapabilityView = (
     return {
       bridgeAvailable,
       nxmRegistrationState,
-      reason: 'Open a build before using downloads.'
+      reason: translateForLanguage(language, 'capability.openBuildDownloads')
     };
   }
 
@@ -318,7 +341,7 @@ export const downloadCapabilityView = (
     return {
       bridgeAvailable: false,
       nxmRegistrationState,
-      reason: 'Native bridge is not ready.'
+      reason: translateForLanguage(language, 'capability.bridgeNotReady')
     };
   }
 
@@ -326,7 +349,7 @@ export const downloadCapabilityView = (
     return {
       bridgeAvailable: false,
       nxmRegistrationState,
-      reason: 'This Fluxora bridge build does not expose download methods.'
+      reason: translateForLanguage(language, 'capability.downloadMethodsUnavailable')
     };
   }
 

@@ -4,6 +4,7 @@ import type {
   FluxoraInstallOperation,
   FluxoraInstallOperationState
 } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 
 export interface InstallProgressSnapshot {
   operation: FluxoraInstallOperation | null;
@@ -34,22 +35,25 @@ const emptySnapshot: InstallProgressSnapshot = Object.freeze({
   errorMessage: ''
 });
 
-export const installProgressLabel = (operation: FluxoraInstallOperation): string => {
+export const installProgressLabel = (
+  operation: FluxoraInstallOperation,
+  language = 'en-US'
+): string => {
   switch (operation.state) {
-    case 'queued': return 'В очереди';
-    case 'validating': return 'Проверка';
-    case 'extracting': return 'Распаковка';
-    case 'configuringFomod': return 'Настройка FOMOD';
-    case 'buildingStaging': return 'Подготовка файлов';
-    case 'projectingConflicts': return 'Проверка конфликтов';
-    case 'waitingTarget': return 'Ожидание другого обновления';
-    case 'committing': return 'Применение';
-    case 'finalizing': return 'Применение';
-    case 'recovering': return 'Восстановление';
-    case 'cancelled': return 'Отменено';
+    case 'queued': return translateForLanguage(language, 'install.progress.queued');
+    case 'validating': return translateForLanguage(language, 'install.progress.validating');
+    case 'extracting': return translateForLanguage(language, 'install.progress.extracting');
+    case 'configuringFomod': return translateForLanguage(language, 'install.progress.configuringFomod');
+    case 'buildingStaging': return translateForLanguage(language, 'install.progress.buildingStaging');
+    case 'projectingConflicts': return translateForLanguage(language, 'install.progress.projectingConflicts');
+    case 'waitingTarget': return translateForLanguage(language, 'install.progress.waitingTarget');
+    case 'committing': return translateForLanguage(language, 'install.progress.applying');
+    case 'finalizing': return translateForLanguage(language, 'install.progress.applying');
+    case 'recovering': return translateForLanguage(language, 'install.progress.recovering');
+    case 'cancelled': return translateForLanguage(language, 'install.progress.cancelled');
     case 'needsReview': return '';
-    case 'failed': return 'Ошибка установки';
-    case 'completed': return operation.result?.version || 'Установлен';
+    case 'failed': return translateForLanguage(language, 'install.progress.failed');
+    case 'completed': return operation.result?.version || translateForLanguage(language, 'install.progress.completed');
   }
 };
 

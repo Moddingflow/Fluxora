@@ -4,6 +4,7 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 import {
   isOrderItemHiddenByCollapsedSeparator,
   orderItemMovePlan,
@@ -92,18 +93,8 @@ export const overwriteFolderLabel = (
   projectName: string,
   language: string | undefined
 ): string => {
-  const buildName = projectName.trim() || 'Build';
-  const normalizedLanguage = language?.toLocaleLowerCase() ?? '';
-
-  if (normalizedLanguage.startsWith('ru')) {
-    return `${buildName} · Папка выхода файлов`;
-  }
-
-  if (normalizedLanguage.startsWith('de')) {
-    return `${buildName} · Ausgabedateien`;
-  }
-
-  return `${buildName} · Output files folder`;
+  const buildName = projectName.trim() || translateForLanguage(language, 'project.fallbackBuild');
+  return translateForLanguage(language, 'mod.overwrite.outputTitle', { name: buildName });
 };
 
 export const createOverwriteOrderItem = (
@@ -144,11 +135,14 @@ export const createOverwriteOrderItem = (
   overwrittenByModIds: []
 });
 
-export const modItemTitle = (item: FluxoraModOrderItem): string =>
+export const modItemTitle = (
+  item: FluxoraModOrderItem,
+  language?: string | null
+): string =>
   isModOverwriteItem(item)
-    ? item.name || 'Overwrite'
+    ? item.name || translateForLanguage(language, 'app.ui.overwrite')
     : item.isSeparator
-      ? item.separatorTitle || 'Separator'
+      ? item.separatorTitle || translateForLanguage(language, 'app.ui.separator')
       : item.name || item.id;
 
 export const modPriorityByOrderId = (
@@ -199,12 +193,15 @@ const conflictStatusLooksRelevant = (status: string): boolean => {
   ].includes(normalized);
 };
 
-export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView => {
+export const modOverwriteView = (
+  item: FluxoraModOrderItem,
+  language?: string | null
+): ModOverwriteView => {
   if (isModOverwriteItem(item)) {
     return {
       state: 'none',
       label: '',
-      title: 'Generated game and tool files are written here after mods'
+      title: translateForLanguage(language, 'mod.overwrite.generatedTitle')
     };
   }
 
@@ -212,7 +209,7 @@ export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView =>
     return {
       state: 'none',
       label: '',
-      title: 'Separator'
+      title: translateForLanguage(language, 'mod.overwrite.separator')
     };
   }
 
@@ -224,47 +221,47 @@ export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView =>
   if (overwritten > 0 && fileCount > 0 && overwritten >= fileCount && overwriting === 0) {
     return {
       state: 'fully-overwritten',
-      label: 'Fully overwritten',
-      title: `All ${fileCount} mod files are overwritten by later mods`
+      label: translateForLanguage(language, 'mod.overwrite.fully'),
+      title: translateForLanguage(language, 'mod.overwrite.fullyTitle', { count: fileCount })
     };
   }
 
   if (overwritten > 0 && overwriting > 0) {
     return {
       state: 'mixed',
-      label: 'Mixed overwrite',
-      title: `Overwrites ${overwriting} files and is overwritten on ${overwritten} files`
+      label: translateForLanguage(language, 'mod.overwrite.mixed'),
+      title: translateForLanguage(language, 'mod.overwrite.mixedTitle', { overwriting, overwritten })
     };
   }
 
   if (overwriting > 0) {
     return {
       state: 'overwrites',
-      label: 'Overwrites',
-      title: `Overwrites ${overwriting} files from earlier mods`
+      label: translateForLanguage(language, 'mod.overwrite.overwrites'),
+      title: translateForLanguage(language, 'mod.overwrite.overwritesTitle', { count: overwriting })
     };
   }
 
   if (overwritten > 0) {
     return {
       state: 'overwritten',
-      label: 'Overwritten',
-      title: `Overwritten on ${overwritten} files by later mods`
+      label: translateForLanguage(language, 'mod.overwrite.overwritten'),
+      title: translateForLanguage(language, 'mod.overwrite.overwrittenTitle', { count: overwritten })
     };
   }
 
   if (conflicting > 0 || conflictStatusLooksRelevant(item.conflictStatus)) {
     return {
       state: 'mixed',
-      label: 'Conflict',
-      title: item.conflictStatus || `${conflicting} conflicting files`
+      label: translateForLanguage(language, 'mod.overwrite.conflict'),
+      title: item.conflictStatus || translateForLanguage(language, 'mod.overwrite.conflictCount', { count: conflicting })
     };
   }
 
   return {
     state: 'none',
-    label: 'No overwrite',
-    title: 'No file overwrite conflicts'
+    label: translateForLanguage(language, 'mod.overwrite.none'),
+    title: translateForLanguage(language, 'mod.overwrite.noneTitle')
   };
 };
 
@@ -484,16 +481,17 @@ const equivalentModVersionText = (left: string, right: string): string | null =>
   return trimmedLeft.length < trimmedRight.length ? trimmedLeft : trimmedRight;
 };
 
-export const modVersionText = (item: FluxoraModOrderItem): string => {
+export const modVersionText = (item: FluxoraModOrderItem, language = 'en-US'): string => {
   if (!item.isMod) {
     return '';
   }
 
   const installedVersion = item.version.trim();
-  return (equivalentModVersionText(installedVersion, item.latestVersion) ?? installedVersion) || 'local';
+  return (equivalentModVersionText(installedVersion, item.latestVersion) ?? installedVersion)
+    || translateForLanguage(language, 'mod.version.local');
 };
 
-export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
+export const modLatestVersionText = (item: FluxoraModOrderItem, language = 'en-US'): string => {
   if (!item.isMod) {
     return '';
   }
@@ -503,7 +501,9 @@ export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
     return equivalentModVersionText(item.version, latestVersion) ?? latestVersion;
   }
 
-  return item.canCheckUpdates ? item.version.trim() || '—' : 'local';
+  return item.canCheckUpdates
+    ? item.version.trim() || '—'
+    : translateForLanguage(language, 'mod.version.local');
 };
 
 export const modLatestVersionDiffers = (item: FluxoraModOrderItem): boolean => {
@@ -522,31 +522,34 @@ export interface ModTableStatusView {
   tone: ModTableStatusTone;
 }
 
-export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusView => {
+export const modTableStatusView = (
+  item: FluxoraModOrderItem,
+  language?: string | null
+): ModTableStatusView => {
   if (isModOverwriteItem(item)) {
     return {
-      label: 'Output folder',
-      overwrite: modOverwriteView(item),
+      label: translateForLanguage(language, 'mod.status.outputFolder'),
+      overwrite: modOverwriteView(item, language),
       tone: 'local'
     };
   }
 
   if (!item.isMod) {
     return {
-      label: 'Separator',
-      overwrite: modOverwriteView(item),
+      label: translateForLanguage(language, 'mod.overwrite.separator'),
+      overwrite: modOverwriteView(item, language),
       tone: 'local'
     };
   }
 
-  const overwrite = modOverwriteView(item);
+  const overwrite = modOverwriteView(item, language);
   if (!item.isEnabled) {
     return {
-      label: 'Disabled',
+      label: translateForLanguage(language, 'mod.status.disabled'),
       overwrite: {
         ...overwrite,
         state: 'none',
-        title: 'Disabled mods do not participate in overwrite resolution'
+        title: translateForLanguage(language, 'mod.status.disabledOverwriteTitle')
       },
       tone: 'disabled'
     };
@@ -561,7 +564,7 @@ export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusVie
   }
 
   return {
-    label: 'No overwrite',
+    label: overwrite.label,
     overwrite,
     tone: item.canCheckUpdates ? 'ready' : 'local'
   };
@@ -897,17 +900,20 @@ export const optimisticModInstallState = (
   };
 };
 
-export const modStatusText = (item: FluxoraModOrderItem | null): string => {
+export const modStatusText = (
+  item: FluxoraModOrderItem | null,
+  language?: string | null
+): string => {
   if (!item) {
-    return 'No mod selected';
+    return translateForLanguage(language, 'mod.status.noSelection');
   }
 
   if (isModOverwriteItem(item)) {
-    return 'Overwrite folder';
+    return translateForLanguage(language, 'mod.status.overwriteFolder');
   }
 
   if (item.isSeparator) {
-    return 'Separator row';
+    return translateForLanguage(language, 'mod.status.separatorRow');
   }
 
   if (item.conflictStatus) {
@@ -918,7 +924,9 @@ export const modStatusText = (item: FluxoraModOrderItem | null): string => {
     return item.updateStatus;
   }
 
-  return item.isEnabled ? 'Enabled' : 'Disabled';
+  return item.isEnabled
+    ? translateForLanguage(language, 'mod.status.enabled')
+    : translateForLanguage(language, 'mod.status.disabled');
 };
 
 export const formatFileSize = (size: number): string => {

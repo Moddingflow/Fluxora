@@ -3,6 +3,8 @@ import { useEffect, useRef, type CSSProperties, type FormEvent } from 'react';
 
 import layersIcon from '../../../../../Icons/layers.svg';
 import packagePlusIcon from '../../../../../Icons/package-plus.svg';
+import type { TranslationKey } from '../../../localization';
+import { useLocalization } from '../../../localization/react';
 import { Button } from '../../design-system';
 
 export type ModCreationDialogKind = 'separator' | 'empty-mod';
@@ -24,27 +26,9 @@ export interface ModCreationDialogProps {
 
 type ModCreationIconStyle = CSSProperties & { '--mod-create-icon': string };
 
-const dialogCopyByKind: Record<
-  ModCreationDialogKind,
-  {
-    closeLabel: string;
-    icon: string;
-    inputLabel: string;
-    title: string;
-  }
-> = {
-  separator: {
-    closeLabel: 'Закрыть создание разделителя',
-    icon: layersIcon,
-    inputLabel: 'Название разделителя',
-    title: 'Создать разделитель'
-  },
-  'empty-mod': {
-    closeLabel: 'Закрыть создание пустого мода',
-    icon: packagePlusIcon,
-    inputLabel: 'Название мода',
-    title: 'Создать пустой мод'
-  }
+const dialogIconByKind: Record<ModCreationDialogKind, string> = {
+  separator: layersIcon,
+  'empty-mod': packagePlusIcon
 };
 
 export function ModCreationDialog({
@@ -53,6 +37,7 @@ export function ModCreationDialog({
   onSubmit,
   state
 }: ModCreationDialogProps) {
+  const { t } = useLocalization();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,7 +68,8 @@ export function ModCreationDialog({
     return null;
   }
 
-  const copy = dialogCopyByKind[state.kind];
+  const copy = (field: 'close' | 'input' | 'title') =>
+    t(`modCreation.${state.kind}.${field}` as TranslationKey);
   const validationId = state.validationMessage ? 'mod-create-dialog-validation' : undefined;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -113,14 +99,16 @@ export function ModCreationDialog({
             <span
               aria-hidden="true"
               className="mod-create-dialog__icon"
-              style={{ '--mod-create-icon': `url("${copy.icon}")` } as ModCreationIconStyle}
+              style={{
+                '--mod-create-icon': `url("${dialogIconByKind[state.kind]}")`
+              } as ModCreationIconStyle}
             />
-            <strong id="mod-create-dialog-title">{copy.title}</strong>
+            <strong id="mod-create-dialog-title">{copy('title')}</strong>
           </div>
           <button
-            aria-label={copy.closeLabel}
+            aria-label={copy('close')}
             className="icon-button"
-            title={copy.closeLabel}
+            title={copy('close')}
             type="button"
             onClick={onCancel}
           >
@@ -130,7 +118,7 @@ export function ModCreationDialog({
 
         <form className="mod-create-dialog__form" onSubmit={handleSubmit}>
           <label className="mod-create-dialog__field">
-            <span>{copy.inputLabel}</span>
+            <span>{copy('input')}</span>
             <span
               className="flx-input"
               data-full-width="true"
@@ -157,7 +145,7 @@ export function ModCreationDialog({
           ) : null}
           <footer className="mod-create-dialog__actions">
             <Button disabled={!state.name.trim()} size="sm" type="submit">
-              OK
+              {t('common.ok')}
             </Button>
           </footer>
         </form>

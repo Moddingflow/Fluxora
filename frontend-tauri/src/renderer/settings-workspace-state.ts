@@ -12,6 +12,10 @@ import type {
   NativeBridgeFeatureState,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import {
+  translateForLanguage,
+  type TranslationKey
+} from '../localization';
 
 export type SettingsSectionId =
   | 'connections'
@@ -27,38 +31,17 @@ export interface SettingsSection {
   hint: string;
 }
 
-export const settingsSections: SettingsSection[] = [
-  {
-    id: 'connections',
-    label: 'Connections',
-    hint: ''
-  },
-  {
-    id: 'language',
-    label: 'Languages',
-    hint: 'EN / RU / DE'
-  },
-  {
-    id: 'privacy',
-    label: 'Privacy',
-    hint: 'Microphone'
-  },
-  {
-    id: 'legal',
-    label: 'Legal documents',
-    hint: 'Offline'
-  },
-  {
-    id: 'transfer',
-    label: 'Transfer',
-    hint: 'MO2 import'
-  },
-  {
-    id: 'developers',
-    label: 'Для разработчиков',
-    hint: 'Debug'
-  }
-];
+export const settingsSections = (
+  language: string | null | undefined = 'en-US'
+): SettingsSection[] => (
+  ['connections', 'language', 'privacy', 'legal', 'transfer', 'developers'] as const
+).map((id) => ({
+  id,
+  label: translateForLanguage(language, `settings.section.${id}` as TranslationKey),
+  hint: id === 'connections'
+    ? ''
+    : translateForLanguage(language, `settings.section.${id}Hint` as TranslationKey)
+}));
 
 export const developerModeStorageKey = 'fluxora.settings.developerMode';
 
@@ -87,10 +70,13 @@ export const saveDeveloperModeSetting = (
 
 const formatUtcPart = (value: number): string => value.toString().padStart(2, '0');
 
-export const formatLastBuildDate = (value: string | null | undefined): string => {
+export const formatLastBuildDate = (
+  value: string | null | undefined,
+  language: string | null | undefined = 'en-US'
+): string => {
   const trimmed = value?.trim();
   if (!trimmed) {
-    return 'pending';
+    return translateForLanguage(language, 'settings.status.pending');
   }
 
   const date = new Date(trimmed);
@@ -118,29 +104,22 @@ export interface LanguageOption {
   nativeLabel: string;
 }
 
-export const languageOptions: LanguageOption[] = [
-  {
-    code: 'en-us',
-    countryCode: 'gb',
-    countryName: 'United Kingdom',
-    label: 'English',
-    nativeLabel: 'English'
-  },
-  {
-    code: 'ru-ru',
-    countryCode: 'ru',
-    countryName: 'Russia',
-    label: 'Russian',
-    nativeLabel: 'Русский'
-  },
-  {
-    code: 'de-de',
-    countryCode: 'de',
-    countryName: 'Germany',
-    label: 'German',
-    nativeLabel: 'Deutsch'
-  }
-];
+export const languageOptions = (
+  language: string | null | undefined = 'en-US'
+): LanguageOption[] => ([
+  { code: 'en-us', countryCode: 'gb', localeKey: 'en' },
+  { code: 'ru-ru', countryCode: 'ru', localeKey: 'ru' },
+  { code: 'de-de', countryCode: 'de', localeKey: 'de' }
+] as const).map(({ code, countryCode, localeKey }) => ({
+  code,
+  countryCode,
+  countryName: translateForLanguage(
+    language,
+    `settings.language.country.${countryCode}` as TranslationKey
+  ),
+  label: translateForLanguage(language, `settings.language.label.${localeKey}` as TranslationKey),
+  nativeLabel: translateForLanguage(localeKey, `language.${localeKey}` as TranslationKey)
+}));
 
 export const defaultThemeMode: FluxoraThemeMode = 'dark';
 export const supportedThemeModes: readonly FluxoraThemeMode[] = [defaultThemeMode];
@@ -176,7 +155,8 @@ export const settingsCapabilityView = (bridgeStatus: NativeBridgeStatus | null) 
 };
 
 export const createInstantNexusAuthStatus = (
-  operationId = instantNexusStatusOperationId
+  operationId = instantNexusStatusOperationId,
+  language: string | null | undefined = 'en-US'
 ): NexusAuthViewStatus => ({
   isConfigured: true,
   isLinked: false,
@@ -184,7 +164,7 @@ export const createInstantNexusAuthStatus = (
   hasApiKey: false,
   displayName: '',
   userId: '',
-  message: 'Checking Nexus Mods status.',
+  message: translateForLanguage(language, 'settings.nexus.checkingMessage'),
   clientId: defaultNexusClientId,
   redirectUri: defaultNexusRedirectUri,
   operationId,
@@ -223,7 +203,8 @@ export const createVerifiedNexusAuthStatus = (
 
 export const createCheckingNexusAuthStatus = (
   status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null | undefined,
-  operationId = instantNexusStatusOperationId
+  operationId = instantNexusStatusOperationId,
+  language: string | null | undefined = 'en-US'
 ): NexusAuthViewStatus => {
   const lastKnownLinked = Boolean(
     status && (nexusIsVerifiedLinked(status) || ('lastKnownLinked' in status && status.lastKnownLinked))
@@ -242,7 +223,7 @@ export const createCheckingNexusAuthStatus = (
     hasApiKey: false,
     displayName: '',
     userId: '',
-    message: 'Checking Nexus Mods status.',
+    message: translateForLanguage(language, 'settings.nexus.checkingMessage'),
     clientId: status?.clientId || defaultNexusClientId,
     redirectUri: status?.redirectUri || defaultNexusRedirectUri,
     operationId,
@@ -256,10 +237,11 @@ export const createCheckingNexusAuthStatus = (
 export const createUnavailableNexusAuthStatus = (
   status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null | undefined,
   message: string,
-  operationId = status?.operationId || instantNexusStatusOperationId
+  operationId = status?.operationId || instantNexusStatusOperationId,
+  language: string | null | undefined = 'en-US'
 ): NexusAuthViewStatus => ({
-  ...createCheckingNexusAuthStatus(status, operationId),
-  message: message.trim() || 'Nexus Mods status is temporarily unavailable. Retry the status check.',
+  ...createCheckingNexusAuthStatus(status, operationId, language),
+  message: message.trim() || translateForLanguage(language, 'settings.nexus.unavailableMessage'),
   verificationState: 'unavailable'
 });
 
@@ -344,10 +326,11 @@ export const saveCachedNexusAuthStatus = (
 };
 
 export const nexusConnectionSummary = (
-  status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null
+  status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (!status) {
-    return 'Not linked';
+    return translateForLanguage(language, 'settings.nexus.notLinked');
   }
 
   if (!nexusIsVerified(status)) {
@@ -355,39 +338,48 @@ export const nexusConnectionSummary = (
       ('lastKnownDisplayName' in status ? status.lastKnownDisplayName : '') ||
       ('lastKnownUserId' in status ? status.lastKnownUserId : '');
     if (statusVerificationState(status) === 'unavailable') {
-      return accountName ? `Unavailable - last linked as ${accountName}` : 'Status unavailable - retry';
+      return accountName
+        ? translateForLanguage(language, 'settings.nexus.unavailableLastLinked', { account: accountName })
+        : translateForLanguage(language, 'settings.nexus.unavailableRetry');
     }
     if (accountName) {
-      return `Checking - last linked as ${accountName}`;
+      return translateForLanguage(language, 'settings.nexus.checkingLastLinked', {
+        account: accountName
+      });
     }
 
-    return 'Checking status';
+    return translateForLanguage(language, 'settings.nexus.checking');
   }
 
   if (!status.isConfigured && !status.isLinked) {
-    return 'OAuth is not configured in the native core';
+    return translateForLanguage(language, 'settings.nexus.oauthNotConfigured');
   }
 
   if (!status.isLinked) {
-    return 'Not linked';
+    return translateForLanguage(language, 'settings.nexus.notLinked');
   }
 
   const accountName = status.displayName || status.userId;
-  return accountName ? `Linked - ${accountName}` : 'Linked';
+  return accountName
+    ? translateForLanguage(language, 'settings.nexus.linkedAccount', { account: accountName })
+    : translateForLanguage(language, 'settings.nexus.linked');
 };
 
 export const nexusActionLabel = (
-  status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null
+  status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (status && statusVerificationState(status) === 'unavailable') {
-    return 'Retry Nexus Mods status';
+    return translateForLanguage(language, 'settings.nexus.action.retry');
   }
 
   if (status && !nexusIsVerified(status)) {
-    return 'Checking Nexus Mods';
+    return translateForLanguage(language, 'settings.nexus.action.checking');
   }
 
-  return nexusIsVerifiedLinked(status) ? 'Disconnect Nexus Mods' : 'Link Nexus Mods with OAuth';
+  return nexusIsVerifiedLinked(status)
+    ? translateForLanguage(language, 'settings.nexus.action.disconnect')
+    : translateForLanguage(language, 'settings.nexus.action.connect');
 };
 
 export const nexusCanToggle = (
@@ -405,90 +397,111 @@ export const nexusCanToggle = (
   return Boolean(status.isLinked) || Boolean(status.isConfigured);
 };
 
-export const apiLimitProviderSummary = (provider: FluxoraApiLimitProvider): string => {
+export const apiLimitProviderSummary = (
+  provider: FluxoraApiLimitProvider,
+  language: string | null | undefined = 'en-US'
+): string => {
   if (provider.windows.length > 0) {
-    return provider.message || 'Updated from API response headers';
+    return provider.message || translateForLanguage(language, 'settings.api.updated');
   }
 
   switch (provider.state) {
     case 'unlinked':
-      return provider.message || 'Account not linked';
+      return provider.message || translateForLanguage(language, 'settings.api.unlinked');
     case 'not-provided':
-      return provider.message || 'Rate-limit headers were not returned';
+      return provider.message || translateForLanguage(language, 'settings.api.notProvided');
     case 'rate-limited':
-      return provider.message || 'Rate limit reached';
+      return provider.message || translateForLanguage(language, 'settings.api.rateLimited');
     case 'unavailable':
-      return provider.message || 'API limits unavailable';
+      return provider.message || translateForLanguage(language, 'settings.api.unavailable');
     case 'available':
     default:
-      return provider.message || 'API limits available';
+      return provider.message || translateForLanguage(language, 'settings.api.available');
   }
 };
 
-export const formatApiLimitUsage = (limitWindow: FluxoraApiRateLimitWindow): string => {
+export const formatApiLimitUsage = (
+  limitWindow: FluxoraApiRateLimitWindow,
+  language: string | null | undefined = 'en-US'
+): string => {
   const { limit, remaining } = limitWindow;
   if (typeof remaining === 'number' && typeof limit === 'number') {
     return `${remaining.toLocaleString()} / ${limit.toLocaleString()}`;
   }
   if (typeof remaining === 'number') {
-    return `${remaining.toLocaleString()} remaining`;
+    return translateForLanguage(language, 'settings.api.remaining', {
+      count: remaining.toLocaleString()
+    });
   }
   if (typeof limit === 'number') {
-    return `${limit.toLocaleString()} limit`;
+    return translateForLanguage(language, 'settings.api.limit', {
+      count: limit.toLocaleString()
+    });
   }
-  return 'Not reported';
+  return translateForLanguage(language, 'settings.api.notReported');
 };
 
-export const formatApiLimitReset = (limitWindow: FluxoraApiRateLimitWindow): string => {
+export const formatApiLimitReset = (
+  limitWindow: FluxoraApiRateLimitWindow,
+  language: string | null | undefined = 'en-US'
+): string => {
   const raw = (limitWindow.resetAtUtc || limitWindow.resetRaw).trim();
   if (!raw) {
-    return 'Reset not reported';
+    return translateForLanguage(language, 'settings.api.resetNotReported');
   }
 
   if (!limitWindow.resetAtUtc && /^\d+$/.test(raw)) {
     const seconds = Number(raw);
     if (Number.isFinite(seconds) && seconds < 1_000_000_000) {
       if (seconds < 60) {
-        return `Reset in ${seconds}s`;
+        return translateForLanguage(language, 'settings.api.resetSeconds', { seconds });
       }
 
       const minutes = Math.ceil(seconds / 60);
       if (minutes < 60) {
-        return `Reset in ${minutes}m`;
+        return translateForLanguage(language, 'settings.api.resetMinutes', { minutes });
       }
 
       const hours = Math.floor(minutes / 60);
       const remainingMinutes = minutes % 60;
-      return remainingMinutes > 0 ? `Reset in ${hours}h ${remainingMinutes}m` : `Reset in ${hours}h`;
+      return remainingMinutes > 0
+        ? translateForLanguage(language, 'settings.api.resetHoursMinutes', {
+            hours,
+            minutes: remainingMinutes
+          })
+        : translateForLanguage(language, 'settings.api.resetHours', { hours });
     }
   }
 
   const date = new Date(raw);
   if (!Number.isNaN(date.getTime())) {
-    return `Reset ${formatUtcPart(date.getUTCHours())}:${formatUtcPart(date.getUTCMinutes())} UTC`;
+    return translateForLanguage(language, 'settings.api.resetTime', {
+      time: `${formatUtcPart(date.getUTCHours())}:${formatUtcPart(date.getUTCMinutes())} UTC`
+    });
   }
 
-  return `Reset ${raw}`;
+  return translateForLanguage(language, 'settings.api.resetTime', { time: raw });
 };
 
 export const transferSettingsSummary = (
   progress: FluxoraModOrganizerImportProgress | null,
   result: FluxoraProject | null,
-  error: string | null
+  error: string | null,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (error) {
     return error;
   }
 
   if (result) {
-    return `Completed - ${result.name}`;
+    return translateForLanguage(language, 'settings.transfer.completed', { name: result.name });
   }
 
   if (progress) {
-    return transferProgressSummary(progress);
+    return transferProgressSummary(progress, language);
   }
 
-  return 'Transfer mods, profiles, load order, and metadata from an existing MO2 build.';
+  return translateForLanguage(language, 'settings.transfer.description');
 };
 
 export const transferSettingsProgressPercent = (
@@ -511,23 +524,20 @@ export interface PlatformSupportRow extends FluxoraPlatformSupport {
 }
 
 export const capabilityStateLabel = (
-  state: NativeBridgeFeatureState | undefined
+  state: NativeBridgeFeatureState | undefined,
+  language: string | null | undefined = 'en-US'
 ): string => {
-  switch (state) {
-    case 'available':
-      return 'Available';
-    case 'limited':
-      return 'Limited';
-    case 'unsupported':
-      return 'Unsupported';
-    case 'disabled':
-      return 'Disabled';
-    case 'runtime-shell':
-      return 'Tauri shell';
-    case 'unknown':
-    default:
-      return 'Unknown';
-  }
+  const normalized = state && [
+    'available',
+    'limited',
+    'unsupported',
+    'disabled',
+    'runtime-shell'
+  ].includes(state) ? state : 'unknown';
+  return translateForLanguage(
+    language,
+    `settings.capability.${normalized}` as TranslationKey
+  );
 };
 
 export const platformSupportRows = (
@@ -551,17 +561,22 @@ export const currentPlatformSupport = (
 
 export const platformSupportSummary = (
   bridgeStatus: NativeBridgeStatus | null,
-  appInfo: FluxoraAppInfo | null
+  appInfo: FluxoraAppInfo | null,
+  language: string | null | undefined = 'en-US'
 ): string => {
   const current = currentPlatformSupport(bridgeStatus, appInfo);
   if (!current) {
-    return 'Platform support matrix is not reported by the native bridge yet.';
+    return translateForLanguage(language, 'settings.platform.notReported');
   }
 
   const packageText = current.packageFormats.length > 0
     ? current.packageFormats.join(', ')
-    : 'package format pending';
-  return `${current.label}: ${capabilityStateLabel(current.state)} with ${packageText}.`;
+    : translateForLanguage(language, 'settings.platform.packagePending');
+  return translateForLanguage(language, 'settings.platform.summary', {
+    platform: current.label,
+    state: capabilityStateLabel(current.state, language),
+    packages: packageText
+  });
 };
 
 export const platformFeatureState = (
@@ -642,17 +657,22 @@ export const transferAnalysisStatus = (
 };
 
 export const transferProgressSummary = (
-  progress: FluxoraModOrganizerImportProgress | null
+  progress: FluxoraModOrganizerImportProgress | null,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (!progress) {
-    return 'Waiting for import progress';
+    return translateForLanguage(language, 'settings.transfer.waiting');
   }
 
   const bytes =
     progress.totalBytes > 0
       ? `${formatTransferBytes(progress.copiedBytes)} / ${formatTransferBytes(progress.totalBytes)}`
       : '';
-  return [progress.currentStep || progress.phase || 'Importing', progress.currentItem, bytes]
+  return [
+    progress.currentStep || progress.phase || translateForLanguage(language, 'settings.transfer.importing'),
+    progress.currentItem,
+    bytes
+  ]
     .filter(Boolean)
     .join(' - ');
 };

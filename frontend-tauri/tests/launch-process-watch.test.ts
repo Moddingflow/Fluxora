@@ -41,17 +41,17 @@ describe('launch process watch wiring', () => {
     expect(facade).toContain('fluxora_wait_for_process_exit');
     expect(launchFlow).toContain('window.fluxora.processes.waitForLaunchReady');
     expect(launchFlow).toContain('watchLaunchProcessSession');
-    expect(launchFlow).toContain('Процесс запускается');
-    expect(launchFlow).toContain('Процесс запущен');
-    expect(launchFlow).toContain('Закройте процесс, чтобы продолжить работу в Mod Manager.');
+    expect(launchFlow).toContain("t('app.message.processStarting')");
+    expect(launchFlow).toContain("t('app.message.processLaunched'");
+    expect(launchFlow).toContain("t('app.operation.closeProcess')");
     expect(processPlatform).toContain('WaitForSingleObject(handle, INFINITE)');
     expect(processPlatform).toContain('find_processes_using_module');
     expect(rustShell).toContain('Native process exit signal unavailable; using fallback polling');
     expect(rustShell).toContain('Tracked process exited but a VFS holder remains');
-    expect(managedDisplay).toContain('Подготовка BodySlide');
+    expect(managedDisplay).toContain("translateForLanguage(language, 'executable.preparingTool', { tool: 'BodySlide' })");
     expect(launchFlow).toContain('managedDisplay?.preparationLabel');
-    expect(launchFlow).toContain('Запуск через VFS');
-    expect(launchFlow).toContain('Обновление output');
+    expect(launchFlow).toContain("t('app.operation.vfsLaunch')");
+    expect(launchFlow).toContain("t('app.operation.updatingOutput')");
     expect(launchFlow).toMatch(
       /finally \{[\s\S]*window\.fluxora\.executables\.completeManagedLaunch\([\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);[\s\S]*setLaunchSplash/
     );

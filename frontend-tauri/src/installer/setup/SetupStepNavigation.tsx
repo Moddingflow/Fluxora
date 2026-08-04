@@ -22,7 +22,7 @@ export function SetupStepNavigation({
   const completionBoundary = Math.max(activeStepIndex, furthestStepIndex);
 
   return (
-    <ol aria-label="Installation steps" className="setup-steps">
+    <ol aria-label={translate(language, 'setup.steps.aria')} className="setup-steps">
       {setupStepOrder.map((step, index) => {
         const current = currentStep === step;
         const complete = !current && index < completionBoundary;

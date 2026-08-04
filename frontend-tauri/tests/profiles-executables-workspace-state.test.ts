@@ -174,5 +174,8 @@ describe('profiles and executables workspace state', () => {
       }
     };
     expect(executablesCapabilityView(project, nonLaunchBridge).launchReason).toContain('Windows');
+    expect(executablesCapabilityView(project, nonLaunchBridge, 'ru-RU').launchReason).toBe(
+      'Сейчас внутренний модуль может запускать исполняемые файлы только в Windows.'
+    );
   });
 });

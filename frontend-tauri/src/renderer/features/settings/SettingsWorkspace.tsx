@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useLocalization } from '../../../localization/react';
 import {
   Code2,
   ExternalLink,
@@ -98,6 +99,7 @@ export function SettingsWorkspace({
   settingsBusyLabel,
   settingsCapabilities
 }: SettingsWorkspaceProps) {
+  const { locale, t } = useLocalization();
   const [managerHandoffSettingsBusy, setManagerHandoffSettingsBusy] = useState(false);
   const [managerHandoffSettingsError, setManagerHandoffSettingsError] = useState(false);
   const [legalDocument, setLegalDocument] = useState<LegalDocumentKind>('privacy');
@@ -118,9 +120,9 @@ export function SettingsWorkspace({
   };
 
   const renderSettingsNav = () => (
-    <aside className="settings-nav" aria-label="Settings sections">
+    <aside className="settings-nav" aria-label={t('settings.aria.sections')}>
       <div className="settings-nav__items">
-        {settingsSections.map((item) => {
+        {settingsSections(locale).map((item) => {
           const isActive = section === item.id;
           const icon = (() => {
             switch (item.id) {
@@ -166,7 +168,10 @@ export function SettingsWorkspace({
 
   const renderConnectionSettings = () => {
     return (
-      <div className="settings-panel settings-panel--connections" aria-label="Connections settings">
+      <div
+        className="settings-panel settings-panel--connections"
+        aria-label={t('settings.aria.connections')}
+      >
         <div className="settings-connections-list">
           {connectionProviders.map((provider) => {
             const isBusyProvider = connectionBusyProviderId === provider.providerId;
@@ -178,7 +183,7 @@ export function SettingsWorkspace({
             const providerAvailable = provider.providerId === 'nexus'
               ? settingsCapabilities.nexusAvailable
               : settingsCapabilities.settingsAvailable;
-            const actionText = connectionActionLabel(presentedProvider);
+            const actionText = connectionActionLabel(presentedProvider, locale);
             const connectionStatus = presentedProvider.state === 'reauthRequired'
               ? 'error'
               : presentedProvider.state === 'ready'
@@ -211,7 +216,7 @@ export function SettingsWorkspace({
                   </span>
                   <span className="settings-service-copy">
                     <strong>{provider.label}</strong>
-                    <span aria-live="polite">{connectionSummary(presentedProvider)}</span>
+                    <span aria-live="polite">{connectionSummary(presentedProvider, locale)}</span>
                   </span>
                 </div>
                 <div className="settings-connection-action">
@@ -221,8 +226,11 @@ export function SettingsWorkspace({
                     type="button"
                     role="switch"
                     aria-checked={connectionIsReady(presentedProvider)}
-                    aria-label={`${provider.label} account`}
-                    title={provider.message || `${actionText} ${provider.label}`}
+                    aria-label={t('settings.connection.account', { provider: provider.label })}
+                    title={t('settings.connection.actionTitle', {
+                      action: actionText,
+                      provider: provider.label
+                    })}
                     disabled={
                       (isBusyProvider && !canCancelPendingModdingFlow)
                       || !connectionCanToggle(presentedProvider, providerAvailable)
@@ -271,8 +279,8 @@ export function SettingsWorkspace({
                   <Gauge size={20} />
                 </span>
                 <span className="settings-service-copy">
-                  <strong>API limits</strong>
-                  <span>Checking response headers</span>
+                  <strong>{t('settings.api.title')}</strong>
+                  <span>{t('settings.api.checking')}</span>
                 </span>
               </div>
             </div>
@@ -289,17 +297,20 @@ export function SettingsWorkspace({
                 </span>
                 <span className="settings-service-copy">
                   <strong>{provider.label}</strong>
-                  <span>{apiLimitProviderSummary(provider)}</span>
+                  <span>{apiLimitProviderSummary(provider, locale)}</span>
                 </span>
               </div>
               {provider.windows.length > 0 ? (
-                <dl className="settings-api-limit-windows" aria-label={`${provider.label} rate limits`}>
+                <dl
+                  className="settings-api-limit-windows"
+                  aria-label={t('settings.aria.apiRateLimits', { provider: provider.label })}
+                >
                   {provider.windows.map((limitWindow) => (
                     <div key={limitWindow.id}>
                       <dt>{limitWindow.label}</dt>
                       <dd>
-                        <span>{formatApiLimitUsage(limitWindow)}</span>
-                        <small>{formatApiLimitReset(limitWindow)}</small>
+                        <span>{formatApiLimitUsage(limitWindow, locale)}</span>
+                        <small>{formatApiLimitReset(limitWindow, locale)}</small>
                       </dd>
                     </div>
                   ))}
@@ -313,16 +324,17 @@ export function SettingsWorkspace({
   };
 
   const renderLanguageSettings = () => {
+    const options = languageOptions(locale);
     const selectedLanguage =
-      languageOptions.find((language) => language.code === bridgeStatus?.language) ??
-      languageOptions[0];
+      options.find((language) => language.code === bridgeStatus?.language) ??
+      options[0];
 
     return (
-      <div className="settings-panel settings-panel--language" aria-label="Language settings">
+      <div className="settings-panel settings-panel--language" aria-label={t('settings.aria.language')}>
         <LanguageSelect
           disabled={!bridgeStatus?.ready || languageBusy !== null}
           onChange={onSetLanguage}
-          value={selectedLanguage?.code ?? languageOptions[0].code}
+          value={selectedLanguage?.code ?? options[0].code}
         />
       </div>
     );
@@ -339,7 +351,7 @@ export function SettingsWorkspace({
   );
 
   const renderPrivacySettings = () => (
-    <div className="settings-panel settings-panel--privacy" aria-label="Privacy settings">
+    <div className="settings-panel settings-panel--privacy" aria-label={t('settings.aria.privacy')}>
       <div className="settings-connections-list">
         <div
           className="settings-service-row settings-service-row--connection settings-service-row--privacy"
@@ -350,8 +362,10 @@ export function SettingsWorkspace({
               <Mic size={20} />
             </span>
             <span className="settings-service-copy">
-              <strong>AI microphone</strong>
-              <span>{microphoneAllowed ? 'Allowed until reset' : 'Fluxora will ask before recording'}</span>
+              <strong>{t('settings.privacy.microphone')}</strong>
+              <span>
+                {microphoneAllowed ? t('settings.privacy.allowed') : t('settings.privacy.ask')}
+              </span>
             </span>
           </div>
           <button
@@ -360,7 +374,9 @@ export function SettingsWorkspace({
             onClick={onResetMicrophonePermission}
             type="button"
           >
-            {microphonePermissionBusy ? 'Resetting…' : 'Reset access'}
+            {microphonePermissionBusy
+              ? t('settings.privacy.resetting')
+              : t('settings.privacy.reset')}
           </button>
         </div>
       </div>
@@ -368,7 +384,7 @@ export function SettingsWorkspace({
   );
 
   const renderLegalSettings = () => (
-    <div className="settings-panel settings-panel--legal" aria-label="Legal documents">
+    <div className="settings-panel settings-panel--legal" aria-label={t('settings.aria.legal')}>
       <LegalDocumentsPanel
         language={legalLanguageFromAppLanguage(bridgeStatus?.language)}
         onSelect={setLegalDocument}
@@ -378,7 +394,7 @@ export function SettingsWorkspace({
   );
 
   const renderDeveloperSettings = () => (
-    <div className="settings-panel settings-panel--developer" aria-label="Developer settings">
+    <div className="settings-panel settings-panel--developer" aria-label={t('settings.aria.developer')}>
       <div className="settings-connections-list">
         <div
           className="settings-service-row settings-service-row--connection settings-service-row--developer"
@@ -389,8 +405,12 @@ export function SettingsWorkspace({
               <Code2 size={20} />
             </span>
             <span className="settings-service-copy">
-              <strong>Режим разработчика</strong>
-              <span>{developerModeEnabled ? 'Включен' : 'Выключен'}</span>
+              <strong>{t('settings.developer.mode')}</strong>
+              <span>
+                {developerModeEnabled
+                  ? t('settings.developer.enabled')
+                  : t('settings.developer.disabled')}
+              </span>
             </span>
           </div>
           <button
@@ -398,8 +418,10 @@ export function SettingsWorkspace({
             type="button"
             role="switch"
             aria-checked={developerModeEnabled}
-            aria-label="Режим разработчика"
-            title={developerModeEnabled ? 'Режим разработчика включен' : 'Режим разработчика выключен'}
+            aria-label={t('settings.developer.mode')}
+            title={developerModeEnabled
+              ? t('settings.developer.enabledTitle')
+              : t('settings.developer.disabledTitle')}
             onClick={() => onDeveloperModeChange(!developerModeEnabled)}
           >
             <span aria-hidden="true" />
@@ -409,39 +431,45 @@ export function SettingsWorkspace({
 
       <dl className="settings-facts settings-facts--developer">
         <div>
-          <dt>Дата последней сборки</dt>
-          <dd>{formatLastBuildDate(lastBuildDate)}</dd>
+          <dt>{t('settings.developer.lastBuild')}</dt>
+          <dd>{formatLastBuildDate(lastBuildDate, locale)}</dd>
         </div>
         <div>
-          <dt>UI</dt>
-          <dd>Tauri 2 / React / TypeScript</dd>
+          <dt>{t('settings.developer.uiLabel')}</dt>
+          <dd>{t('settings.developer.uiStack')}</dd>
         </div>
         <div>
-          <dt>Core</dt>
-          <dd>Rust shell / C++ core</dd>
+          <dt>{t('settings.developer.coreLabel')}</dt>
+          <dd>{t('settings.developer.coreStack')}</dd>
         </div>
         <div>
-          <dt>Версия Fluxora</dt>
-          <dd>{appInfo?.version ?? 'pending'}</dd>
+          <dt>{t('settings.developer.version')}</dt>
+          <dd>{appInfo?.version ?? t('settings.status.pending')}</dd>
         </div>
         <div>
-          <dt>Платформа</dt>
-          <dd>{appInfo ? `${appInfo.platform}/${appInfo.arch}` : 'pending'}</dd>
+          <dt>{t('settings.developer.platform')}</dt>
+          <dd>{appInfo ? `${appInfo.platform}/${appInfo.arch}` : t('settings.status.pending')}</dd>
         </div>
         <div>
-          <dt>Bridge</dt>
-          <dd>{bridgeStatus?.ready ? 'ready' : bridgeStatus?.error ? 'unavailable' : 'pending'}</dd>
+          <dt>{t('settings.developer.bridgeLabel')}</dt>
+          <dd>
+            {bridgeStatus?.ready
+              ? t('settings.status.ready')
+              : bridgeStatus?.error
+                ? t('settings.status.unavailable')
+                : t('settings.status.pending')}
+          </dd>
         </div>
       </dl>
 
       <button
         className="primary-button settings-repository-button"
         type="button"
-        aria-label="Открыть оригинальный репозиторий Fluxora на GitHub"
+        aria-label={t('settings.aria.repository')}
         onClick={onOpenRepository}
       >
         <ExternalLink size={15} aria-hidden="true" />
-        <span>GitHub</span>
+        <span>{t('settings.developer.githubLabel')}</span>
       </button>
     </div>
   );
@@ -465,7 +493,7 @@ export function SettingsWorkspace({
   })();
 
   return (
-    <section className="settings-layout" aria-label="Settings">
+    <section className="settings-layout" aria-label={t('settings.aria.root')}>
       {renderSettingsNav()}
       <section className="work-surface settings-surface">
         {settingsBusyLabel ? (

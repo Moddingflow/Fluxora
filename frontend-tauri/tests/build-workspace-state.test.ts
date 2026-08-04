@@ -69,11 +69,14 @@ describe('build workspace state', () => {
     const draft = emptyBuildPathDraft(project);
     expect(validateBuildPathDraft(draft, 'win32')).toBeNull();
     expect(validateBuildPathDraft({ ...draft, gameExecutablePath: 'SkyrimSE.bin' }, 'win32')).toBe(
-      'Game executable must point to an .exe file on Windows.'
+      'On Windows, the game executable must be an .exe file.'
     );
     expect(validateBuildPathDraft({ ...draft, modsDirectory: '' }, 'win32')).toBe(
       'Mods directory is required.'
     );
+    expect(
+      validateBuildPathDraft({ ...draft, modsDirectory: '' }, 'win32', 'ru-RU')
+    ).toBe('Необходимо указать: Папка модов.');
   });
 
   it('derives game directory and save DTO without mutating the draft', () => {
@@ -124,7 +127,11 @@ describe('build workspace state', () => {
   it('keeps build header actions capability-driven without requiring every bridge to report method keys', () => {
     expect(buildActionAvailability(null, ['fluxPack'], 'FluxPack export')).toEqual({
       available: false,
-      reason: 'Native bridge is not ready.'
+      reason: 'The native bridge is not ready.'
+    });
+    expect(buildActionAvailability(null, ['fluxPack'], 'Экспорт FluxPack', 'ru-RU')).toEqual({
+      available: false,
+      reason: 'Внутренний модуль Fluxora ещё не готов.'
     });
 
     expect(buildHeaderCapabilityView(readyBridge)).toMatchObject({
@@ -178,8 +185,8 @@ describe('build workspace state', () => {
     };
 
     expect(Object.fromEntries(fluxPackSummaryFacts(summary))).toMatchObject({
-      Compression: 'Минимальный размер',
-      'Package type': 'Рецепт',
+      Compression: 'Smallest size',
+      'Package type': 'Recipe',
       Deduplicated: '1.0 MB',
       Stored: '2.0 MB',
       Chunks: '12'

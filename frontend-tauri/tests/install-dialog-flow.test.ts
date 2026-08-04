@@ -45,12 +45,12 @@ describe('install dialog flow', () => {
 
     expect(dialog).toContain('const dialogTitle =');
     expect(dialog).toContain("installDialog.phase === 'detecting'");
-    expect(dialog).toContain("? 'Установка мода'");
-    expect(dialog).toContain(': `Install ${dialogTitle}`;');
-    expect(dialog).toContain('<strong>Установка мода</strong>');
-    expect(dialog).toContain('Закрыть окно установки');
-    expect(dialog).toContain('Подробнее');
-    expect(dialog).toContain('Установить');
+    expect(dialog).toContain("? t('install.title')");
+    expect(dialog).toContain("t('install.namedAria', { name: dialogTitle })");
+    expect(dialog).toContain("<strong>{t('install.title')}</strong>");
+    expect(dialog).toContain("title={t('install.closeWindow')}");
+    expect(dialog).toContain("{t('install.details')}");
+    expect(dialog).toContain("t('install.action')");
     expect(dialog).not.toContain('Analyzing installer');
     expect(dialog).not.toContain('Installing mod</strong>');
     expect(dialog).not.toContain("| 'analyzing'");
@@ -204,7 +204,7 @@ describe('install dialog flow', () => {
     expect(continueFromFomod).not.toContain("phase: 'installing'");
     expect(continueFromFomod).not.toContain('analyzeInstallLayout(');
     expect(continueFromFomod).not.toContain("phase: 'options'");
-    expect(fomodStep).toContain('Установить');
+    expect(fomodStep).toContain("t('install.action')");
     expect(fomodStep).not.toContain('Review install');
   });
 
@@ -225,16 +225,16 @@ describe('install dialog flow', () => {
     );
 
     expect(dialog).toContain("installDialog.fomodInstaller.selectionOrigin === 'restored'");
-    expect(dialog).toContain('`${selectionOriginLabel} · ${evaluation.selectedOptionIds.length} выбрано');
-    expect(dialog).toContain('Пересчитать');
-    expect(dialog).toContain('Вернуть автоподбор');
-    expect(dialog).toContain('Почему выбрано');
+    expect(dialog).toContain("t('install.fomod.summary', {");
+    expect(dialog).toContain("t('install.fomod.recalculate')");
+    expect(dialog).toContain("t('install.fomod.resetAuto')");
+    expect(dialog).toContain("t('install.fomod.whySelected')");
     expect(submitInstallDialog).toContain("errorCode === 'install.fomodContextChanged'");
     expect(submitInstallDialog).toContain('retainedManualDecisions');
     expect(submitInstallDialog).toContain('selectedProjectProfileName');
     expect(submitInstallDialog).toContain('fomodContextId');
     expect(submitInstallDialog).toContain("phase: 'fomod'");
-    expect(submitInstallDialog).toContain('нажмите «Установить» ещё раз');
+    expect(submitInstallDialog).toContain("t('app.message.profileChangedValidation')");
   });
 
   it('reveals the placement editor only after the atomic preview resolves', () => {
@@ -276,12 +276,12 @@ describe('install dialog flow', () => {
 
     expect(dialog).toContain("| 'conflict'");
     expect(dialog).toContain("installDialog.phase === 'conflict' ? renderExistingModConflict() : null");
-    expect(conflictStep).toContain('Уже есть мод с таким же названием');
-    expect(conflictStep).toContain('Заменить');
-    expect(conflictStep).toContain('Полностью заменяет мод.');
-    expect(conflictStep).toContain('Объединить');
-    expect(conflictStep).toContain('Перезаписывает только файлы с одинаковыми названиями.');
-    expect(conflictStep).toContain('Это другой мод');
+    expect(conflictStep).toContain("t('install.conflict.title')");
+    expect(conflictStep).toContain("t('install.conflict.replace')");
+    expect(conflictStep).toContain("t('install.conflict.replaceDetail')");
+    expect(conflictStep).toContain("t('install.conflict.merge')");
+    expect(conflictStep).toContain("t('install.conflict.mergeDetail')");
+    expect(conflictStep).toContain("t('install.conflict.separate')");
     expect(conflictStep).toContain('onResolveExistingMod(1)');
     expect(conflictStep).toContain('onResolveExistingMod(2)');
     expect(conflictStep).toContain("onResolveExistingMod('installNew')");

@@ -224,9 +224,11 @@ export interface ModRowViewIndex {
   rows: ModRowView[];
   byOrderId: ReadonlyMap<string, ModRowView>;
   selectedItemPresentationKey?: string;
+  language?: string;
 }
 
 export interface BuildModRowViewIndexOptions {
+  language?: string;
   selectedItem: FluxoraModOrderItem | null;
   collapsedSeparatorOrderIds: ReadonlySet<string>;
   updateResult?: FluxoraModUpdateCheckResult;
@@ -244,6 +246,7 @@ interface ModRowDraft {
   conflictHighlight: ModConflictHighlight;
   conflictMarkerStates: ModConflictMarkerState[];
   updateCheckState: string;
+  reuseItemDerivations: boolean;
 }
 
 const tryBuildFlatModRowViewIndex = (
@@ -258,6 +261,7 @@ const tryBuildFlatModRowViewIndex = (
     !previous ||
     previous.rows.length !== items.length ||
     previous.selectedItemPresentationKey !== selectedItemPresentationKey ||
+    previous.language !== options.language ||
     options.collapsedSeparatorOrderIds.size > 0 ||
     options.updateResult !== undefined ||
     (options.conflictMarkerReadyByOrderId?.size ?? 0) > 0
@@ -326,14 +330,14 @@ const tryBuildFlatModRowViewIndex = (
       conflictMarkerStates,
       visibleConflictMarkerStates: conflictMarkerStates,
       updateCheckState: item.updateCheckState,
-      status: modTableStatusView(item),
-      updateFreshness: modUpdateFreshnessView(item, undefined)
+      status: modTableStatusView(item, options.language),
+      updateFreshness: modUpdateFreshnessView(item, undefined, options.language)
     };
     rows.push(row);
     byOrderId.set(item.orderId, row);
   }
 
-  return { rows, byOrderId, selectedItemPresentationKey };
+  return { rows, byOrderId, selectedItemPresentationKey, language: options.language };
 };
 
 export const buildModRowViewIndex = (
@@ -408,7 +412,13 @@ export const buildModRowViewIndex = (
       }
     }
 
-    const appliedUpdate = updateByFolderName.get(normalizeModReference(item.name));
+    const appliedUpdate = updateByFolderName.size > 0
+      ? updateByFolderName.get(normalizeModReference(item.name))
+      : undefined;
+    const previousView = previous?.byOrderId.get(item.orderId);
+    const reuseItemDerivations = previous?.language === options.language
+      && previousView !== undefined
+      && (previousView.item === item || sameModOrderItemPresentation(previousView.item, item));
     const draft: ModRowDraft = {
       item,
       index,
@@ -419,8 +429,13 @@ export const buildModRowViewIndex = (
       separatorChildCount: 0,
       priority: item.isMod ? priority : null,
       conflictHighlight,
-      conflictMarkerStates: item.isSeparator ? [] : modConflictMarkerStates(item),
-      updateCheckState: appliedUpdate?.updateCheckState ?? item.updateCheckState
+      conflictMarkerStates: item.isSeparator
+        ? []
+        : reuseItemDerivations
+          ? previousView.conflictMarkerStates
+          : modConflictMarkerStates(item),
+      updateCheckState: appliedUpdate?.updateCheckState ?? item.updateCheckState,
+      reuseItemDerivations
     };
     drafts.push(draft);
 
@@ -466,6 +481,10 @@ export const buildModRowViewIndex = (
       draft.updateCheckState === draft.item.updateCheckState
         ? draft.item
         : { ...draft.item, updateCheckState: draft.updateCheckState };
+    const previousView = previous?.byOrderId.get(draft.item.orderId);
+    const canReuseItemDerivations = draft.reuseItemDerivations
+      && previousView !== undefined
+      && previousView.updateCheckState === draft.updateCheckState;
     const derived = {
       parentSeparatorOrderId: draft.parentSeparatorOrderId,
       isNested: draft.isNested,
@@ -477,10 +496,13 @@ export const buildModRowViewIndex = (
       conflictMarkerStates: draft.conflictMarkerStates,
       visibleConflictMarkerStates,
       updateCheckState: draft.updateCheckState,
-      status: modTableStatusView(draft.item),
-      updateFreshness: modUpdateFreshnessView(updateItem, options.updateResult)
+      status: canReuseItemDerivations
+        ? previousView.status
+        : modTableStatusView(draft.item, options.language),
+      updateFreshness: canReuseItemDerivations
+        ? previousView.updateFreshness
+        : modUpdateFreshnessView(updateItem, options.updateResult, options.language)
     };
-    const previousView = previous?.byOrderId.get(draft.item.orderId);
     if (
       previousView?.item === draft.item &&
       modRowViewPresentationKey(previousView) === modRowViewPresentationKey(derived)
@@ -498,7 +520,8 @@ export const buildModRowViewIndex = (
   return {
     rows,
     byOrderId: new Map(rows.map((row) => [row.item.orderId, row])),
-    selectedItemPresentationKey
+    selectedItemPresentationKey,
+    language: options.language
   };
 };
 

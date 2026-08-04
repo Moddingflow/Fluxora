@@ -26,11 +26,12 @@
     "test:installer-e2e": "npm run build:setup:frontend && npm run build:updater:frontend && node node_modules/@playwright/test/cli.js test e2e/installer-targets.spec.ts",
     "test:parity": "vitest run tests/parity-gate.test.ts",
     "parity:gate": "npm run typecheck && npm test && npm run test:e2e",
-    "test:e2e": "npm run build:frontend && node node_modules/@playwright/test/cli.js test --pass-with-no-tests"
+    "test:e2e": "npm run build:frontend && npm run build:setup:frontend && npm run build:updater:frontend && node node_modules/@playwright/test/cli.js test --pass-with-no-tests"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.104.0",
     "@tauri-apps/api": "^2.11.1",
+    "i18next": "26.0.2",
     "monaco-editor": "0.55.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

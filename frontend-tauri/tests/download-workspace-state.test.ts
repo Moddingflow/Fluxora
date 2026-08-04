@@ -269,7 +269,7 @@ describe('download workspace state', () => {
       'decision-first',
       'decision-second'
     ]);
-    expect(downloadStatusText(firstDecision)).toBe('Нужно решение');
+    expect(downloadStatusText(firstDecision, 'ru-RU')).toBe('Нужно решение');
     expect(filterDownloadEntries(loaded.items, '0.9.0')).toEqual([secondDecision]);
 
     const canceled = downloadWorkspaceReducer(loaded, {
@@ -454,7 +454,8 @@ describe('download workspace state', () => {
     });
     const resolved = downloadEntry('nxm-resolved', 'SkyUI 5.2 SE-3863-5-2-1579093884.7z');
 
-    expect(downloadTitle(unresolved)).toBe('Получаем название…');
+    expect(downloadTitle(unresolved)).toBe('Resolving name…');
+    expect(downloadTitle(unresolved, 'ru-RU')).toBe('Получаем название…');
     expect(downloadTitle(resolved)).toBe('SkyUI 5.2 SE');
   });
 
@@ -465,5 +466,8 @@ describe('download workspace state', () => {
 
     const missingProject = downloadCapabilityView(null, readyBridge);
     expect(missingProject.reason).toContain('Open a build');
+    expect(downloadCapabilityView(null, readyBridge, 'ru-RU').reason).toBe(
+      'Сначала откройте сборку, чтобы использовать загрузки.'
+    );
   });
 });

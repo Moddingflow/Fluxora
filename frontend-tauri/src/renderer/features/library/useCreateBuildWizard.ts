@@ -12,6 +12,7 @@ import { previewProjectDirectory } from '../../services/project-catalog-service'
 import { createRendererOperationId } from '../../services/renderer-operation-service';
 import type { FluxoraGameTemplate } from '../../../shared/fluxora-api';
 import { CREATE_BUILD_STEPS } from './CreateBuildWizard';
+import { useLocalization } from '../../../localization/react';
 
 interface UseCreateBuildWizardOptions {
   bridgeReady: boolean;
@@ -19,16 +20,17 @@ interface UseCreateBuildWizardOptions {
   templates: FluxoraGameTemplate[];
 }
 
-const wizardErrorMessage = (error: unknown): string =>
+const wizardErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message.trim()
     ? error.message
-    : 'The native file picker could not be opened.';
+    : fallback;
 
 export function useCreateBuildWizard({
   bridgeReady,
   defaultInstallRootDirectory,
   templates
 }: UseCreateBuildWizardOptions) {
+  const { locale, t } = useLocalization();
   const [isOpen, setIsOpen] = useState(false);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [furthestStepIndex, setFurthestStepIndex] = useState(0);
@@ -78,13 +80,13 @@ export function useCreateBuildWizard({
   const browseExecutable = useCallback(async (): Promise<boolean> => {
     const executableName = primaryGameExecutableName(selectedTemplate);
     if (!selectedTemplate || !executableName) {
-      setError('This game template does not declare an official executable.');
+      setError(t('wizard.noOfficialExecutable'));
       return false;
     }
 
     try {
       const result = await window.fluxora.dialogs.pickExecutable(
-        `Choose ${executableName}`,
+        t('wizard.chooseExecutable', { name: executableName }),
         draft.gamePath
       );
       if (result.canceled || !result.path) {
@@ -92,7 +94,7 @@ export function useCreateBuildWizard({
       }
 
       if (!isOfficialGameExecutablePath(selectedTemplate, result.path)) {
-        setError(`Select ${executableName}. Other executables cannot be used.`);
+        setError(t('wizard.invalidExecutable', { name: executableName }));
         return false;
       }
 
@@ -100,15 +102,15 @@ export function useCreateBuildWizard({
       setError(null);
       return true;
     } catch (pickerError) {
-      setError(wizardErrorMessage(pickerError));
+      setError(wizardErrorMessage(pickerError, t('wizard.pickerUnavailable')));
       return false;
     }
-  }, [draft.gamePath, selectedTemplate]);
+  }, [draft.gamePath, selectedTemplate, t]);
 
   const browseInstallRoot = useCallback(async () => {
     try {
       const result = await window.fluxora.dialogs.pickFolder(
-        'Choose the Fluxora Builds folder',
+        t('wizard.chooseBuildsFolder'),
         draft.installRootDirectory
       );
       if (!result.canceled && result.path) {
@@ -119,12 +121,12 @@ export function useCreateBuildWizard({
         setError(null);
       }
     } catch (pickerError) {
-      setError(wizardErrorMessage(pickerError));
+      setError(wizardErrorMessage(pickerError, t('wizard.pickerUnavailable')));
     }
-  }, [draft.installRootDirectory]);
+  }, [draft.installRootDirectory, t]);
 
   const next = useCallback((): boolean => {
-    const stepError = projectDraftStepError(draft, activeStepIndex, selectedTemplate);
+    const stepError = projectDraftStepError(draft, activeStepIndex, selectedTemplate, locale);
     if (stepError) {
       setError(stepError);
       return false;
@@ -135,7 +137,7 @@ export function useCreateBuildWizard({
     setActiveStepIndex(nextStepIndex);
     setFurthestStepIndex((current) => Math.max(current, nextStepIndex));
     return true;
-  }, [activeStepIndex, draft, selectedTemplate]);
+  }, [activeStepIndex, draft, locale, selectedTemplate]);
 
   const back = useCallback(() => {
     setError(null);
@@ -149,7 +151,7 @@ export function useCreateBuildWizard({
       }
 
       for (let index = 0; index < stepIndex; index += 1) {
-        const priorError = projectDraftStepError(draft, index, selectedTemplate);
+        const priorError = projectDraftStepError(draft, index, selectedTemplate, locale);
         if (priorError) {
           setActiveStepIndex(index);
           setError(priorError);
@@ -160,7 +162,7 @@ export function useCreateBuildWizard({
       setError(null);
       setActiveStepIndex(stepIndex);
     },
-    [draft, furthestStepIndex, selectedTemplate]
+    [draft, furthestStepIndex, locale, selectedTemplate]
   );
 
   const validateAll = useCallback((): boolean => {
@@ -172,9 +174,9 @@ export function useCreateBuildWizard({
 
     setActiveStepIndex(incompleteStep);
     setFurthestStepIndex((current) => Math.max(current, incompleteStep));
-    setError(projectDraftStepError(draft, incompleteStep, selectedTemplate));
+    setError(projectDraftStepError(draft, incompleteStep, selectedTemplate, locale));
     return false;
-  }, [draft, selectedTemplate, templates]);
+  }, [draft, locale, selectedTemplate, templates]);
 
   useEffect(() => {
     if (

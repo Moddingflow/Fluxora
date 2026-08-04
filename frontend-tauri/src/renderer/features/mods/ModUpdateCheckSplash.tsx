@@ -1,4 +1,6 @@
 import type { FluxoraOperationProgress } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
+import { useLocalization } from '../../../localization/react';
 import { LoadingSplash } from '../../design-system';
 
 export interface ModUpdateCheckSplashState {
@@ -6,15 +8,18 @@ export interface ModUpdateCheckSplashState {
   progress: number | null;
   statusText: string;
   currentItem: string;
+  language: string;
 }
 
 export const createModUpdateCheckSplashState = (
-  operationId: string
+  operationId: string,
+  language = 'en-US'
 ): ModUpdateCheckSplashState => ({
   operationId,
   progress: null,
-  statusText: 'Подготавливаем проверку',
-  currentItem: ''
+  statusText: translateForLanguage(language, 'modUpdate.preparing'),
+  currentItem: '',
+  language
 });
 
 export const applyModUpdateCheckProgress = (
@@ -36,7 +41,10 @@ export const applyModUpdateCheckProgress = (
     : null;
   const countText =
     completed !== null && total !== null && total > 0
-      ? `Проверено ${Math.min(completed, total)} из ${total}`
+      ? translateForLanguage(current.language, 'modUpdate.checked', {
+          completed: Math.min(completed, total),
+          total
+        })
       : '';
 
   return {
@@ -56,6 +64,7 @@ export const ModUpdateCheckSplash = ({
 }: {
   state: ModUpdateCheckSplashState | null;
 }) => {
+  const { t } = useLocalization();
   if (!state) {
     return null;
   }
@@ -66,16 +75,16 @@ export const ModUpdateCheckSplash = ({
 
   return (
     <LoadingSplash
-      aria-label="Проверка обновлений модов"
+      aria-label={t('modUpdate.aria')}
       className="mod-update-check-splash"
       detail={detail}
       indeterminate={state.progress === null}
       messageIntervalMs={0}
-      messages={['Проверяем обновления модов']}
+      messages={[t('modUpdate.title')]}
       open
       progress={state.progress ?? 0}
       subtitle={detail}
-      title="Проверяем обновления модов"
+      title={t('modUpdate.title')}
     />
   );
 };

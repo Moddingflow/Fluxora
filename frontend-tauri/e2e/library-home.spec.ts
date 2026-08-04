@@ -777,7 +777,7 @@ test.beforeEach(async ({ page }) => {
       archiveId: null,
       buildStatus: null,
       transferState: 'awaiting-decision',
-      transferMessage: 'Нужно решение',
+      transferMessage: 'Needs decision',
       sizeText: '',
       createdAtText: 'now',
       progressPercent: 0,
@@ -1383,7 +1383,9 @@ test.beforeEach(async ({ page }) => {
         code: 'install.fomodContextChanged'
       });
     };
-    let language = 'en-us';
+    const testParameters = new URLSearchParams(window.location.search);
+    let language = testParameters.get('testLanguage') ?? 'en-us';
+    const languageListeners = new Set<(result: any) => void>();
     let nexusLinked = false;
     let nexusInitialStateApplied = false;
     let moddingFlowLinked = false;
@@ -1811,7 +1813,12 @@ test.beforeEach(async ({ page }) => {
       },
       bridge: {
         getLanguage: async () => ({ language: 'en-us', operationId: 'op_language' }),
-        getStatus: async () => ({
+        getStatus: async () => {
+          const delayMs = Number(testParameters.get('testLanguageDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
+          return ({
           capabilities: {
             arch: 'x64',
             core: { available: true, libraryName: 'FluxoraCore.dll' },
@@ -1844,7 +1851,8 @@ test.beforeEach(async ({ page }) => {
           operationId: 'op_status',
           ready: true,
           theme: 'dark'
-        }),
+          });
+        },
         setLanguage: async () => ({ language: 'en-us', operationId: 'op_language' }),
         shutdown: async () => ({ accepted: true, operationId: 'op_shutdown' })
       },
@@ -2139,7 +2147,7 @@ test.beforeEach(async ({ page }) => {
               ...nexusSameFileDecisionDownload(),
               duplicateDecision: null,
               transferState: 'downloading',
-              transferMessage: 'Загрузка',
+              transferMessage: 'Loading',
               isDownloading: true
             };
           }
@@ -2706,11 +2714,11 @@ test.beforeEach(async ({ page }) => {
           for (const callback of operationProgressCallbacks) {
             callback({
               currentItem: 'mods\\Local Patch\\textures',
-              currentStep: 'Добавляем файлы в пакет',
+              currentStep: 'Adding files to package',
               operationId,
               overallPercent: 42,
               phase: 'packing',
-              statusMessage: 'Добавляем файлы в пакет'
+              statusMessage: 'Adding files to package'
             });
           }
           await new Promise<void>((resolve) => setTimeout(resolve, 500));
@@ -3851,10 +3859,16 @@ test.beforeEach(async ({ page }) => {
       settings: {
         getLanguage: async () => ({ language, operationId: 'op_language' }),
         getTheme: async () => ({ operationId: 'op_theme', theme: 'dark' }),
+        onLanguageChanged: (callback: (result: any) => void) => {
+          languageListeners.add(callback);
+          return () => languageListeners.delete(callback);
+        },
         setLanguage: async (nextLanguage: any, operation: any) => {
           calls.push({ method: 'settings.setLanguage', payload: { language: nextLanguage, operation } });
           language = nextLanguage;
-          return { language, operationId: operation?.operationId ?? 'op_language' };
+          const result = { language, operationId: operation?.operationId ?? 'op_language' };
+          languageListeners.forEach((listener) => listener(result));
+          return result;
         },
         setTheme: async () => ({ operationId: 'op_theme', theme: 'dark' })
       },
@@ -3944,7 +3958,7 @@ const openSkyrimBuild = async (page: Page) => {
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeHidden();
 };
 
 const configureSeparatorDeletionFixture = async (
@@ -4089,9 +4103,9 @@ const verifyShiftSelectedSeparatorDeletion = async (
   }
   await separatorRows[2].press('Delete');
 
-  const keyboardDialog = page.getByRole('dialog', { name: 'Удаление разделителей' });
+  const keyboardDialog = page.getByRole('dialog', { name: 'Delete separators' });
   await expect(keyboardDialog).toBeVisible();
-  await expect(keyboardDialog.getByText('3 разделителя', { exact: true })).toBeVisible();
+  await expect(keyboardDialog.getByText('3 separators', { exact: true })).toBeVisible();
   await expect.poll(async () => (await deleteCalls()).length).toBe(0);
   await expect(page.getByText(/Deleting .*separator/i)).toHaveCount(0);
 
@@ -4099,8 +4113,8 @@ const verifyShiftSelectedSeparatorDeletion = async (
   await expect(keyboardDialog).toHaveCount(0);
   await expect.poll(async () => (await deleteCalls()).length).toBe(0);
   await separatorRows[2].press('Delete');
-  await page.getByRole('dialog', { name: 'Удаление разделителей' })
-    .getByRole('button', { name: 'Удалить' })
+  await page.getByRole('dialog', { name: 'Delete separators' })
+    .getByRole('button', { name: 'Delete' })
     .click();
 
   await expect.poll(() =>
@@ -4147,12 +4161,12 @@ const verifyShiftSelectedSeparatorDeletion = async (
   await expect(deleteMenuItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
   await deleteMenuItem.click();
 
-  const menuDialog = page.getByRole('dialog', { name: 'Удаление разделителей' });
+  const menuDialog = page.getByRole('dialog', { name: 'Delete separators' });
   await expect(menuDialog).toBeVisible();
-  await expect(menuDialog.getByText('3 разделителя', { exact: true })).toBeVisible();
+  await expect(menuDialog.getByText('3 separators', { exact: true })).toBeVisible();
   await expect.poll(async () => (await deleteCalls()).length).toBe(3);
   await expect(page.getByText(/Deleting .*separator/i)).toHaveCount(0);
-  await menuDialog.getByRole('button', { name: 'Удалить' }).click();
+  await menuDialog.getByRole('button', { name: 'Delete' }).click();
 
   await expect.poll(async () => (await deleteCalls()).length).toBe(6);
   for (const row of separatorRows.slice(3)) {
@@ -4255,10 +4269,10 @@ const openSkyrimBuildWithDuplicateDecision = async (page: Page) => {
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
-  const dialog = page.getByRole('dialog', { name: 'Найдена новая версия' });
+  const dialog = page.getByRole('dialog', { name: 'New version found' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('Обновление архива Nexus', { exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('button', { name: 'Отмена', exact: true })).toHaveCount(0);
+  await expect(dialog.getByText('Nexus archive update', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
 };
 
 const enableLargePostInstallRevealWorkspace = async (page: Page) => {
@@ -4559,12 +4573,12 @@ const submitFluxPackExportDialog = async (
   includeGeneratedAssets = false
 ) => {
   const packageTypeLabels = {
-    full: 'Полная',
-    recipe: 'Рецепт'
+    full: 'Full',
+    recipe: 'Recipe'
   } as const;
-  const dialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+  const dialog = page.getByRole('dialog', { name: 'Package build' });
   await expect(dialog).toBeVisible();
-  const packageTypeSelect = dialog.getByRole('combobox', { name: 'Тип упаковки FluxPack' });
+  const packageTypeSelect = dialog.getByRole('combobox', { name: 'FluxPack package type' });
   await packageTypeSelect.click();
   const packageTypeMenu = page.getByRole('listbox');
   await expect(packageTypeMenu).toBeVisible();
@@ -4575,13 +4589,13 @@ const submitFluxPackExportDialog = async (
   await expect(packageTypeSelect).toContainText(packageTypeLabels[packageType]);
   if (includeGeneratedAssets && packageType === 'recipe') {
     const generatedAssetsCheckbox = dialog.getByRole('checkbox', {
-      name: /Добавить сгенерированные файлы/
+      name: /Include generated files/
     });
     await generatedAssetsCheckbox.focus();
     await page.keyboard.press('Space');
     await expect(generatedAssetsCheckbox).toBeChecked();
   }
-  await dialog.getByRole('button', { name: 'Упаковать', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Package', exact: true }).click();
 };
 
 const rowContextMenuScrollbarState = async (menu: Locator) =>
@@ -4622,7 +4636,7 @@ const expectRowContextMenuWithoutScrollbar = async (menu: Locator) => {
 test('renders mod and download popup menus without scrollbars', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.click({ button: 'right' });
   const modMenu = page.getByRole('menu', { name: 'Unofficial Patch actions' });
   await expect(modMenu.getByRole('menuitem', { name: 'Open folder' })).toBeVisible();
@@ -4631,7 +4645,7 @@ test('renders mod and download popup menus without scrollbars', async ({ page })
   await page.keyboard.press('Escape');
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await downloadRow.click({ button: 'right' });
   const downloadMenu = page.getByRole('menu', { name: 'SkyUI actions' });
@@ -4639,14 +4653,14 @@ test('renders mod and download popup menus without scrollbars', async ({ page })
   await expect(downloadMenu.getByRole('menuitem', { name: 'Show in folder' })).toBeVisible();
   await expect(downloadMenu.getByRole('menuitem', { name: 'Rename' })).toBeVisible();
   await expect(downloadMenu.getByRole('menuitem', { name: 'Copy as path' })).toBeVisible();
-  await expect(downloadMenu.getByRole('menuitem', { name: 'Удалить', exact: true })).toBeVisible();
+  await expect(downloadMenu.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
   await expectRowContextMenuWithoutScrollbar(downloadMenu);
 });
 
 test('renames an installed mod from its context menu in the install-style dialog', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.click({ button: 'right' });
   await page.getByRole('menu', { name: 'Unofficial Patch actions' })
     .getByRole('menuitem', { name: 'Rename' })
@@ -4663,7 +4677,7 @@ test('renames an installed mod from its context menu in the install-style dialog
     newName: 'Unofficial Patch Renamed',
     projectDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul'
   });
-  await expect(page.getByRole('row', { name: /Unofficial Patch Renamed mod/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Unofficial Patch Renamed Mod/ })).toBeVisible();
 });
 
 test('copies an exact raw download path and renames the archive from its context menu', async ({
@@ -4672,7 +4686,7 @@ test('copies an exact raw download path and renames the archive from its context
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await downloadRow.click({ button: 'right' });
   await page.getByRole('menu', { name: 'SkyUI actions' })
@@ -4703,11 +4717,11 @@ test('copies an exact raw download path and renames the archive from its context
 test('opens the installed mod source page from the row context menu', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.click({ button: 'right' });
 
   const modMenu = page.getByRole('menu', { name: 'Unofficial Patch actions' });
-  const openSourceAction = modMenu.getByRole('menuitem', { name: 'Открыть источник' });
+  const openSourceAction = modMenu.getByRole('menuitem', { name: 'Open source' });
   await expect(openSourceAction).toBeVisible();
   await openSourceAction.click();
 
@@ -4723,7 +4737,7 @@ test('positions the overwrite context menu at the right-click point within the v
   await openSkyrimBuild(page);
 
   const overwriteRow = page.getByRole('row', {
-    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+    name: /Skyrim graphics overhaul .* Output files folder Overwrite folder/
   });
   await overwriteRow.scrollIntoViewIfNeeded();
 
@@ -4766,7 +4780,7 @@ test('stacks the overwrite context menu above the mod list rows it overlaps', as
   await openSkyrimBuild(page);
 
   const overwriteRow = page.getByRole('row', {
-    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+    name: /Skyrim graphics overhaul .* Output files folder Overwrite folder/
   });
   await overwriteRow.scrollIntoViewIfNeeded();
 
@@ -4805,11 +4819,11 @@ test.describe('deletes selected mods with Del', () => {
   test('opens confirmation before deleting the focused mod', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
     await modRow.click();
     await modRow.press('Delete');
 
-    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
+    const dialog = page.getByRole('dialog', { name: 'Delete mod' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
     expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
@@ -4818,12 +4832,12 @@ test.describe('deletes selected mods with Del', () => {
   test('focuses the delete action and confirms it with Enter', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
     await modRow.click();
     await modRow.press('Delete');
 
-    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
-    const deleteButton = dialog.getByRole('button', { name: 'Удалить' });
+    const dialog = page.getByRole('dialog', { name: 'Delete mod' });
+    const deleteButton = dialog.getByRole('button', { name: 'Delete' });
     await expect(deleteButton).toBeFocused();
     await page.keyboard.press('Enter');
 
@@ -4833,13 +4847,13 @@ test.describe('deletes selected mods with Del', () => {
   test('reopens confirmation with Del after dismissing it', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
-    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
+    const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
+    const dialog = page.getByRole('dialog', { name: 'Delete mod' });
     await modRow.click();
     await modRow.press('Delete');
     await expect(dialog).toBeVisible();
 
-    await dialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+    await dialog.getByRole('button', { name: 'Close deletion dialog' }).click();
     await expect(dialog).toHaveCount(0);
     await page.keyboard.press('Delete');
 
@@ -4849,19 +4863,19 @@ test.describe('deletes selected mods with Del', () => {
   test('confirms and deletes every mod in the focused row selection', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const patchRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
-    const skyuiRow = page.getByRole('row', { name: /SkyUI mod/ });
+    const patchRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+    const skyuiRow = page.getByRole('row', { name: /SkyUI Mod/ });
     await patchRow.click();
     await page.keyboard.down('Control');
     await skyuiRow.click();
     await page.keyboard.up('Control');
     await skyuiRow.press('Delete');
 
-    const dialog = page.getByRole('dialog', { name: 'Удаление модов' });
-    await expect(dialog.getByText('2 мода', { exact: true })).toBeVisible();
+    const dialog = page.getByRole('dialog', { name: 'Delete mods' });
+    await expect(dialog.getByText('2 mods', { exact: true })).toBeVisible();
     expect((await callMethods(page)).filter((method) => method === 'mods.deleteInstalled')).toHaveLength(0);
 
-    await dialog.getByRole('button', { name: 'Удалить' }).click();
+    await dialog.getByRole('button', { name: 'Delete' }).click();
     await expect
       .poll(async () =>
         (await callMethods(page)).filter((method) => method === 'mods.deleteInstalled').length
@@ -4872,14 +4886,14 @@ test.describe('deletes selected mods with Del', () => {
   test('shows the Del hint without changing the delete menu item name', async ({ page }) => {
     await openSkyrimBuild(page);
 
-    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
     await modRow.click({ button: 'right' });
 
-    const deleteItem = page.getByRole('menuitem', { name: 'Удалить', exact: true });
-    const label = deleteItem.getByText('Удалить', { exact: true });
+    const deleteItem = page.getByRole('menuitem', { name: 'Delete', exact: true });
+    const label = deleteItem.getByText('Delete', { exact: true });
     const shortcut = deleteItem.getByText('Del', { exact: true });
     await expect(deleteItem).toBeVisible();
-    await expect(deleteItem).toHaveAccessibleName('Удалить');
+    await expect(deleteItem).toHaveAccessibleName('Delete');
     await expect(deleteItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
     await expect(shortcut).toBeVisible();
 
@@ -4897,10 +4911,10 @@ test.describe('deletes selected mods with Del', () => {
     await openSkyrimBuild(page);
 
     const overwriteRow = page.getByRole('row', {
-      name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+      name: /Skyrim graphics overhaul .* Output files folder Overwrite folder/
     });
     const searchInput = page.getByLabel('Search mods');
-    const deletionDialog = page.getByRole('dialog', { name: /Удаление мод/ });
+    const deletionDialog = page.getByRole('dialog', { name: /Delete mod/ });
 
     await overwriteRow.focus();
     await overwriteRow.press('Delete');
@@ -4922,7 +4936,7 @@ test.describe('deletes Shift-selected separators as one action', () => {
 
   test('deletes all selected plugin separators with Delete and the context menu', async ({ page }) => {
     await configureSeparatorDeletionFixture(page, 'plugins');
-    await page.getByLabel('Right pane').getByRole('tab', { name: 'Плагины', exact: true }).click();
+    await page.getByLabel('Right pane').getByRole('tab', { name: 'Plugins', exact: true }).click();
 
     await verifyShiftSelectedSeparatorDeletion(page, 'plugins');
   });
@@ -4934,7 +4948,7 @@ test('does not create browser text selection when dragging across a download row
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadTitle = rightPane
     .getByRole('row', { name: /SmoothCam/ })
     .getByText('SmoothCam', { exact: true });
@@ -4960,7 +4974,7 @@ test('selects only filtered downloads with Ctrl+A after clicking an installable 
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadsTable = rightPane.getByRole('table', { name: 'Downloads' });
   const searchInput = rightPane.getByLabel('Search downloads');
   await searchInput.fill('Ready');
@@ -4993,7 +5007,7 @@ test('keeps Ctrl+A text selection in the downloads search field', async ({ page 
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const searchInput = rightPane.getByLabel('Search downloads');
   await searchInput.fill('SkyUI');
   await searchInput.press('Control+A');
@@ -5011,12 +5025,12 @@ test.describe('deletes selected downloads with Del', () => {
     await openSkyrimBuild(page);
 
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
     await downloadRow.click();
     await downloadRow.press('Delete');
 
-    const dialog = page.getByRole('dialog', { name: 'Удаление файла' });
+    const dialog = page.getByRole('dialog', { name: 'Delete file' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
     expect(await callMethods(page)).not.toContain('downloads.delete');
@@ -5026,7 +5040,7 @@ test.describe('deletes selected downloads with Del', () => {
     await openSkyrimBuild(page);
 
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     const skyuiRow = rightPane.getByRole('row', { name: /SkyUI/ });
     const smoothcamRow = rightPane.getByRole('row', { name: /SmoothCam/ });
     await skyuiRow.click();
@@ -5035,11 +5049,11 @@ test.describe('deletes selected downloads with Del', () => {
     await page.keyboard.up('Control');
     await smoothcamRow.press('Delete');
 
-    const dialog = page.getByRole('dialog', { name: 'Удаление файлов' });
-    await expect(dialog.getByText('2 файла', { exact: true })).toBeVisible();
+    const dialog = page.getByRole('dialog', { name: 'Delete files' });
+    await expect(dialog.getByText('2 files', { exact: true })).toBeVisible();
     expect((await callMethods(page)).filter((method) => method === 'downloads.delete')).toHaveLength(0);
 
-    await dialog.getByRole('button', { name: 'Удалить' }).click();
+    await dialog.getByRole('button', { name: 'Delete' }).click();
     await expect
       .poll(async () =>
         (await callMethods(page)).filter((method) => method === 'downloads.delete').length
@@ -5051,14 +5065,14 @@ test.describe('deletes selected downloads with Del', () => {
     await openSkyrimBuild(page);
 
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     await rightPane.getByRole('row', { name: /SkyUI/ }).click({ button: 'right' });
 
-    const deleteItem = page.getByRole('menuitem', { name: 'Удалить', exact: true });
-    const label = deleteItem.getByText('Удалить', { exact: true });
+    const deleteItem = page.getByRole('menuitem', { name: 'Delete', exact: true });
+    const label = deleteItem.getByText('Delete', { exact: true });
     const shortcut = deleteItem.getByText('Del', { exact: true });
     await expect(deleteItem).toBeVisible();
-    await expect(deleteItem).toHaveAccessibleName('Удалить');
+    await expect(deleteItem).toHaveAccessibleName('Delete');
     await expect(deleteItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
     await expect(shortcut).toBeVisible();
 
@@ -5076,12 +5090,12 @@ test.describe('deletes selected downloads with Del', () => {
     await openSkyrimBuild(page);
 
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     const searchInput = rightPane.getByLabel('Search downloads');
     await searchInput.fill('SkyUI');
     await searchInput.press('Delete');
 
-    await expect(page.getByRole('dialog', { name: /Удаление файл/ })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: /Delete file/ })).toHaveCount(0);
     expect((await callMethods(page)).filter((method) => method === 'downloads.delete')).toHaveLength(0);
   });
 });
@@ -5091,36 +5105,36 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
 }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
   await modRow.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Удалить', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
 
-  const modDialog = page.getByRole('dialog', { name: 'Удаление мода' });
+  const modDialog = page.getByRole('dialog', { name: 'Delete mod' });
   await expect(modDialog).toBeVisible();
   await expect(modDialog.getByText('SkyUI', { exact: true })).toBeVisible();
   expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
-  await modDialog.getByRole('button', { name: 'Удалить' }).click();
+  await modDialog.getByRole('button', { name: 'Delete' }).click();
   await expect.poll(() => callMethods(page)).toContain('mods.deleteInstalled');
   await expect(page.locator('.operation-overlay')).toHaveCount(0);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await downloadRow.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Удалить', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
 
-  const downloadDialog = page.getByRole('dialog', { name: 'Удаление файла' });
+  const downloadDialog = page.getByRole('dialog', { name: 'Delete file' });
   await expect(downloadDialog).toBeVisible();
   await expect(downloadDialog.getByText('SkyUI', { exact: true })).toBeVisible();
   await expect(
     downloadDialog.getByText(
-      'Архив будет удалён из глобальной библиотеки Downloads для всех сборок этой игры. Уже установленные моды останутся на месте.',
+      'The archive will be removed from the global Downloads library for every build of this game. Installed mods remain in place.',
       { exact: true }
     )
   ).toBeVisible();
   expect(await callMethods(page)).not.toContain('downloads.delete');
-  await downloadDialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+  await downloadDialog.getByRole('button', { name: 'Close deletion dialog' }).click();
   await expect(downloadDialog).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Home' }).click();
@@ -5128,11 +5142,11 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
   await page.getByRole('button', { name: 'Skyrim graphics overhaul actions' }).click();
   await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
 
-  const buildDialog = page.getByRole('dialog', { name: 'Удаление сборки' });
+  const buildDialog = page.getByRole('dialog', { name: 'Delete build' });
   await expect(buildDialog).toBeVisible();
   await expect(buildDialog.getByText('Skyrim graphics overhaul', { exact: true })).toBeVisible();
   expect(await callMethods(page)).not.toContain('projects.delete');
-  await buildDialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+  await buildDialog.getByRole('button', { name: 'Close deletion dialog' }).click();
   await expect(buildDialog).toHaveCount(0);
 });
 
@@ -5140,8 +5154,8 @@ test('keeps mod and plugin checkmarks centered inside their controls', async ({ 
   await openSkyrimBuild(page);
 
   const checkboxControls = [
-    page.getByRole('row', { name: /Unofficial Patch mod/ }).getByRole('checkbox'),
-    page.getByRole('row', { name: /SkyUI\.esp plugin/ }).getByRole('checkbox')
+    page.getByRole('row', { name: /Unofficial Patch Mod/ }).getByRole('checkbox'),
+    page.getByRole('row', { name: /SkyUI\.esp Plugin/ }).getByRole('checkbox')
   ];
 
   for (const checkbox of checkboxControls) {
@@ -5187,12 +5201,12 @@ test('enables the selected plugin from its row context menu', async ({ page }) =
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp Plugin/ });
   await expect(pluginRow.getByRole('checkbox')).not.toBeChecked();
   await pluginRow.click({ button: 'right' });
 
   const enableSelected = page.getByRole('menuitem', {
-    name: 'Включить выбранный плагин',
+    name: 'Enable selected plugin',
     exact: true
   });
   await expect(enableSelected).toBeEnabled();
@@ -5212,8 +5226,8 @@ test('enables every selected plugin from the plural row context action', async (
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const skyuiRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const racemenuRow = page.getByRole('row', { name: /RaceMenu\.esp plugin/ });
+  const skyuiRow = page.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const racemenuRow = page.getByRole('row', { name: /RaceMenu\.esp Plugin/ });
   await skyuiRow.click();
   await page.keyboard.down('Control');
   await racemenuRow.click();
@@ -5223,7 +5237,7 @@ test('enables every selected plugin from the plural row context action', async (
 
   await racemenuRow.click({ button: 'right' });
   const enableSelected = page.getByRole('menuitem', {
-    name: 'Включить выбранные плагины',
+    name: 'Enable selected plugins',
     exact: true
   });
   await expect(enableSelected).toBeEnabled();
@@ -5279,8 +5293,8 @@ test('enables every selected plugin from the plural row context action', async (
 test('hides open-in-explorer actions for multi-selected mod and plugin rows', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
-  const skyuiModRow = page.getByRole('row', { name: /SkyUI mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+  const skyuiModRow = page.getByRole('row', { name: /SkyUI Mod/ });
   await modRow.click();
   await page.keyboard.down('Control');
   await skyuiModRow.click();
@@ -5292,8 +5306,8 @@ test('hides open-in-explorer actions for multi-selected mod and plugin rows', as
   await expect(page.getByRole('menuitem', { name: 'Open folder' })).toHaveCount(0);
   await page.keyboard.press('Escape');
 
-  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const skyrimPluginRow = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const skyrimPluginRow = page.getByRole('row', { name: /Skyrim\.esm Plugin/ });
   await pluginRow.click();
   await page.keyboard.down('Control');
   await skyrimPluginRow.click();
@@ -5302,7 +5316,7 @@ test('hides open-in-explorer actions for multi-selected mod and plugin rows', as
   await expect(skyrimPluginRow).toHaveAttribute('data-selected', 'true');
   await pluginRow.click({ button: 'right' });
   await expect(page.getByRole('menu')).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Открыть в проводнике' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Open in File Explorer' })).toHaveCount(0);
 });
 
 const moveRowDragToSlot = async (
@@ -5310,7 +5324,7 @@ const moveRowDragToSlot = async (
   source: Locator,
   target: Locator,
   placement: 'before' | 'after',
-  dropChipText = 'Сюда'
+  dropChipText = 'Move here'
 ) => {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -5353,7 +5367,7 @@ const dragDownloadToModSlot = async (
   await page.evaluate(() => {
     document.addEventListener('dragstart', (event) => event.preventDefault(), { capture: true });
   });
-  await moveRowDragToSlot(page, source, target, placement, 'Установить сюда');
+  await moveRowDragToSlot(page, source, target, placement, 'Install here');
   await expect(source).toHaveAttribute('data-dragging', 'true');
   await expect(target).toHaveAttribute('data-install-drop-target', 'true');
   await page.mouse.up();
@@ -5409,8 +5423,8 @@ const callMethods = async (page: Page) =>
 test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Replace', async ({ page }) => {
   await openSkyrimBuildWithDuplicateDecision(page);
 
-  await page.getByRole('button', { name: 'Заменить', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Найдена новая версия' })).toBeHidden();
+  await page.getByRole('button', { name: 'Replace', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'New version found' })).toBeHidden();
   await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
     choice: 'replace',
     decisionId: 'decision-skyui-100-to-101',
@@ -5418,7 +5432,7 @@ test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Replace', async ({ page })
   });
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI 1\.0\.1/ })).toBeVisible();
   await expect(rightPane.getByRole('row', { name: /SkyUI 1\.0\.1 \(2\)/ })).toHaveCount(0);
   await expect(rightPane.locator('.download-row:not(.mod-row--head)').first()).toContainText(
@@ -5429,31 +5443,31 @@ test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Replace', async ({ page })
 test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Keep both', async ({ page }) => {
   await openSkyrimBuildWithDuplicateDecision(page);
 
-  await page.getByRole('button', { name: 'Сохранить оба', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Найдена новая версия' })).toBeHidden();
+  await page.getByRole('button', { name: 'Keep both', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'New version found' })).toBeHidden();
   await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
     choice: 'keepBoth',
     decisionId: 'decision-skyui-100-to-101'
   });
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI 1\.0\.1 \(2\)/ })).toBeVisible();
 });
 
 test('closing the Nexus archive conflict cancels only the pending request', async ({ page }) => {
   await openSkyrimBuildWithDuplicateDecision(page);
 
-  await page.getByRole('button', { name: 'Отменить загрузку' }).click();
-  await expect(page.getByRole('dialog', { name: 'Найдена новая версия' })).toBeHidden();
+  await page.getByRole('button', { name: 'Cancel download' }).click();
+  await expect(page.getByRole('dialog', { name: 'New version found' })).toBeHidden();
   await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
     choice: 'cancel',
     decisionId: 'decision-skyui-100-to-101'
   });
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
-  await expect(rightPane.getByText('Нужно решение', { exact: true })).toHaveCount(0);
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
+  await expect(rightPane.getByText('Needs decision', { exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('row', { name: /SkyUI/ }).first()).toBeVisible();
 });
 
@@ -5894,7 +5908,7 @@ test('restores the previous workspace after cancelling a build open', async ({ p
   });
 
   await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
-  await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   const newBuildButton = page.getByRole('button', { name: 'New build' }).first();
   await expect(newBuildButton).toBeDisabled();
   await page.evaluate(() => {
@@ -5947,7 +5961,7 @@ test('restores the active non-default profile after cancelling a build open', as
   });
 
   await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
-  await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.evaluate(() => {
     (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       0;
@@ -5974,7 +5988,7 @@ test('restores the active non-default profile after cancelling a build open', as
 test('ignores a stale store response after another build opens', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
   await page.evaluate(() => {
     const facade = (window as typeof window & { fluxora: any }).fluxora;
@@ -6025,7 +6039,7 @@ test('shows one global archive with independent statuses for two builds of the s
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   const firstPane = page.getByLabel('Right pane');
-  await firstPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await firstPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(firstPane.getByRole('row', { name: /SkyUI/ }).getByText('Ready', { exact: true }))
     .toBeVisible();
 
@@ -6033,7 +6047,7 @@ test('shows one global archive with independent statuses for two builds of the s
   await page.getByRole('button', { name: 'Open Skyrim performance profile' }).click();
   await expect(page.getByRole('heading', { name: 'Skyrim performance profile' })).toBeVisible();
   const secondPane = page.getByLabel('Right pane');
-  await secondPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await secondPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(secondPane.getByRole('row', { name: /SkyUI/ }).getByText('Deleted', { exact: true }))
     .toBeVisible();
 
@@ -6081,13 +6095,13 @@ test('shows optimistic Installing before the persisted archive status becomes In
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '900'));
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const skyUiRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await skyUiRow.dblclick();
 
   const dialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await dialog.getByRole('button', { name: /Объединить/ }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await dialog.getByRole('button', { name: /Merge/ }).click();
 
   await expect(skyUiRow.getByText('Installing', { exact: true })).toBeVisible({ timeout: 500 });
   await expect(skyUiRow.getByText('Installed', { exact: true })).toBeVisible({ timeout: 5_000 });
@@ -6100,10 +6114,10 @@ test('a mod cannot be deleted while its durable install is active', async ({
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '900'));
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   const pendingRow = page.locator('.mod-list-row').filter({
     hasText: 'Aetherius - A Race Overhaul'
@@ -6112,7 +6126,7 @@ test('a mod cannot be deleted while its durable install is active', async ({
   await pendingRow.click();
   await pendingRow.press('Delete');
 
-  await expect(page.getByRole('dialog', { name: 'Удаление мода' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Delete mod' })).toHaveCount(0);
   await expect(pendingRow).not.toHaveAttribute('data-order-id', /^pending-install:/, {
     timeout: 5_000
   });
@@ -6128,13 +6142,13 @@ test('keeps the standard install name stable for double-click and context-menu i
   });
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Spell Perks Item Distributor \(SPID\)/ }).dblclick();
 
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   const dialogSurface = dialog.locator('.install-dialog');
   await expect(dialog).toHaveAttribute('aria-busy', 'true');
-  await expect(dialog.locator('.install-dialog-title')).toHaveText('Установка мода');
+  await expect(dialog.locator('.install-dialog-title')).toHaveText('Install mod');
 
   const detectingBox = await dialogSurface.boundingBox();
   const shimmer = await dialog.locator('.flx-skeleton').first().evaluate((element) => {
@@ -6163,7 +6177,7 @@ test('keeps the standard install name stable for double-click and context-menu i
   const modNameInput = dialog.getByLabel(/Mod name/);
   await expect(modNameInput).toHaveValue('Spell Perks Item Distributor');
   await modNameInput.fill('SPID Custom Setup');
-  await expect(dialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Install', exact: true })).toBeVisible();
   const optionsBox = await dialogSurface.boundingBox();
 
   expect(detectingBox).not.toBeNull();
@@ -6171,7 +6185,7 @@ test('keeps the standard install name stable for double-click and context-menu i
   expect(detectingBox?.width).toBe(optionsBox?.width);
   expect(detectingBox?.height).toBe(optionsBox?.height);
 
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
   await expect(dialog.locator('[data-placement-key="root:data"]')).toBeVisible();
   await expect(dialog.locator('[data-placement-key="root:gameRoot"]')).toBeVisible();
   await expect(dialog.getByText('The archive matches the game structure')).toBeVisible();
@@ -6197,7 +6211,7 @@ test('keeps the standard install name stable for double-click and context-menu i
   expect(returnedOptionsBox?.width).toBe(optionsBox?.width);
   expect(returnedOptionsBox?.height).toBe(optionsBox?.height);
 
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
   await expect(savedFolder).toBeVisible();
   await dialog.getByRole('button', { name: 'Back' }).click();
   await expect(modNameInput).toHaveValue('SPID Custom Setup');
@@ -6206,7 +6220,7 @@ test('keeps the standard install name stable for double-click and context-menu i
   expect(preflightCalls.filter((method) => method === 'downloads.analyzeFomod')).toHaveLength(1);
   expect(preflightCalls.filter((method) => method === 'downloads.planInstall')).toHaveLength(1);
 
-  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await dialog.getByRole('button', { name: 'Close installation window' }).click();
   await expect(dialog).toHaveCount(0);
 
   const spidRow = rightPane.getByRole('row', {
@@ -6233,12 +6247,12 @@ test('keeps the standard install name stable for double-click and context-menu i
 test('uses the compact mod checkbox visual for archive file inclusion', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
 
   const checkbox = dialog
     .locator('[data-placement-key="file:readme.txt"]')
@@ -6285,12 +6299,12 @@ test('uses the compact mod checkbox visual for archive file inclusion', async ({
 test('edits standard archive placement with pointer, keyboard history, and V2 directories', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
   const gameRoot = dialog.locator('[data-placement-key="root:gameRoot"]');
   const dataRoot = dialog.locator('[data-placement-key="root:data"]');
   const interfaceFolder = dialog.locator('[data-placement-key="dir:data:interface"]');
@@ -6399,12 +6413,12 @@ test('repairs redundant Data placement from blocked to ready without hiding the 
   await openSkyrimBuild(page);
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.redundantDataLayout', 'true'));
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
 
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
   await expect(dialog.getByText('The archive does not match the game structure')).toBeVisible();
   const file = dialog.locator('[data-placement-key="file:data/skyui.esp"]');
   const dataRoot = dialog.locator('[data-placement-key="root:data"]');
@@ -6427,12 +6441,12 @@ test('shows a binary red incompatibility result without blocking manual installa
   await openSkyrimBuild(page);
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.nonStandardLayoutWarning', 'true'));
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
   const warning = dialog.locator('.install-placement-assessment[data-status="blocked"]');
   await expect(warning).toContainText('The archive does not match the game structure');
   const warningColors = await warning.evaluate((element) => {
@@ -6459,11 +6473,11 @@ test('captures the placement editor at compact and desktop acceptance sizes', as
   ]) {
     await page.setViewportSize(viewport);
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
     const dialog = page.locator('.install-modal-layout[role="dialog"]');
     await expect(dialog).toHaveAttribute('aria-busy', 'false');
-    await dialog.getByRole('button', { name: 'Подробнее' }).click();
+    await dialog.getByRole('button', { name: 'Details' }).click();
     await expect(dialog.locator('[data-placement-key="root:data"]')).toBeVisible();
     const bounds = await dialog.locator('.install-dialog').boundingBox();
     expect(bounds?.width).toBeLessThanOrEqual(960);
@@ -6472,7 +6486,7 @@ test('captures the placement editor at compact and desktop acceptance sizes', as
       path: testInfo.outputPath(`placement-editor-${viewport.width}x${viewport.height}.png`),
       fullPage: true
     });
-    await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+    await dialog.getByRole('button', { name: 'Close installation window' }).click();
   }
 });
 
@@ -6480,7 +6494,7 @@ test('positions the placement tree menu at the pointer, matches row menus, and d
   await page.setViewportSize({ width: 1280, height: 720 });
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.click({ button: 'right' });
   const modMenu = page.getByRole('menu', { name: 'Unofficial Patch actions' });
   await expect(modMenu).toBeVisible();
@@ -6497,11 +6511,11 @@ test('positions the placement tree menu at the pointer, matches row menus, and d
   await page.keyboard.press('Escape');
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
 
   const dataRoot = dialog.locator('[data-placement-key="root:data"]');
   const dataBounds = await dataRoot.boundingBox();
@@ -6547,11 +6561,11 @@ test('positions the placement tree menu at the pointer, matches row menus, and d
 test('supports a keyboard-only placement editor workflow with roving tree focus', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
   const dialog = page.locator('.install-modal-layout[role="dialog"]');
   await expect(dialog).toHaveAttribute('aria-busy', 'false');
-  await dialog.getByRole('button', { name: 'Подробнее' }).click();
+  await dialog.getByRole('button', { name: 'Details' }).click();
 
   const dataRoot = dialog.locator('[data-placement-key="root:data"]');
   const interfaceFolder = dialog.locator('[data-placement-key="dir:data:interface"]');
@@ -6601,11 +6615,11 @@ test('keeps download search input usable after closing the install dialog', asyn
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
 
   const dialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await dialog.getByRole('button', { name: 'Close installation window' }).click();
   await expect(dialog).toHaveCount(0);
 
   const searchInput = rightPane.getByRole('textbox', { name: 'Search downloads' });
@@ -6626,7 +6640,7 @@ test('imports an external archive before starting install from the global Downlo
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const dropSurface = rightPane.locator('.download-drop-surface');
   const dataTransfer = await page.evaluateHandle(() => {
     const transfer = new DataTransfer();
@@ -6681,7 +6695,7 @@ test('ignores refresh shortcuts while a build is opening', async ({ page }) => {
   });
 
   await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
-  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
   await page.keyboard.press('Control+R');
   await page.evaluate(() => {
     (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
@@ -6689,7 +6703,7 @@ test('ignores refresh shortcuts while a build is opening', async ({ page }) => {
   });
 
   await expect(page.getByRole('heading', { name: 'Fallout test lab' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeHidden();
 });
 
 test('does not attach partial workspace data after a failed build open', async ({ page }) => {
@@ -6794,7 +6808,7 @@ test('continues exact T4 reconciliation when deferred downloads fail', async ({ 
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /SkyUI mod/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /SkyUI Mod/ })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -6810,7 +6824,7 @@ test('opens mod properties from the second rapid click without waiting for row s
 }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
   await modRow.dispatchEvent('click', { detail: 1 });
   await modRow.dispatchEvent('click', { detail: 2 });
 
@@ -6874,7 +6888,7 @@ test('uses one exact mod fallback before T3 when the persisted snapshot is unpre
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /SkyUI mod/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /SkyUI Mod/ })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7759,10 +7773,10 @@ test('runs build package, check and launch actions through the facade', async ({
   await expect(buildHeader.getByRole('button', { name: 'Launch' })).toBeEnabled();
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  const actionsTrigger = modsPane.getByRole('button', { name: 'Действия со сборкой' });
+  const actionsTrigger = modsPane.getByRole('button', { name: 'Build actions' });
   await actionsTrigger.click();
-  let actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
-  await actionsMenu.getByRole('menuitem', { name: 'Проверить обновления' }).click();
+  let actionsMenu = page.getByRole('menu', { name: 'Build actions' });
+  await actionsMenu.getByRole('menuitem', { name: 'Check for updates' }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7773,7 +7787,7 @@ test('runs build package, check and launch actions through the facade', async ({
     .toContain('mods.checkUpdates');
 
   await buildHeader.getByRole('button', { name: 'Launch' }).click();
-  await expect(page.getByText('Процесс запускается', { exact: true })).toBeVisible();
+  await expect(page.getByText('Process is starting', { exact: true })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7792,26 +7806,26 @@ test('runs build package, check and launch actions through the facade', async ({
     .toContain('processes.waitForExit');
   const launchSplashMessage = page.locator('.flx-loading-splash__message');
   await expect(launchSplashMessage).toHaveText(
-    'Процесс запущен — SKSE (skse64_loader.exe)'
+    'Process launched — SKSE (skse64_loader.exe)'
   );
   await expect(page.getByText('Screen locked', { exact: true })).toHaveCount(0);
   await expect(
-    page.getByText('Процесс запущен — CrashLogger (CrashLogger.exe)', { exact: true })
+    page.getByText('Process launched — CrashLogger (CrashLogger.exe)', { exact: true })
   ).toBeVisible();
-  await expect(page.getByText('Процесс запускается', { exact: true })).toBeHidden();
+  await expect(page.getByText('Process is starting', { exact: true })).toBeHidden();
 
   await actionsTrigger.click();
-  actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
-  await actionsMenu.getByRole('menuitem', { name: 'Упаковать' }).click();
+  actionsMenu = page.getByRole('menu', { name: 'Build actions' });
+  await actionsMenu.getByRole('menuitem', { name: 'Package' }).click();
   await submitFluxPackExportDialog(page, 'full', true);
-  await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Packaging build' })).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
+    page.getByRole('progressbar', { name: 'Packaging build: progress' })
   ).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
+    page.getByRole('progressbar', { name: 'Packaging build: progress' })
   ).toHaveAttribute('aria-valuenow', '42');
-  await expect(page.getByText('Добавляем файлы в пакет', { exact: true })).toBeVisible();
+  await expect(page.getByText('Adding files to package', { exact: true })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7843,7 +7857,7 @@ test('finalizes managed BodySlide after the last VFS holder exits and refreshes 
 
   const launch = page.getByLabel('Build header').getByRole('button', { name: 'Launch' });
   await launch.click();
-  await expect(page.getByText('Подготовка BodySlide', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing BodySlide', { exact: true })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -7932,21 +7946,21 @@ test('packages the build from the mods search-row three-dot menu', async ({ page
   await openSkyrimBuild(page);
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  const trigger = modsPane.getByRole('button', { name: 'Действия со сборкой' });
+  const trigger = modsPane.getByRole('button', { name: 'Build actions' });
   await expect(trigger).toBeVisible();
   await trigger.click();
 
-  const menu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  const menu = page.getByRole('menu', { name: 'Build actions' });
   await expect(menu).toBeVisible();
-  await expect(menu.getByRole('menuitem', { name: 'Установить' })).toBeEnabled();
-  const packageItem = menu.getByRole('menuitem', { name: 'Упаковать' });
+  await expect(menu.getByRole('menuitem', { name: 'Install' })).toBeEnabled();
+  const packageItem = menu.getByRole('menuitem', { name: 'Package' });
   await expect(packageItem).toBeEnabled();
   await packageItem.click();
   await submitFluxPackExportDialog(page);
 
-  await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Packaging build' })).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
+    page.getByRole('progressbar', { name: 'Packaging build: progress' })
   ).toBeVisible();
   await expect.poll(() => callMethods(page)).toContain('dialogs.saveFluxPack');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.export');
@@ -7972,13 +7986,13 @@ test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({
   await openSkyrimBuild(page);
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
   await page
-    .getByRole('menu', { name: 'Действия со сборкой' })
-    .getByRole('menuitem', { name: 'Упаковать' })
+    .getByRole('menu', { name: 'Build actions' })
+    .getByRole('menuitem', { name: 'Package' })
     .click();
 
-  const dialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+  const dialog = page.getByRole('dialog', { name: 'Package build' });
   await expect(dialog).toBeVisible();
   await page.setViewportSize(viewport);
   await expect(dialog.locator('select')).toHaveCount(0);
@@ -8011,7 +8025,7 @@ test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({
   const confirmBox = await actionButtons.nth(1).boundingBox();
   expect(Math.abs((cancelBox?.height ?? 0) - (confirmBox?.height ?? 0))).toBeLessThanOrEqual(1);
 
-  const packageTypeSelect = dialog.getByRole('combobox', { name: 'Тип упаковки FluxPack' });
+  const packageTypeSelect = dialog.getByRole('combobox', { name: 'FluxPack package type' });
   await packageTypeSelect.click();
   const packageTypeMenu = page.getByRole('listbox');
   await expect(packageTypeMenu).toBeVisible();
@@ -8097,23 +8111,23 @@ test('starts a manual Nexus FluxPack install from the Library action', async ({ 
     };
   });
 
-  const installButton = page.getByRole('button', { name: 'Установить сборку из FluxPack' });
+  const installButton = page.getByRole('button', { name: 'Install a build from FluxPack' });
   await expect(installButton).toBeVisible();
   await installButton.click();
 
-  const dialog = page.getByRole('dialog', { name: 'Ручная загрузка' });
+  const dialog = page.getByRole('dialog', { name: 'Manual download' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('SkyUI', { exact: true }).first()).toBeVisible();
-  const downloadButton = dialog.getByRole('button', { name: 'Скачать на Nexus Mods' });
+  const downloadButton = dialog.getByRole('button', { name: 'Download from Nexus Mods' });
   await expect(downloadButton).toBeFocused();
   await expect(downloadButton).toHaveAttribute('data-highlighted', 'true');
   await expect(downloadButton).toHaveCSS('background-color', 'rgb(217, 143, 43)');
   await downloadButton.click();
   await expect.poll(() => callMethods(page)).toContain('links.openExternal');
 
-  const installAction = dialog.getByRole('button', { name: 'Начать установку' });
+  const installAction = dialog.getByRole('button', { name: 'Start installation' });
   await expect(installAction).toBeDisabled();
-  await dialog.getByRole('button', { name: 'Выбрать загруженный файл' }).click();
+  await dialog.getByRole('button', { name: 'Choose downloaded file' }).click();
   await expect(installAction).toBeEnabled();
 });
 
@@ -8188,19 +8202,19 @@ test('updates the current build from FluxPack with delta reuse', async ({ page }
   });
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
 
-  const menu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  const menu = page.getByRole('menu', { name: 'Build actions' });
   await expect(menu).toBeVisible();
-  const installItem = menu.getByRole('menuitem', { name: 'Установить' });
+  const installItem = menu.getByRole('menuitem', { name: 'Install' });
   await expect(installItem).toBeEnabled();
   await installItem.click();
 
-  const conflictDialog = page.getByRole('dialog', { name: 'Сборка уже существует' });
+  const conflictDialog = page.getByRole('dialog', { name: 'Build already exists' });
   await expect(conflictDialog).toBeVisible();
-  await conflictDialog.getByRole('button', { name: 'Обновить существующую' }).click();
+  await conflictDialog.getByRole('button', { name: 'Update existing' }).click();
 
-  await expect(page.getByRole('status', { name: 'Обновляем сборку' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Updating build' })).toBeVisible();
   await expect.poll(() => callMethods(page)).toContain('dialogs.pickFluxPack');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.planInstall');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.install');
@@ -8220,9 +8234,9 @@ test('updates the current build from FluxPack with delta reuse', async ({ page }
   );
 
   await expect.poll(() => callMethods(page)).toContain('projects.openConfig');
-  await expect(page.getByText('Delta-обновление завершено', { exact: true })).toBeVisible();
+  await expect(page.getByText('Delta update completed', { exact: true })).toBeVisible();
   await expect(
-    page.getByText('Переиспользовано: 3 мод., 1 архив., 18 файл. Заменено файлов: 2.', {
+    page.getByText('Reused: 3 mods, 1 archives, 18 files. Created files: 2.', {
       exact: true
     })
   ).toBeVisible();
@@ -8247,7 +8261,7 @@ test('silently refreshes the Latest file version after the build workspace is re
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await expect(modRow).toBeVisible();
   await expect(modRow.locator('.mod-list-row__latest')).toHaveText('4.4.0');
   await expect
@@ -8277,15 +8291,15 @@ test('shows real per-mod progress only for a manual update check', async ({ page
   await expect(page.locator('.mod-update-check-splash')).toHaveCount(0);
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
-  await page.getByRole('menu', { name: 'Действия со сборкой' })
-    .getByRole('menuitem', { name: 'Проверить обновления' })
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
+  await page.getByRole('menu', { name: 'Build actions' })
+    .getByRole('menuitem', { name: 'Check for updates' })
     .click();
 
   const splash = page.locator('.mod-update-check-splash');
   await expect(splash).toBeVisible();
-  await expect(splash).toContainText('Проверяем обновления модов');
-  await expect(splash).toContainText('Проверено 1 из 2');
+  await expect(splash).toContainText('Checking mod updates');
+  await expect(splash).toContainText('Checked 1 of 2');
   await expect(splash).toContainText('Unofficial Patch');
   await expect(splash.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
   await expect(splash).toHaveCount(0);
@@ -8306,29 +8320,29 @@ test('keeps automatic partial updates quiet and shows only a short manual messag
     .poll(() => latestCallPayload(page, 'mods.checkUpdates'))
     .toMatchObject({ updateRequest: { mode: 'automatic' } });
   await expect(page.locator('.mod-update-warning')).toHaveCount(0);
-  await expect(page.getByText('Проверка обновлений завершена частично', { exact: false }))
+  await expect(page.getByText('The update check completed partially', { exact: false }))
     .toHaveCount(0);
   await expect(
-    page.getByRole('row', { name: /Unofficial Patch mod/ })
+    page.getByRole('row', { name: /Unofficial Patch Mod/ })
       .locator('.mod-list-row__latest-freshness')
   ).toHaveCount(0);
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
-  await page.getByRole('menu', { name: 'Действия со сборкой' })
-    .getByRole('menuitem', { name: 'Проверить обновления' })
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
+  await page.getByRole('menu', { name: 'Build actions' })
+    .getByRole('menuitem', { name: 'Check for updates' })
     .click();
-  await expect(page.getByText('Проверка обновлений завершена частично', { exact: false }))
+  await expect(page.getByText('The update check completed partially', { exact: false }))
     .toBeVisible();
   await expect(page.locator('.mod-update-warning')).toHaveCount(0);
 
   await page.evaluate(() => window.localStorage.removeItem('fluxora.test.modUpdatePartial'));
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
-  await page.getByRole('menu', { name: 'Действия со сборкой' })
-    .getByRole('menuitem', { name: 'Проверить обновления' })
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
+  await page.getByRole('menu', { name: 'Build actions' })
+    .getByRole('menuitem', { name: 'Check for updates' })
     .click();
   await expect(
-    page.getByRole('row', { name: /Unofficial Patch mod/ })
+    page.getByRole('row', { name: /Unofficial Patch Mod/ })
       .locator('.mod-list-row__latest-value')
   ).toHaveText('4.4.0');
 });
@@ -8372,7 +8386,7 @@ test('refreshes plugins before a slow mod reload after toggling a mod', async ({
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
   await page.evaluate(() => (window as any).__armModToggleRefresh());
-  await page.getByLabel('Disable Unofficial Patch').click({ force: true });
+  await page.getByLabel('Disable mod Unofficial Patch').click({ force: true });
 
   await expect.poll(() => page.evaluate(() => (window as any).__modToggleModsStarted)).toBe(true);
   const pluginsRefreshedBeforeModsFinished = await page.evaluate(
@@ -8391,7 +8405,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
 
   const modOrderTable = page.getByRole('table', { name: 'Mod order' });
   await expect(modOrderTable).toBeVisible();
-  const priorityHeader = modOrderTable.getByRole('columnheader', { name: 'Приоритет' });
+  const priorityHeader = modOrderTable.getByRole('columnheader', { name: 'Priority' });
   await expect(priorityHeader).toBeVisible();
   await expect
     .poll(() =>
@@ -8402,14 +8416,14 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
       })
     )
     .toBe(true);
-  await expect(modOrderTable.getByRole('columnheader', { name: 'Название' })).toBeVisible();
-  await expect(modOrderTable.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Name' })).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Version' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
-  await expect(modOrderTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
-  const outdatedLatest = page.getByRole('row', { name: /SkyUI mod/ }).locator('.mod-list-row__latest');
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Status' })).toBeVisible();
+  const outdatedLatest = page.getByRole('row', { name: /SkyUI Mod/ }).locator('.mod-list-row__latest');
   await expect(outdatedLatest).toHaveAttribute('data-version-mismatch', 'true');
   await expect(outdatedLatest).toHaveCSS('color', 'rgb(248, 113, 113)');
-  const currentVersionRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const currentVersionRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await expect(currentVersionRow.locator('.mod-list-row__version')).toHaveText('4.3.8');
   await expect(currentVersionRow.locator('.mod-list-row__latest-value')).toHaveText('4.3.8');
   await expect(currentVersionRow.locator('.mod-list-row__latest'))
@@ -8422,11 +8436,11 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(modOrderTable.locator('.mod-conflict-scrollbar')).toBeHidden();
   await modsSearch.fill('');
 
-  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
-  await page.getByRole('menuitem', { name: 'Создать разделитель' }).click();
-  const creationDialog = page.getByRole('dialog', { name: 'Создать разделитель' });
+  await modsPane.getByRole('button', { name: 'Build actions' }).click();
+  await page.getByRole('menuitem', { name: 'Create separator' }).click();
+  const creationDialog = page.getByRole('dialog', { name: 'Create separator' });
   await expect(creationDialog).toBeVisible();
-  const separatorTitleInput = creationDialog.getByLabel('Название разделителя');
+  const separatorTitleInput = creationDialog.getByLabel('Separator name');
   await expect(separatorTitleInput).toHaveAttribute('maxLength', '255');
   const titleInputWidthRatio = await separatorTitleInput.evaluate((input) => {
     const wrapper = input.closest('.flx-input');
@@ -8440,7 +8454,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await page.keyboard.press('Escape');
   await expect(creationDialog).toBeHidden();
 
-  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
+  const separatorRow = page.getByRole('row', { name: /Core fixes Separator/ });
   await expect(separatorRow).toBeVisible();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
@@ -8449,7 +8463,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(separatorRow.locator('.mod-separator-status .mod-separator-count')).toHaveText('2 mods');
   await expect(separatorRow.locator('.mod-separator-cell .mod-separator-count')).toHaveCount(0);
   await expect(separatorRow.locator('.mod-separator-line')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Collapse Core fixes' }).click();
+  await page.getByRole('button', { name: 'Collapse separator Core fixes' }).click();
   await expect(separatorRow).toHaveAttribute('data-collapsed', 'true');
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
@@ -8458,24 +8472,24 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect
     .poll(() => separatorRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
     .toBe('none');
-  await page.getByRole('button', { name: 'Expand Core fixes' }).click();
+  await page.getByRole('button', { name: 'Expand separator Core fixes' }).click();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
   await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
-  const nestedModRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const nestedModRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await expect(nestedModRow).toBeVisible();
   await expect(nestedModRow.locator('.mod-list-row__priority')).toHaveText('1');
-  await expect(page.getByRole('row', { name: /SkyUI mod/ }).locator('.mod-list-row__priority')).toHaveText('2');
+  await expect(page.getByRole('row', { name: /SkyUI Mod/ }).locator('.mod-list-row__priority')).toHaveText('2');
   await expect
     .poll(() => nestedModRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
     .toBe('none');
   await expect(page.getByRole('img', { name: /Overwrites 4 files/ })).toBeVisible();
   const overwriteRow = page.getByRole('row', {
-    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+    name: /Skyrim graphics overhaul .* Output files folder Overwrite folder/
   });
   await expect(overwriteRow).toBeVisible();
 
-  await page.getByLabel('Disable Unofficial Patch').click({ force: true });
+  await page.getByLabel('Disable mod Unofficial Patch').click({ force: true });
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -8485,7 +8499,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     )
     .toContain('mods.setEnabled');
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.focus();
   await page.keyboard.press('Shift+F10');
   await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
@@ -8501,15 +8515,15 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await page.keyboard.press('Shift+F10');
   await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
-  await expect(page.getByRole('menuitem', { name: 'Свернуть все' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Развернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Collapse all' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Expand all' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
   await page.getByRole('menuitem', { name: 'Delete separator' }).click();
-  const separatorDeletionDialog = page.getByRole('dialog', { name: 'Удаление разделителя' });
+  const separatorDeletionDialog = page.getByRole('dialog', { name: 'Delete separator' });
   await expect(separatorDeletionDialog).toBeVisible();
   expect(await callMethods(page)).not.toContain('mods.deleteSeparator');
   await expect(page.getByText(/Deleting .*separator/i)).toHaveCount(0);
-  await separatorDeletionDialog.getByRole('button', { name: 'Удалить' }).click();
+  await separatorDeletionDialog.getByRole('button', { name: 'Delete' }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -8523,7 +8537,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
 
   await overwriteRow.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Очистить папку перезаписи' }).click();
+  await page.getByRole('menuitem', { name: 'Clear overwrite folder' }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -8532,11 +8546,11 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
       )
     )
     .toContain('mods.clearOverwrite');
-  await expect(page.getByLabel('Очистка override')).toBeHidden();
+  await expect(page.getByLabel('Clearing overwrite folder')).toBeHidden();
 
   await overwriteRow.click();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
+  await page.getByRole('menuitem', { name: 'Open in File Explorer' }).click();
   await expect
     .poll(() => latestCallPayload(page, 'shell.openPath'))
     .toMatchObject({
@@ -8565,7 +8579,7 @@ test('treats a Mod Organizer canonical alpha version as the same Nexus version',
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const versionRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const versionRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await expect(versionRow.locator('.mod-list-row__version')).toHaveText('5.8a');
   await expect(versionRow.locator('.mod-list-row__latest-value')).toHaveText('5.8a');
   await expect(versionRow.locator('.mod-list-row__latest'))
@@ -8620,20 +8634,20 @@ test('hides collapse controls for empty mod and plugin separators', async ({ pag
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const populatedModSeparator = page.getByRole('row', { name: /Core fixes separator/ });
-  await expect(populatedModSeparator.getByRole('button', { name: 'Collapse Core fixes' })).toBeVisible();
-  const emptyModSeparator = page.getByRole('row', { name: /Empty mods separator/ });
+  const populatedModSeparator = page.getByRole('row', { name: /Core fixes Separator/ });
+  await expect(populatedModSeparator.getByRole('button', { name: 'Collapse separator Core fixes' })).toBeVisible();
+  const emptyModSeparator = page.getByRole('row', { name: /Empty mods Separator/ });
   await expect(emptyModSeparator.locator('.mod-separator-count')).toHaveText('0 mods');
   await expect(emptyModSeparator.locator('.separator-toggle-button')).toHaveCount(0);
   await expect(emptyModSeparator).not.toHaveAttribute('aria-expanded');
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: 'Плагины', exact: true }).click();
-  const populatedPluginSeparator = page.getByRole('row', { name: /Late patches separator/ });
+  await rightPane.getByRole('tab', { name: 'Plugins', exact: true }).click();
+  const populatedPluginSeparator = page.getByRole('row', { name: /Late patches Separator/ });
   await expect(
-    populatedPluginSeparator.getByRole('button', { name: 'Collapse Late patches' })
+    populatedPluginSeparator.getByRole('button', { name: 'Collapse separator Late patches' })
   ).toBeVisible();
-  const emptyPluginSeparator = page.getByRole('row', { name: /Empty plugins separator/ });
+  const emptyPluginSeparator = page.getByRole('row', { name: /Empty plugins Separator/ });
   await expect(emptyPluginSeparator).toContainText('0 plugins');
   await expect(emptyPluginSeparator.locator('.separator-toggle-button')).toHaveCount(0);
   await expect(emptyPluginSeparator).not.toHaveAttribute('aria-expanded');
@@ -8642,7 +8656,7 @@ test('hides collapse controls for empty mod and plugin separators', async ({ pag
 test('does not show row focus rings when Shift is pressed without Tab navigation', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const modRow = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await modRow.click();
   await expect(modRow).toBeFocused();
 
@@ -8657,8 +8671,8 @@ test('does not show row focus rings when Shift is pressed without Tab navigation
 test('drags mod order rows with pointer placement feedback', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const source = page.getByRole('row', { name: /Unofficial Patch mod/ });
-  const target = page.getByRole('row', { name: /SkyUI mod/ });
+  const source = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+  const target = page.getByRole('row', { name: /SkyUI Mod/ });
 
   await dragRowToSlot(page, source, target, 'after');
   await expect(page.getByText('Moving mod', { exact: true })).toHaveCount(0);
@@ -8701,9 +8715,9 @@ test('persists rapid mod reorders in the exact order of the user gestures', asyn
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const separator = page.getByRole('row', { name: /Core fixes separator/ });
-  const patch = page.getByRole('row', { name: /Unofficial Patch mod/ });
-  const skyui = page.getByRole('row', { name: /SkyUI mod/ });
+  const separator = page.getByRole('row', { name: /Core fixes Separator/ });
+  const patch = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+  const skyui = page.getByRole('row', { name: /SkyUI Mod/ });
 
   await dragRowToSlot(page, patch, skyui, 'after');
   await expect
@@ -8760,8 +8774,8 @@ test('does not let an install delta restore stale mod order during a reorder sav
     .poll(() => page.evaluate(() => Boolean((window as any).__latestWorkspaceDelta)))
     .toBe(true);
 
-  const patch = page.getByRole('row', { name: /Unofficial Patch mod/ });
-  const skyui = page.getByRole('row', { name: /SkyUI mod/ });
+  const patch = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+  const skyui = page.getByRole('row', { name: /SkyUI Mod/ });
   await dragRowToSlot(page, patch, skyui, 'after');
   await expect
     .poll(() => page.evaluate(() => (window as any).__stalledModMoveStarted))
@@ -8909,8 +8923,8 @@ test('keeps a delayed plugin toggle response from overwriting a later drag', asy
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const separator = rightPane.getByRole('row', { name: /Late patches separator/ });
+  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const separator = rightPane.getByRole('row', { name: /Late patches Separator/ });
   await skyui.getByRole('checkbox').click({ force: true });
   await expect
     .poll(() => page.evaluate(() => (window as any).__pluginToggleStarted))
@@ -8944,9 +8958,9 @@ test('keeps a delayed plugin toggle response from overwriting a later drag', asy
 test('drags every selected mod row as one ordered group', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const separator = page.getByRole('row', { name: /Core fixes separator/ });
-  const patch = page.getByRole('row', { name: /Unofficial Patch mod/ });
-  const skyui = page.getByRole('row', { name: /SkyUI mod/ });
+  const separator = page.getByRole('row', { name: /Core fixes Separator/ });
+  const patch = page.getByRole('row', { name: /Unofficial Patch Mod/ });
+  const skyui = page.getByRole('row', { name: /SkyUI Mod/ });
   await patch.click();
   await page.keyboard.down('Control');
   await skyui.click();
@@ -9022,7 +9036,7 @@ test('continuously scrolls the mod list while a dragged row stays at either edge
     .poll(() => body.evaluate((element) => Math.round(element.scrollHeight / 48)))
     .toBeGreaterThan(40);
 
-  const source = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const source = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   const sourceBox = await source.boundingBox();
   const bodyBox = await body.boundingBox();
   expect(sourceBox).not.toBeNull();
@@ -9053,16 +9067,16 @@ test('installs a dragged download immediately at the chosen mod position', async
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
 
   const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
-  const target = page.getByRole('row', { name: /SkyUI mod/ });
+  const target = page.getByRole('row', { name: /SkyUI Mod/ });
   await dragDownloadToModSlot(page, source, target, 'before');
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   await expect(installDialog).toHaveCount(0);
   const installedRow = page.locator('.mod-list-row').filter({
@@ -9112,13 +9126,13 @@ test('shows two concurrent installs and keeps the third visible in the queue', a
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   for (const index of [1, 2, 3]) {
     const name = `Concurrent Mod ${index}`;
     await rightPane.getByRole('row', { name: new RegExp(name) }).dblclick();
     const dialog = page.getByRole('dialog', { name: new RegExp(name) });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Install', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     if (index === 1) {
       await expect(
@@ -9130,9 +9144,9 @@ test('shows two concurrent installs and keeps the third visible in the queue', a
   const first = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 1' });
   const second = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 2' });
   const third = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 3' });
-  await expect(first.locator('.mod-install-pending-label')).toHaveText('Распаковка');
-  await expect(second.locator('.mod-install-pending-label')).toHaveText('Распаковка');
-  await expect(third.locator('.mod-install-pending-label')).toHaveText('В очереди');
+  await expect(first.locator('.mod-install-pending-label')).toHaveText('Extracting');
+  await expect(second.locator('.mod-install-pending-label')).toHaveText('Extracting');
+  await expect(third.locator('.mod-install-pending-label')).toHaveText('Queued');
   await expect(rightPane.getByRole('row', { name: /Concurrent Mod 3/ })).toBeVisible();
   await expect.poll(() => latestCallPayload(page, 'installs.submit')).not.toBeNull();
 });
@@ -9183,7 +9197,7 @@ test('restores an interrupted install row and continues it after reopening the b
   )).toBe(true);
   const restored = page.locator('.mod-list-row').filter({ hasText: 'Restored Install' });
   await expect(restored).toBeVisible();
-  await expect(restored.locator('.mod-install-pending-label')).toHaveText('Восстановление');
+  await expect(restored.locator('.mod-install-pending-label')).toHaveText('Recovering');
   await expect(restored).toHaveAttribute('data-order-id', 'mod_restored_install', {
     timeout: 12_000
   });
@@ -9248,13 +9262,13 @@ test('shows exact pending conflicts and rebases an install dragged before the sn
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   const installedRow = page.locator('.mod-list-row').filter({
     hasText: 'Aetherius - A Race Overhaul'
@@ -9266,10 +9280,10 @@ test('shows exact pending conflicts and rebases an install dragged before the sn
     'data-pending',
     'true'
   );
-  await expect(installedRow.locator('.mod-install-pending-label')).toHaveText('Распаковка');
+  await expect(installedRow.locator('.mod-install-pending-label')).toHaveText('Extracting');
   await expect(installedRow.locator('.mod-conflict-dot')).toHaveCount(0);
 
-  const target = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const target = page.getByRole('row', { name: /Unofficial Patch Mod/ });
   await dragRowToSlot(page, installedRow, target, 'before');
 
   await expect(installedRow.locator('.mod-overwrite-state-cell')).toHaveAttribute(
@@ -9310,11 +9324,11 @@ test('keeps a replacement at the user drop when pending rebase races install com
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
   const installDialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await installDialog.getByRole('button', { name: /Заменить/ }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await installDialog.getByRole('button', { name: /Replace/ }).click();
 
   const skyUiRow = page.locator('.mod-list-row[data-order-id="mod_skyui"]');
   const unofficialPatchRow = page.locator('.mod-list-row[data-order-id="mod_ussep"]');
@@ -9359,15 +9373,15 @@ test('rolls back the pending row and both conflict projections when install fail
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const skyuiRow = page.getByRole('row', { name: /SkyUI mod/ });
+  const skyuiRow = page.getByRole('row', { name: /SkyUI Mod/ });
   const baselineSkyuiConflict = await skyuiRow.getAttribute('data-conflict-status');
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   const pendingRow = page.locator('.mod-list-row').filter({
     hasText: 'Aetherius - A Race Overhaul'
@@ -9439,15 +9453,15 @@ test('reveals a new mod without a full workspace reconciliation and does not res
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
-  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul mod/ });
+  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul Mod/ });
   await expect(installedRow).toBeVisible();
   await expect(installedRow).toHaveAttribute('data-state', 'post-install-reveal');
   await page.evaluate(() => new Promise<void>((resolve) =>
@@ -9457,8 +9471,8 @@ test('reveals a new mod without a full workspace reconciliation and does not res
 
   await installedRow.click();
   await installedRow.press('Delete');
-  const deleteDialog = page.getByRole('dialog', { name: 'Удаление мода' });
-  await deleteDialog.getByRole('button', { name: 'Удалить' }).click();
+  const deleteDialog = page.getByRole('dialog', { name: 'Delete mod' });
+  await deleteDialog.getByRole('button', { name: 'Delete' }).click();
   await expect
     .poll(() => page.evaluate(() => (window as any).__postDeleteWorkspaceRead))
     .toBe(true);
@@ -9470,18 +9484,18 @@ test('outlines a separator and installs a dragged download after its last mod', 
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
 
   const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
-  const separator = page.getByRole('row', { name: /Core fixes separator/ });
+  const separator = page.getByRole('row', { name: /Core fixes Separator/ });
   await dragDownloadIntoSeparator(page, source, separator);
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
-  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul mod/ });
+  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul Mod/ });
   await expect(installedRow).toBeVisible();
   await expect(installedRow).toHaveAttribute('data-in-separator', 'true');
   await expect
@@ -9514,15 +9528,15 @@ test('creates a mod separator at the true end without a busy strip and reveals i
 
   const modListBody = page.locator('.mod-list__body');
   await expect(modListBody).toBeVisible();
-  const existingSeparator = page.getByRole('row', { name: /Core fixes separator/ });
-  await existingSeparator.getByRole('button', { name: /Collapse Core fixes/ }).click();
-  await existingSeparator.getByRole('button', { name: /Expand Core fixes/ }).click();
+  const existingSeparator = page.getByRole('row', { name: /Core fixes Separator/ });
+  await existingSeparator.getByRole('button', { name: /Collapse separator Core fixes/ }).click();
+  await existingSeparator.getByRole('button', { name: /Expand separator Core fixes/ }).click();
   await resetPostInstallRevealAnimationProbe(page, 'sep_created_at_end');
 
-  await page.getByRole('button', { name: 'Действия со сборкой' }).click();
-  await page.getByRole('menuitem', { name: 'Создать разделитель' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Создать разделитель' });
-  await dialog.getByLabel('Название разделителя').fill('New Empty Group');
+  await page.getByRole('button', { name: 'Build actions' }).click();
+  await page.getByRole('menuitem', { name: 'Create separator' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create separator' });
+  await dialog.getByLabel('Separator name').fill('New Empty Group');
   await dialog.getByRole('button', { name: 'OK' }).click();
 
   await page.waitForTimeout(100);
@@ -9567,21 +9581,21 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
   expect(initialListMetrics.virtualRowCount).toBeGreaterThan(80);
   expect(initialListMetrics.renderedRowCount).toBeLessThan(initialListMetrics.virtualRowCount);
 
-  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
-  await separatorRow.getByRole('button', { name: /Collapse Core fixes/ }).click();
+  const separatorRow = page.getByRole('row', { name: /Core fixes Separator/ });
+  await separatorRow.getByRole('button', { name: /Collapse separator Core fixes/ }).click();
   await expect(separatorRow).toHaveAttribute('aria-expanded', 'false');
 
   const searchInput = page.getByLabel('Search mods');
   await searchInput.fill('SkyUI');
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await resetPostInstallRevealAnimationProbe(page, 'mod_aetherius_a_race_overhaul');
   await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
   await expect(installDialog).toHaveCount(0);
 
   const installedRow = page.locator(
@@ -10020,7 +10034,7 @@ test('keeps conflict markers flush with the scrollbar and precisely inside its a
   });
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
-  await page.getByRole('row', { name: /Unofficial Patch mod/ }).click();
+  await page.getByRole('row', { name: /Unofficial Patch Mod/ }).click();
 
   const modListBody = page.locator('.mod-list__body[data-virtualized="adaptive"]');
   const ruler = page.locator('.mod-conflict-scrollbar');
@@ -10133,7 +10147,7 @@ test('clearing search restores the exact prior scroll position for mods, plugins
     'PerformancePlugin239'
   );
 
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await assertSearchRestoresScroll(
     rightPane.locator('.download-table .mod-table__body'),
     rightPane.getByLabel('Search downloads'),
@@ -10144,19 +10158,19 @@ test('clearing search restores the exact prior scroll position for mods, plugins
 test('Replace and Merge reveal and highlight the existing row', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const searchInput = page.getByLabel('Search mods');
   const installedRow = page.locator('.mod-list-row[data-order-id="mod_skyui"]');
   await expect(installedRow).toBeVisible();
 
-  const installAgain = async (mode: 'Объединить' | 'Заменить') => {
+  const installAgain = async (mode: 'Merge' | 'Replace') => {
     await searchInput.fill('Aetherius');
     await expect(installedRow).toHaveCount(0);
     await resetPostInstallRevealAnimationProbe(page, 'mod_skyui');
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
     const dialog = page.getByRole('dialog', { name: /SkyUI/ });
-    await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-    await expect(dialog.getByText('Уже есть мод с таким же названием')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+    await expect(dialog.getByText('A mod with the same name already exists')).toBeVisible();
     await dialog.getByRole('button', { name: new RegExp(mode) }).click();
     await expect(dialog).toHaveCount(0);
 
@@ -10171,27 +10185,27 @@ test('Replace and Merge reveal and highlight the existing row', async ({ page })
     await expect(installedRow).not.toHaveAttribute('data-state');
   };
 
-  await installAgain('Объединить');
-  await installAgain('Заменить');
+  await installAgain('Merge');
+  await installAgain('Replace');
 });
 
 test('post-install mod reveal keeps selection and focus without animation for reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openSkyrimBuild(page);
 
-  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
-  await separatorRow.getByRole('button', { name: /Collapse Core fixes/ }).click();
+  const separatorRow = page.getByRole('row', { name: /Core fixes Separator/ });
+  await separatorRow.getByRole('button', { name: /Collapse separator Core fixes/ }).click();
   await expect(separatorRow).toHaveAttribute('aria-expanded', 'false');
   const searchInput = page.getByLabel('Search mods');
   await searchInput.fill('no installed mod matches this');
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await resetPostInstallRevealAnimationProbe(page, 'mod_skyui');
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
   const dialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await dialog.getByRole('button', { name: /Объединить/ }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await dialog.getByRole('button', { name: /Merge/ }).click();
   await expect(dialog).toHaveCount(0);
 
   const installedRow = page.locator('.mod-list-row[data-order-id="mod_skyui"]');
@@ -10208,7 +10222,7 @@ test('shows an accepted inbound Nexus download before any native list refresh', 
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 
   const listCallsBeforeInbound = await page.evaluate(() => {
@@ -10241,7 +10255,7 @@ test('shows an accepted inbound Nexus download before any native list refresh', 
 test('opens the duplicate decision dialog for an inbound Nexus update before list refresh', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 
   await expect
@@ -10259,7 +10273,7 @@ test('opens the duplicate decision dialog for an inbound Nexus update before lis
     return count;
   });
 
-  const dialog = page.getByRole('dialog', { name: 'Найдена новая версия' });
+  const dialog = page.getByRole('dialog', { name: 'New version found' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(/SkyUI 1\.0\.1\.7z/)).toBeVisible();
   await expect(dialog.getByText(/SkyUI 1\.0\.0\.7z/)).toBeVisible();
@@ -10280,7 +10294,7 @@ test('opens the duplicate decision dialog for an inbound Nexus update before lis
 test('offers direct archive replacement for an inbound identical Nexus file without opening install choices', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
   await page.evaluate(() => {
     window.localStorage.setItem('fluxora.test.returnInboundDownload', 'same-file-decision');
@@ -10294,17 +10308,17 @@ test('offers direct archive replacement for an inbound identical Nexus file with
     (window as any).__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_same_file' });
   });
 
-  const repeatedFileDialog = page.getByRole('dialog', { name: 'Повторная установка мода' });
+  const repeatedFileDialog = page.getByRole('dialog', { name: 'Reinstall mod' });
   await expect(repeatedFileDialog).toBeVisible();
-  await expect(repeatedFileDialog.getByText(/Точно такой же архив уже есть в Downloads/)).toBeVisible();
-  await expect(repeatedFileDialog.getByText('Этот файл уже скачан')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByText(/The same archive already exists in Downloads/)).toBeVisible();
+  await expect(repeatedFileDialog.getByText('This file is already downloaded')).toHaveCount(0);
   await expect(repeatedFileDialog.getByText('SkyUI.7z', { exact: true })).toHaveCount(1);
-  await expect(repeatedFileDialog.getByText('Запрошенный файл')).toHaveCount(0);
-  await expect(repeatedFileDialog.getByText('Готовый архив')).toHaveCount(0);
-  await expect(repeatedFileDialog.getByRole('button', { name: 'Сохранить оба' })).toHaveCount(0);
-  await expect(repeatedFileDialog.getByRole('button', { name: 'Отмена', exact: true })).toHaveCount(0);
-  await expect(repeatedFileDialog.getByRole('button', { name: 'Пропустить', exact: true })).toHaveCount(0);
-  await repeatedFileDialog.getByRole('button', { name: 'Заменить', exact: true }).click();
+  await expect(repeatedFileDialog.getByText('Incoming file')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByText('Ready archive')).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Keep both' })).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+  await expect(repeatedFileDialog.getByRole('button', { name: 'Skip', exact: true })).toHaveCount(0);
+  await repeatedFileDialog.getByRole('button', { name: 'Replace', exact: true }).click();
 
   await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
     choice: 'replace',
@@ -10318,7 +10332,7 @@ test('offers direct archive replacement for an inbound identical Nexus file with
 test('closes an inbound identical Nexus file decision without changing the existing download', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
   await page.evaluate(() => {
     window.localStorage.setItem('fluxora.test.returnInboundDownload', 'same-file-decision');
@@ -10332,9 +10346,9 @@ test('closes an inbound identical Nexus file decision without changing the exist
     (window as any).__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_same_file_skip' });
   });
 
-  const repeatedFileDialog = page.getByRole('dialog', { name: 'Повторная установка мода' });
+  const repeatedFileDialog = page.getByRole('dialog', { name: 'Reinstall mod' });
   await expect(repeatedFileDialog).toBeVisible();
-  await repeatedFileDialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await repeatedFileDialog.getByRole('button', { name: 'Close', exact: true }).click();
 
   await expect(repeatedFileDialog).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
@@ -10359,18 +10373,18 @@ test('keeps NXM responsive while two installs finalize and preserves the termina
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
-  const separator = page.getByRole('row', { name: /Core fixes separator/ });
+  const separator = page.getByRole('row', { name: /Core fixes Separator/ });
   await dragDownloadIntoSeparator(page, source, separator);
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
-  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await installDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
   const secondInstallDialog = page.getByRole('dialog', { name: /SkyUI/ });
-  await secondInstallDialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await secondInstallDialog.getByRole('button', { name: /Объединить/ }).click();
+  await secondInstallDialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await secondInstallDialog.getByRole('button', { name: /Merge/ }).click();
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -10384,7 +10398,7 @@ test('keeps NXM responsive while two installs finalize and preserves the termina
     (window as any).__emitFluxoraInboundNxm({ operationId: 'op_nxm_during_install' });
   });
   await expect(rightPane.getByText('Importing NXM', { exact: true })).toHaveCount(0);
-  await expect(rightPane.getByRole('row', { name: /Получаем название/ })).toBeVisible({
+  await expect(rightPane.getByRole('row', { name: /Resolving name/ })).toBeVisible({
     timeout: 500
   });
   await expect(rightPane.getByRole('row', { name: /Cabbage CS Preset/ })).toBeVisible({
@@ -10439,12 +10453,12 @@ test('keeps NXM responsive while a destructive main-lane delete is pending', asy
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
-  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
+  const modRow = page.getByRole('row', { name: /SkyUI Mod/ });
   await modRow.click();
   await modRow.press('Delete');
-  await page.getByRole('dialog', { name: 'Удаление мода' })
-    .getByRole('button', { name: 'Удалить' })
+  await page.getByRole('dialog', { name: 'Delete mod' })
+    .getByRole('button', { name: 'Delete' })
     .click();
   await expect.poll(() => callMethods(page)).toContain('mods.deleteInstalled');
 
@@ -10452,7 +10466,7 @@ test('keeps NXM responsive while a destructive main-lane delete is pending', asy
     (window as any).__emitFluxoraInboundNxm({ operationId: 'op_nxm_during_delete' });
   });
   await expect(rightPane.getByText('Importing NXM', { exact: true })).toHaveCount(0);
-  await expect(rightPane.getByRole('row', { name: /Получаем название/ })).toBeVisible({
+  await expect(rightPane.getByRole('row', { name: /Resolving name/ })).toBeVisible({
     timeout: 500
   });
   await expect(rightPane.getByRole('row', { name: /Cabbage CS Preset/ })).toBeVisible({
@@ -10469,7 +10483,7 @@ test('keeps downloads rows visible during delayed refresh', async ({ page }) => 
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 
   await page.evaluate(() => {
@@ -10485,7 +10499,7 @@ test('keeps downloads rows visible during delayed refresh', async ({ page }) => 
 
 test('refreshes the build in place without a blocking loading splash', async ({ page }) => {
   await openSkyrimBuild(page);
-  const skyUiRow = page.getByRole('row', { name: /SkyUI mod/ });
+  const skyUiRow = page.getByRole('row', { name: /SkyUI Mod/ });
   await expect(skyUiRow).toBeVisible();
 
   await page.evaluate(() => {
@@ -10506,7 +10520,7 @@ test('refreshes the build in place without a blocking loading splash', async ({ 
   await page.keyboard.press('F5');
   await expect(skyUiRow).toBeVisible();
   await expect(page.locator('.mod-list-row--skeleton')).toHaveCount(0);
-  await expect(page.getByText('Обновляем интерфейс', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Refreshing UI', { exact: true })).toHaveCount(0);
   await expect(page.locator('.flx-loading-splash')).toHaveCount(0);
   await expect
     .poll(() => page.evaluate(() => (window as any).__backgroundWorkspaceRefreshCalls ?? 0))
@@ -10517,7 +10531,7 @@ test('does not flash a stale downloads drop cue when returning to the downloads 
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
 
   const dropSurface = rightPane.locator('.download-drop-surface');
   const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
@@ -10525,8 +10539,8 @@ test('does not flash a stale downloads drop cue when returning to the downloads 
   await dataTransfer.dispose();
   await expect(dropSurface).toHaveAttribute('data-drop-state', 'hover');
 
-  await rightPane.getByRole('tab', { name: /Данные/ }).click();
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Data/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
 
   expect(await rightPaneTransientSnapshot(page)).toMatchObject({
     downloadDropCueCount: 0,
@@ -10538,14 +10552,14 @@ test('clears plugin row drop indicators before switching right pane tabs', async
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  const source = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const target = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+  const source = page.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const target = page.getByRole('row', { name: /Skyrim\.esm Plugin/ });
 
   await moveRowDragToSlot(page, source, target, 'after');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).evaluate((element) => {
+  await rightPane.getByRole('tab', { name: /Downloads/ }).evaluate((element) => {
     (element as HTMLElement).click();
   });
-  await rightPane.getByRole('tab', { name: /Плагины/ }).evaluate((element) => {
+  await rightPane.getByRole('tab', { name: /Plugins/ }).evaluate((element) => {
     (element as HTMLElement).click();
   });
 
@@ -10566,19 +10580,19 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
 
   const rightPane = page.getByLabel('Right pane');
   const rightPaneTabs = rightPane.locator('.right-pane-tabs');
-  await expect(rightPane.getByRole('tab', { name: 'Плагины', exact: true })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: 'Данные', exact: true })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: 'Загрузки', exact: true })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: /Сборка/ })).toHaveCount(0);
+  await expect(rightPane.getByRole('tab', { name: 'Plugins', exact: true })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: 'Data', exact: true })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: 'Downloads', exact: true })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: /Build/ })).toHaveCount(0);
   await expect(rightPaneTabs.locator('strong')).toHaveCount(0);
-  await expect(rightPane.getByRole('tab', { name: 'Плагины', exact: true })).toHaveAttribute(
+  await expect(rightPane.getByRole('tab', { name: 'Plugins', exact: true })).toHaveAttribute(
     'aria-selected',
     'true'
   );
   await expect
     .poll(() =>
       rightPane
-        .getByRole('tab', { name: 'Плагины', exact: true })
+        .getByRole('tab', { name: 'Plugins', exact: true })
         .evaluate((element) => getComputedStyle(element).color)
     )
     .toBe('rgb(255, 255, 255)');
@@ -10600,7 +10614,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
     )
   ).toBeLessThanOrEqual(1);
   const activePluginTabStyle = await rightPane
-    .getByRole('tab', { name: 'Плагины', exact: true })
+    .getByRole('tab', { name: 'Plugins', exact: true })
     .evaluate((element) => {
       const style = getComputedStyle(element);
       return {
@@ -10616,48 +10630,48 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   const pluginsTable = page.getByRole('table', { name: 'Plugin load order' });
   await expect(pluginsTable).toBeVisible();
   await expect(pluginsTable.getByRole('columnheader', { name: 'State' })).toHaveCount(0);
-  await expect(pluginsTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
+  await expect(pluginsTable.getByRole('columnheader', { name: 'Status' })).toBeVisible();
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
   await expect(rightPane.locator('.plugin-type-badge')).toHaveCount(0);
 
-  await rightPane.getByRole('tab', { name: 'Загрузки', exact: true }).click();
-  await expect(rightPane.getByRole('tab', { name: 'Загрузки', exact: true })).toHaveAttribute(
+  await rightPane.getByRole('tab', { name: 'Downloads', exact: true }).click();
+  await expect(rightPane.getByRole('tab', { name: 'Downloads', exact: true })).toHaveAttribute(
     'aria-selected',
     'true'
   );
-  await rightPane.getByRole('tab', { name: 'Плагины', exact: true }).click();
+  await rightPane.getByRole('tab', { name: 'Plugins', exact: true }).click();
 
-  const pluginSeparatorRow = page.getByRole('row', { name: /Late patches separator/ });
+  const pluginSeparatorRow = page.getByRole('row', { name: /Late patches Separator/ });
   await pluginSeparatorRow.focus();
   await page.keyboard.press('Shift+F10');
   await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
-  await expect(page.getByRole('menuitem', { name: 'Свернуть все' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Развернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Collapse all' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Expand all' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Collapse Late patches' }).click();
+  await page.getByRole('button', { name: 'Collapse separator Late patches' }).click();
   await expect(pluginSeparatorRow).toHaveAttribute('data-collapsed', 'true');
   await expect(pluginSeparatorRow).toHaveAttribute('data-missing-masters', 'true');
   const separatorWarning = pluginSeparatorRow.getByRole('button', {
-    name: /Отсутствуют мастер-файлы/
+    name: /missing masters/i
   });
   await expect(separatorWarning).toBeVisible();
   await separatorWarning.hover();
-  await expect(page.getByRole('tooltip', { name: 'Отсутствующие мастер-файлы' })).toContainText(
+  await expect(page.getByRole('tooltip', { name: 'Missing masters' })).toContainText(
     'Aardvark.esm'
   );
-  await page.getByRole('button', { name: 'Expand Late patches' }).click();
+  await page.getByRole('button', { name: 'Expand separator Late patches' }).click();
   await expect(pluginSeparatorRow).toHaveAttribute('data-missing-masters', 'false');
 
   const pluginRow = page.getByRole('row', { name: /SkyUI\.esp/ });
-  const warning = pluginRow.getByRole('button', { name: /Отсутствуют мастер-файлы/ });
+  const warning = pluginRow.getByRole('button', { name: /missing masters/i });
   await expect(warning).toBeVisible();
   await warning.hover();
-  const tooltip = page.getByRole('tooltip', { name: 'Отсутствующие мастер-файлы' });
-  await expect(tooltip).toContainText('Отсутствующие мастер-файлы');
+  const tooltip = page.getByRole('tooltip', { name: 'Missing masters' });
+  await expect(tooltip).toContainText('Missing masters');
   await expect(tooltip.locator('li').first()).toHaveText('Aardvark.esm');
   await expect(tooltip).toContainText('Update.esm');
   await expect(tooltip).toContainText('Zed.esm');
@@ -10672,7 +10686,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
       showItemInFolder: calls.filter((call) => call.method === 'shell.showItemInFolder').length
     };
   });
-  await page.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
+  await page.getByRole('menuitem', { name: 'Open in File Explorer' }).click();
   await expect
     .poll(() => latestCallPayload(page, 'shell.showItemInFolder'))
     .toMatchObject({
@@ -10695,7 +10709,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
     )
     .toBe(shellCallsBeforePluginReveal.openPath);
 
-  await rightPane.getByRole('tab', { name: /Данные/ }).click();
+  await rightPane.getByRole('tab', { name: /Data/ }).click();
   await expect(rightPane.getByText('Project paths and selected mod files')).toHaveCount(0);
   await expect(rightPane.getByText('Selected mod data')).toHaveCount(0);
   await expect(rightPane.getByText('Loading tree', { exact: true })).toHaveCount(0);
@@ -10720,7 +10734,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
       path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp'
     });
 
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const downloadsTable = rightPane.getByRole('table', { name: 'Downloads' });
   await expect(downloadsTable).toBeVisible();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
@@ -10741,21 +10755,21 @@ test('restores collapsed mod and plugin separators per build after restart', asy
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
 
-  const modSeparator = page.getByRole('row', { name: /Core fixes separator/ });
-  const pluginSeparator = page.getByRole('row', { name: /Late patches separator/ });
-  await modSeparator.getByRole('button', { name: 'Collapse Core fixes' }).click();
-  await pluginSeparator.getByRole('button', { name: 'Collapse Late patches' }).click();
+  const modSeparator = page.getByRole('row', { name: /Core fixes Separator/ });
+  const pluginSeparator = page.getByRole('row', { name: /Late patches Separator/ });
+  await modSeparator.getByRole('button', { name: 'Collapse separator Core fixes' }).click();
+  await pluginSeparator.getByRole('button', { name: 'Collapse separator Late patches' }).click();
   await expect(modSeparator).toHaveAttribute('aria-expanded', 'false');
   await expect(pluginSeparator).toHaveAttribute('aria-expanded', 'false');
 
   await page.reload();
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
-  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Core fixes Separator/ })).toHaveAttribute(
     'aria-expanded',
     'false'
   );
-  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Late patches Separator/ })).toHaveAttribute(
     'aria-expanded',
     'false'
   );
@@ -10763,11 +10777,11 @@ test('restores collapsed mod and plugin separators per build after restart', asy
   await page.getByRole('button', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Open Skyrim performance profile' }).click();
   await expect(page.getByRole('heading', { name: 'Skyrim performance profile' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Core fixes Separator/ })).toHaveAttribute(
     'aria-expanded',
     'true'
   );
-  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Late patches Separator/ })).toHaveAttribute(
     'aria-expanded',
     'true'
   );
@@ -10775,11 +10789,11 @@ test('restores collapsed mod and plugin separators per build after restart', asy
   await page.getByRole('button', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Open Skyrim graphics overhaul' }).click();
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Core fixes Separator/ })).toHaveAttribute(
     'aria-expanded',
     'false'
   );
-  await expect(page.getByRole('row', { name: /Late patches separator/ })).toHaveAttribute(
+  await expect(page.getByRole('row', { name: /Late patches Separator/ })).toHaveAttribute(
     'aria-expanded',
     'false'
   );
@@ -10900,9 +10914,9 @@ test('creates a plugin separator from the row menu and moves the selected plugin
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  const skyrim = rightPane.getByRole('row', { name: /Skyrim\.esm plugin/ });
-  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const patch = rightPane.getByRole('row', { name: /Patch\.esp plugin/ });
+  const skyrim = rightPane.getByRole('row', { name: /Skyrim\.esm Plugin/ });
+  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const patch = rightPane.getByRole('row', { name: /Patch\.esp Plugin/ });
   await skyrim.click();
   await page.keyboard.down('Control');
   await skyui.click();
@@ -10990,7 +11004,7 @@ test('aligns plugin and download searches with mods and hides download commands'
   await expect(pluginsSearch).toBeVisible();
   await expectSearchesAligned(pluginsSearch);
 
-  await rightPane.getByRole('tab', { name: 'Загрузки', exact: true }).click();
+  await rightPane.getByRole('tab', { name: 'Downloads', exact: true }).click();
   const downloadsSearch = rightPane.getByRole('textbox', { name: 'Search downloads' });
   await expect(downloadsSearch).toBeVisible();
   await expectSearchesAligned(downloadsSearch);
@@ -11042,7 +11056,7 @@ test('keeps both build panes at the full available height as their lists change'
 
   await page.getByLabel('Search mods').fill('no-matching-mods');
   await expect(modsPane.getByText(/0 visible/)).toBeVisible();
-  const downloadsTab = rightPane.getByRole('tab', { name: 'Загрузки', exact: true });
+  const downloadsTab = rightPane.getByRole('tab', { name: 'Downloads', exact: true });
   await downloadsTab.click();
   await expect(downloadsTab).toHaveAttribute('aria-selected', 'true');
   await rightPane.getByLabel('Search downloads').fill('no-matching-downloads');
@@ -11082,8 +11096,8 @@ test('does not auto-loop failed effective Data tree loads', async ({ page }) => 
   });
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Данные/ }).click();
-  await expect(rightPane.getByRole('button', { name: 'Повторить' })).toBeVisible();
+  await rightPane.getByRole('tab', { name: /Data/ }).click();
+  await expect(rightPane.getByRole('button', { name: 'Retry' })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0))
     .toBe(1);
@@ -11091,7 +11105,7 @@ test('does not auto-loop failed effective Data tree loads', async ({ page }) => 
   await page.waitForTimeout(400);
   expect(await page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0)).toBe(1);
 
-  await rightPane.getByRole('button', { name: 'Повторить' }).click();
+  await rightPane.getByRole('button', { name: 'Retry' }).click();
   await expect
     .poll(() => page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0))
     .toBe(2);
@@ -11104,7 +11118,7 @@ test('keeps the loaded effective Data tree stable across same-revision refresh e
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Данные/ }).click();
+  await rightPane.getByRole('tab', { name: /Data/ }).click();
 
   const effectiveTree = rightPane.getByRole('tree', { name: 'Effective game root' });
   const dataFolder = effectiveTree.getByRole('treeitem', { name: /^Collapse Data\b/ });
@@ -11152,8 +11166,8 @@ test('keeps the loaded effective Data tree stable across same-revision refresh e
 test('drags plugin rows without selecting text', async ({ page }) => {
   await openSkyrimBuild(page);
 
-  const source = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const target = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+  const source = page.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const target = page.getByRole('row', { name: /Skyrim\.esm Plugin/ });
 
   await dragRowToSlot(page, source, target, 'after');
   await expect(page.getByText('Moving plugin', { exact: true })).toHaveCount(0);
@@ -11230,16 +11244,16 @@ test('shows a blocked drop target and does not persist a plugin above its requir
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  const dependent = rightPane.getByRole('row', { name: /Dependent\.esp plugin/ });
-  const master = rightPane.getByRole('row', { name: /Required\.esm plugin/ });
-  await moveRowDragToSlot(page, dependent, master, 'before', 'Нельзя');
+  const dependent = rightPane.getByRole('row', { name: /Dependent\.esp Plugin/ });
+  const master = rightPane.getByRole('row', { name: /Required\.esm Plugin/ });
+  await moveRowDragToSlot(page, dependent, master, 'before', 'Cannot move');
 
   await expect(master).toHaveAttribute('data-drop-blocked', 'true');
   await expect(page.locator('body')).toHaveClass(/row-reorder-blocked/);
   expect(await master.evaluate((row) => getComputedStyle(row).cursor)).toBe('not-allowed');
   await expect(master.locator('.row-drop-target-chip')).toHaveAttribute(
     'title',
-    'Dependent.esp должен загружаться после Required.esm.'
+    'Dependent.esp must load after Required.esm.'
   );
   await page.mouse.up();
 
@@ -11380,9 +11394,9 @@ test('drags every movable selected plugin row and separator as one ordered group
     .toBe(true);
 
   const rightPane = page.getByLabel('Right pane');
-  const separator = rightPane.getByRole('row', { name: /Late patches separator/ });
-  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp plugin/ });
-  const racemenu = rightPane.getByRole('row', { name: /RaceMenu\.esp plugin/ });
+  const separator = rightPane.getByRole('row', { name: /Late patches Separator/ });
+  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp Plugin/ });
+  const racemenu = rightPane.getByRole('row', { name: /RaceMenu\.esp Plugin/ });
   await separator.click();
   await page.keyboard.down('Control');
   await skyui.click();
@@ -11479,7 +11493,7 @@ test('auto-fills SPID identity and installs separate copies as (2) then (3)', as
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const sourceRow = rightPane.getByRole('row', {
     name: /Spell Perks Item Distributor \(SPID\)/
   });
@@ -11496,14 +11510,14 @@ test('auto-fills SPID identity and installs separate copies as (2) then (3)', as
     await expect(nameInput).toHaveValue('Spell Perks Item Distributor');
     await expect(nameInput).toBeFocused();
     expect(await nameInput.evaluate((input) => (input as HTMLInputElement).selectionStart)).toBe(2);
-    await expect(dialog.getByText(/auto.?detected|автоподстанов/i)).toHaveCount(0);
+    await expect(dialog.getByText(/auto.?detected/i)).toHaveCount(0);
 
-    await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-    await expect(dialog.getByText('Уже есть мод с таким же названием')).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Это другой мод/ })).toBeVisible();
-    await dialog.getByRole('button', { name: /Это другой мод/ }).click();
+    await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+    await expect(dialog.getByText('A mod with the same name already exists')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Replace/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Merge/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /This is a different mod/ })).toBeVisible();
+    await dialog.getByRole('button', { name: /This is a different mod/ }).click();
     await expect(dialog).toHaveCount(0);
 
     await expect.poll(() => latestCallPayload(page, 'downloads.install')).toMatchObject({
@@ -11534,17 +11548,17 @@ test('auto-fills only a proven Nexus lineage and leaves a parallel branch name i
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   const sourceRow = rightPane.getByRole('row', {
     name: /Spell Perks Item Distributor \(SPID\)/
   });
   await sourceRow.dblclick();
   let dialog = page.getByRole('dialog', { name: /Install Spell Perks Item Distributor/ });
   await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor');
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: /Replace/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Merge/ })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close installation window' }).click();
   await expect(dialog).toHaveCount(0);
 
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.nexusLineageMode', 'parallel'));
@@ -11569,15 +11583,15 @@ test('uses the first free suffix gap for a separate identity install', async ({ 
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', {
     name: /Spell Perks Item Distributor \(SPID\)/
   }).dblclick();
 
   const dialog = page.getByRole('dialog', { name: /Install Spell Perks Item Distributor/ });
   await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor');
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await dialog.getByRole('button', { name: /Это другой мод/ }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await dialog.getByRole('button', { name: /This is a different mod/ }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'test.recordInstalledMod')).toMatchObject({
     name: 'Spell Perks Item Distributor (3)'
@@ -11590,25 +11604,25 @@ test('replans a user-edited name and shows the newly matched mod conflict', asyn
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', {
     name: /Spell Perks Item Distributor \(SPID\)/
   }).dblclick();
 
   const dialog = page.locator('.install-modal-layout');
   await dialog.getByLabel(/Mod name/).fill('SkyUI');
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   await expect.poll(() => latestCallPayload(page, 'downloads.planInstall')).toMatchObject({
     modName: 'SkyUI',
     profileName: 'Default'
   });
-  await expect(dialog.getByText('Уже есть мод с таким же названием')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: /Это другой мод/ })).toBeVisible();
+  await expect(dialog.getByText('A mod with the same name already exists')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Replace/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Merge/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /This is a different mod/ })).toBeVisible();
 
-  await dialog.getByRole('button', { name: /Объединить/ }).click();
+  await dialog.getByRole('button', { name: /Merge/ }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.install')).toMatchObject({
     request: {
@@ -11626,7 +11640,7 @@ test('installs a user-renamed identity match without showing the stale conflict'
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', {
     name: /Spell Perks Item Distributor \(SPID\)/
   }).dblclick();
@@ -11635,10 +11649,10 @@ test('installs a user-renamed identity match without showing the stale conflict'
   const nameInput = dialog.getByLabel(/Mod name/);
   await expect(nameInput).toHaveValue('Spell Perks Item Distributor');
   await nameInput.fill('Spell Perks Item Distributor Lod Helper');
-  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText('Уже есть мод с таким же названием')).toHaveCount(0);
+  await expect(page.getByText('A mod with the same name already exists')).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.install')).toMatchObject({
     request: {
       modName: 'Spell Perks Item Distributor Lod Helper',
@@ -11666,7 +11680,7 @@ test('isolates repeated FOMOD groups and resets native list scrolling between st
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
 
   const fomodDialog = page.locator('.install-modal-layout[data-phase="fomod"]');
@@ -11750,13 +11764,13 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
   await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
 
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
   await expect(fomodDialog).toBeVisible();
   await expect(
-    fomodDialog.getByText('Пересчитано · 2 выбрано · 0 требует решения', { exact: true })
+    fomodDialog.getByText('Recalculated · 2 selected · 0 need a decision', { exact: true })
   ).toBeVisible();
   await expect.poll(() => latestCallPayload(page, 'downloads.analyzeFomod')).toMatchObject({
     manualDecisions: [],
@@ -11799,10 +11813,10 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
     outlineStyle: 'none'
   });
   expect(luxCheckboxVisual.checkMaskImage).not.toBe('none');
-  await expect(luxOption.getByText('Выбрано автоматически', { exact: true })).toBeVisible();
+  await expect(luxOption.getByText('Selected automatically', { exact: true })).toBeVisible();
   await luxOption.hover();
   await expect(
-    fomodDialog.getByText('Master Lux.esp активен (Lux).', { exact: true })
+    fomodDialog.getByText('Master Lux.esp is active (Lux).', { exact: true })
   ).toBeVisible();
 
   await fomodDialog.getByRole('button', { name: 'Preset', exact: true }).click();
@@ -11810,20 +11824,20 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
   const fullRadio = fullOption.getByRole('radio', { name: /Full install/ });
   await fullRadio.click();
   await expect(fullRadio).toBeChecked();
-  await expect(fullOption.getByText('Изменено вручную', { exact: true })).toBeVisible();
+  await expect(fullOption.getByText('Changed manually', { exact: true })).toBeVisible();
   await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
 
   await page.evaluate(() =>
     window.localStorage.setItem('fluxora.test.fomodContextChangedOnce', 'true')
   );
-  await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await fomodDialog.getByRole('button', { name: 'Install', exact: true }).click();
 
   await expect(fomodDialog).toBeVisible();
   await expect(
     page
       .locator('.mod-list-row')
       .filter({ hasText: 'Natural Vision Of Tamriel' })
-      .getByText('Требуется проверка', { exact: true })
+      .getByText('Needs review', { exact: true })
   ).toHaveCount(0);
   expect(
     await page.evaluate(() =>
@@ -11833,32 +11847,32 @@ test('explains FOMOD Smart Select and rejects a stale profile before writing fil
     )
   ).toBe(0);
   await expect(
-    fomodDialog.getByText('Пересчитано · 1 выбрано · 1 требует решения', { exact: true })
+    fomodDialog.getByText('Recalculated · 1 selected · 1 need a decision', { exact: true })
   ).toBeVisible();
   await fomodDialog.getByRole('button', { name: 'Preset', exact: true }).click();
   await expect(fullRadio).toBeChecked();
-  await expect(fullOption.getByText('Изменено вручную', { exact: true })).toBeVisible();
+  await expect(fullOption.getByText('Changed manually', { exact: true })).toBeVisible();
 
   await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
   await expect(luxCheckbox).not.toBeChecked();
-  await expect(luxOption.getByText('Предупреждение о master', { exact: true })).toBeVisible();
+  await expect(luxOption.getByText('Master warning', { exact: true })).toBeVisible();
   await luxOption.hover();
   await expect(
-    fomodDialog.getByText('Master Lux.esp найден, но неактивен (Lux).', { exact: true })
+    fomodDialog.getByText('Master Lux.esp was found but is inactive (Lux).', { exact: true })
   ).toBeVisible();
   await luxCheckbox.check();
-  await expect(luxOption.getByText('Изменено вручную', { exact: true })).toBeVisible();
+  await expect(luxOption.getByText('Changed manually', { exact: true })).toBeVisible();
 
-  const recalculateButton = fomodDialog.getByRole('button', { name: 'Пересчитать', exact: true });
+  const recalculateButton = fomodDialog.getByRole('button', { name: 'Recalculate', exact: true });
   await recalculateButton.click();
   await expect(
-    fomodDialog.getByText('Пересчитано · 2 выбрано · 0 требует решения', { exact: true })
+    fomodDialog.getByText('Recalculated · 2 selected · 0 need a decision', { exact: true })
   ).toBeVisible();
   await expect(luxCheckbox).toBeChecked();
-  await expect(luxOption.getByText('Изменено вручную', { exact: true })).toBeVisible();
+  await expect(luxOption.getByText('Changed manually', { exact: true })).toBeVisible();
   await expect(recalculateButton).toBeFocused();
 
-  await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await fomodDialog.getByRole('button', { name: 'Install', exact: true }).click();
   await expect(fomodDialog).toHaveCount(0);
   await expect
     .poll(() =>
@@ -11908,23 +11922,23 @@ test('drives Smart Select from a real ZIP FOMOD with TES4 master headers', async
     await clickSkyrimBuildOpenButton(page);
 
     const rightPane = page.getByLabel('Right pane');
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
 
     const fomodDialog = page.getByRole('dialog', { name: /Smart Playwright Mod/ });
     await expect(fomodDialog).toBeVisible();
     await expect(
-      fomodDialog.getByText('Пересчитано · 1 выбрано · 0 требует решения', { exact: true })
+      fomodDialog.getByText('Recalculated · 1 selected · 0 need a decision', { exact: true })
     ).toBeVisible();
     const luxOption = fomodDialog.locator('label.fomod-option').filter({ hasText: 'Lux Patch' });
     await expect(luxOption.getByRole('checkbox', { name: /Lux Patch/ })).toBeChecked();
-    await expect(luxOption.getByText('Выбрано автоматически', { exact: true })).toBeVisible();
+    await expect(luxOption.getByText('Selected automatically', { exact: true })).toBeVisible();
     await luxOption.hover();
     await expect(
-      fomodDialog.getByText('Master Lux.esp активен (Lux).', { exact: true })
+      fomodDialog.getByText('Master Lux.esp is active (Lux).', { exact: true })
     ).toBeVisible();
 
-    await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+    await fomodDialog.getByRole('button', { name: 'Install', exact: true }).click();
     await expect(fomodDialog).toHaveCount(0);
     await expect
       .poll(() => latestCallPayload(page, 'test.recordInstalledMod'))
@@ -11950,7 +11964,7 @@ test('opens install controls immediately and keeps native installation non-modal
   await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
-  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
 
   const skyuiRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await skyuiRow.dblclick();
@@ -11973,12 +11987,12 @@ test('opens install controls immediately and keeps native installation non-modal
 
   const skyuiDialog = page.getByRole('dialog', { name: /SkyUI/ });
   await expect(skyuiDialog.getByLabel(/Mod name/)).toHaveValue('SkyUI');
-  await expect(skyuiDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
-  await expect(skyuiDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
-  await skyuiDialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await expect(skyuiDialog.getByText('Уже есть мод с таким же названием')).toBeVisible();
-  await expect(skyuiDialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
-  await expect(skyuiDialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: 'Details' })).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: 'Install', exact: true })).toBeVisible();
+  await skyuiDialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await expect(skyuiDialog.getByText('A mod with the same name already exists')).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: /Replace/ })).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: /Merge/ })).toBeVisible();
   expect(
     await page.evaluate(() =>
       (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
@@ -11986,7 +12000,7 @@ test('opens install controls immediately and keeps native installation non-modal
     )
   ).not.toContain('downloads.install');
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '1200'));
-  await skyuiDialog.getByRole('button', { name: /Объединить/ }).click();
+  await skyuiDialog.getByRole('button', { name: /Merge/ }).click();
   await expect(skyuiDialog).toHaveCount(0);
   await expect(page.locator('.install-dialog[data-phase="installing"]')).toHaveCount(0);
   await expect
@@ -12026,8 +12040,8 @@ test('opens install controls immediately and keeps native installation non-modal
   });
   await expect(immediateDialog).toHaveAttribute('aria-busy', 'true', { timeout: 500 });
   await expect(immediateDialog.getByLabel(/Mod name/)).toHaveCount(0);
-  await expect(immediateDialog.getByRole('button', { name: 'Подробнее' })).toHaveCount(0);
-  await expect(immediateDialog.getByRole('button', { name: 'Установить', exact: true })).toHaveCount(0);
+  await expect(immediateDialog.getByRole('button', { name: 'Details' })).toHaveCount(0);
+  await expect(immediateDialog.getByRole('button', { name: 'Install', exact: true })).toHaveCount(0);
   await expect(page.locator('.install-dialog[data-phase="analyzing"]')).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.planInstall')).toMatchObject({ delayMs: 15_000 });
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
@@ -12097,12 +12111,12 @@ test('opens install controls immediately and keeps native installation non-modal
   await expect(fullRadio).toBeChecked();
   await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
   await expect(luxCheckbox).toBeChecked();
-  await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
-  await expect(fomodDialog.getByRole('button', { name: 'Подготовка…', exact: true })).toBeVisible();
+  await fomodDialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await expect(fomodDialog.getByRole('button', { name: 'Preparing…', exact: true })).toBeVisible();
   await expect(luxCheckbox).toBeChecked();
   await expect(fomodDialog.getByText('Installing mod', { exact: true })).toHaveCount(0);
   await expect(fomodDialog.getByLabel(/Mod name/)).toHaveCount(0);
-  await expect(fomodDialog.getByText('Уже есть мод с таким же названием')).toBeVisible({
+  await expect(fomodDialog.getByText('A mod with the same name already exists')).toBeVisible({
     timeout: 17_000
   });
   expect(
@@ -12118,7 +12132,7 @@ test('opens install controls immediately and keeps native installation non-modal
     )
   ).not.toContain('downloads.installFomod');
   await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '1200'));
-  await fomodDialog.getByRole('button', { name: /Заменить/ }).click();
+  await fomodDialog.getByRole('button', { name: /Replace/ }).click();
   await expect(fomodDialog).toHaveCount(0);
   await expect(page.locator('.install-dialog[data-phase="installing"]')).toHaveCount(0);
   await expect
@@ -12270,6 +12284,39 @@ test('shows the branded ModdingFlow account and disconnects it through the Setti
     .toBe(true);
 });
 
+test('waits for the persisted language before committing product copy', async ({ page }) => {
+  await page.addInitScript(() => {
+    const samples: string[] = [];
+    (window as typeof window & { __fluxoraVisibleTextSamples?: string[] })
+      .__fluxoraVisibleTextSamples = samples;
+    const recordVisibleText = () => {
+      const text = document.body?.innerText.trim() ?? '';
+      if (text && samples.at(-1) !== text) {
+        samples.push(text);
+      }
+    };
+    new MutationObserver(recordVisibleText).observe(document, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+  });
+
+  await page.goto(`${baseUrl}/?testLanguage=ru-ru&testLanguageDelayMs=150`);
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru-RU');
+  await expect(page.getByText('Выберите сборку', { exact: true })).toBeVisible();
+  const visibleTextSamples = await page.evaluate(() =>
+    (window as typeof window & { __fluxoraVisibleTextSamples?: string[] })
+      .__fluxoraVisibleTextSamples ?? []
+  );
+  expect(
+    visibleTextSamples.filter((sample) =>
+      /(?:^|\n)(?:Library|Choose a build|New build|Search builds)(?:\n|$)/u.test(sample)
+    )
+  ).toEqual([]);
+});
+
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {
   await page.goto(`${baseUrl}/?window=settings`);
 
@@ -12280,8 +12327,8 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.locator('.settings-nav button').filter({ hasText: /^AI/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Languages/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Transfer/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Для разработчиков/ })).toBeVisible();
-  await expect(page.locator('.settings-nav button').last()).toContainText('Для разработчиков');
+  await expect(page.getByRole('button', { name: /For developers/ })).toBeVisible();
+  await expect(page.locator('.settings-nav button').last()).toContainText('For developers');
   await expect(page.locator('.settings-panel--ai')).toHaveCount(0);
   await expect(page.getByText('Chat model')).toHaveCount(0);
   await page.getByRole('button', { name: /Connections/ }).click();
@@ -12380,7 +12427,13 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   expect(hoveredLanguageStyle.backgroundImage).toBe('none');
   expect(hoveredLanguageStyle.backgroundColor).toContain('0.15');
   expect(hoveredLanguageStyle.borderTopColor).toBe('rgba(0, 0, 0, 0)');
-  await page.getByRole('option', { name: /Русский - Russian/ }).click();
+  await germanLanguageOption.click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de-DE');
+  await expect(page.getByRole('button', { name: /Für Entwickler/ })).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Sprache' }).click();
+  await page.getByRole('option', { name: /Русский - Russisch/ }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru-RU');
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -12416,7 +12469,7 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
       payload: { url: 'https://github.com/WhistleSkyrim/Fluxora' }
     });
 
-  await page.getByRole('button', { name: /Transfer/ }).click();
+  await page.getByRole('button', { name: /Перенос/ }).click();
   await expect(page.getByText('Mod Organizer 2', { exact: true })).toBeVisible();
   const transferButton = page.getByRole('button', {
     name: 'Перенести сборку из Mod Organizer 2'
@@ -12460,22 +12513,22 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
 
     const rightPane = page.getByLabel('Right pane');
     await expect(page.getByRole('table', { name: 'Plugin load order' })).toBeVisible();
-    await expect(rightPane.getByRole('tab', { name: /Плагины/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(rightPane.getByRole('tab', { name: /Plugins/ })).toHaveAttribute('aria-selected', 'true');
     await capturePhase13Screenshot(page, testInfo, 'plugins-right-pane', size);
 
-    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('tab', { name: /Downloads/ }).click();
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
     const simpleDialog = page.getByRole('dialog', { name: /SkyUI/ });
     await expect(simpleDialog).toBeVisible();
-    await expect(simpleDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
-    await expect(simpleDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+    await expect(simpleDialog.getByRole('button', { name: 'Details' })).toBeVisible();
+    await expect(simpleDialog.getByRole('button', { name: 'Install', exact: true })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'install-dialog', size);
 
-    await simpleDialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+    await simpleDialog.getByRole('button', { name: 'Close installation window' }).click();
     await page.evaluate(() => window.localStorage.setItem('fluxora.test.forceFomod', 'true'));
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
     const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
-    await expect(fomodDialog.getByText('Установка мода', { exact: true })).toBeVisible();
+    await expect(fomodDialog.getByText('Install mod', { exact: true })).toBeVisible();
     await expect(fomodDialog.getByRole('button', { name: /Preset/ })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'fomod-wizard', size);
 
@@ -12485,12 +12538,12 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
       (window as typeof window & { __fluxoraOperationDelayMs?: number }).__fluxoraOperationDelayMs = 900;
     });
     const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
-    await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+    await modsPane.getByRole('button', { name: 'Build actions' }).click();
     await page
-      .getByRole('menu', { name: 'Действия со сборкой' })
-      .getByRole('menuitem', { name: 'Упаковать' })
+      .getByRole('menu', { name: 'Build actions' })
+      .getByRole('menuitem', { name: 'Package' })
       .click();
-    const fluxPackDialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+    const fluxPackDialog = page.getByRole('dialog', { name: 'Package build' });
     await expect(fluxPackDialog).toBeVisible();
     const fluxPackDialogBox = await fluxPackDialog.boundingBox();
     expect(fluxPackDialogBox).not.toBeNull();
@@ -12502,7 +12555,7 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
     );
     await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-dialog', size);
     const fluxPackPackageTypeSelect = fluxPackDialog.getByRole('combobox', {
-      name: 'Тип упаковки FluxPack'
+      name: 'FluxPack package type'
     });
     await fluxPackPackageTypeSelect.click();
     const fluxPackPackageTypeMenu = page.getByRole('listbox');
@@ -12517,8 +12570,8 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
     await page.keyboard.press('Escape');
     await expect(fluxPackDialog).toBeVisible();
     await submitFluxPackExportDialog(page, 'full');
-    await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
-    await expect(page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })).toBeVisible();
+    await expect(page.getByRole('status', { name: 'Packaging build' })).toBeVisible();
+    await expect(page.getByRole('progressbar', { name: 'Packaging build: progress' })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'operation-overlay', size);
 
     await page.goto(`${baseUrl}/?window=settings`);
@@ -12929,7 +12982,7 @@ for (const textureMode of ['missing', 'corrupt'] as const) {
     await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
     await expect(page.locator('.file-preview-warnings')).toBeVisible();
     await expect(page.locator('.file-preview-warnings')).toContainText(
-      textureMode === 'missing' ? 'Texture not found' : 'Texture could not be decoded'
+      textureMode === 'missing' ? 'Texture not found' : 'The texture could not be decoded'
     );
     await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
   });
@@ -13018,7 +13071,7 @@ test('file preview performance probe records bounded raw cold and warm runs', as
 test('ModdingFlow activation confirmation remains inert while its capability is disabled', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await expect(page.getByRole('dialog', { name: 'Загрузка из ModdingFlow' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Download from ModdingFlow' })).toHaveCount(0);
   const activationCalls = await page.evaluate(() => (
     ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
       (call) => call.method.startsWith('moddingFlowActivations.')
@@ -13033,22 +13086,22 @@ test('ModdingFlow activation confirmation requires a compatible target and exact
   });
   await page.goto(baseUrl);
 
-  const dialog = page.getByRole('dialog', { name: 'Загрузка из ModdingFlow' });
+  const dialog = page.getByRole('dialog', { name: 'Download from ModdingFlow' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
-  const previewPlan = dialog.getByRole('button', { name: 'Проверить план' });
+  const previewPlan = dialog.getByRole('button', { name: 'Check plan' });
   await expect(previewPlan).toBeDisabled();
 
-  await dialog.getByLabel('Сборка').selectOption('skyrim-main');
+  await dialog.getByLabel('Build').selectOption('skyrim-main');
   await expect(previewPlan).toBeDisabled();
-  await dialog.getByLabel('Профиль').selectOption('Default');
+  await dialog.getByLabel('Profile').selectOption('Default');
   await expect(previewPlan).toBeEnabled();
   await previewPlan.click();
-  await expect(dialog.getByText('Обязательные файлы', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Required files', { exact: true })).toBeVisible();
   await expect(
-    dialog.getByText('Исключённые необязательные файлы', { exact: true })
+    dialog.getByText('Excluded optional files', { exact: true })
   ).toBeVisible();
-  const confirm = dialog.getByRole('button', { name: 'Подтвердить загрузку' });
+  const confirm = dialog.getByRole('button', { name: 'Confirm download' });
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await expect(dialog).toHaveCount(0);
@@ -13086,7 +13139,7 @@ test('downloads an available app update from the stable green titlebar control',
   await page.goto(`${baseUrl}/?testUpdate=available`);
 
   const availableUpdateButton = page.getByRole('button', {
-    name: 'Скачать и установить обновление Fluxora 2.4.0'
+    name: 'Download and install Fluxora 2.4.0'
   });
   await expect(availableUpdateButton).toBeVisible();
   const updateButton = page.locator('[data-update-control]');
@@ -13141,7 +13194,7 @@ test('downloads an available app update from the stable green titlebar control',
   }));
   await expect(updateButton).toHaveAttribute(
     'aria-label',
-    'Загрузка обновления Fluxora 2.4.0: 37%. Отменить'
+    'Downloading Fluxora 2.4.0: 37%. Cancel'
   );
   await expect(updateButton).toHaveAttribute('aria-busy', 'true');
   await expect(updateButton).toHaveAttribute('data-update-progress', '37');
@@ -13153,15 +13206,15 @@ test('downloads an available app update from the stable green titlebar control',
   }));
   await expect(updateButton).toHaveAttribute(
     'title',
-    'Обновление Fluxora 2.4.0 ожидает завершения операций. Отменить'
+    'Fluxora 2.4.0 is waiting for active operations to finish. Cancel'
   );
 
-  await page.evaluate(() => (window as any).__failFluxoraUpdateDownload('Соединение прервано'));
+  await page.evaluate(() => (window as any).__failFluxoraUpdateDownload('Connection interrupted'));
   await expect(updateButton).toHaveAttribute('data-update-state', 'error');
   await expect(updateButton).toBeEnabled();
   await expect(updateButton).toHaveAttribute(
     'title',
-    'Не удалось установить обновление Fluxora 2.4.0. Соединение прервано. Повторить'
+    'Fluxora 2.4.0 could not be installed. Connection interrupted. Try again'
   );
 
   await updateButton.click();
@@ -13235,11 +13288,11 @@ test('keeps an automatic app-update check failure silent', async ({ page }) => {
 
 test('keeps app-update state and manual checks out of Settings', async ({ page }) => {
   await page.goto(`${baseUrl}/?window=settings&testUpdate=automaticError`);
-  await page.getByRole('button', { name: /Для разработчиков/ }).click();
+  await page.getByRole('button', { name: /For developers/ }).click();
 
   await expect(page.locator('.settings-service-row--app-update')).toHaveCount(0);
-  await expect(page.getByText('Обновления Fluxora')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Проверить обновления|Повторить проверку/ }))
+  await expect(page.getByText('Fluxora updates')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Check for updates|Retry check/ }))
     .toHaveCount(0);
   expect(await page.evaluate(() => (
     ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(

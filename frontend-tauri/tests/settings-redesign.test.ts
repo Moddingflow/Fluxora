@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React, { type ComponentProps } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { SettingsWorkspace } from '../src/renderer/features/settings/SettingsWorkspace';
@@ -12,6 +11,7 @@ import type {
   FluxoraAppInfo,
   FluxoraExternalConnectionStatus
 } from '../src/shared/fluxora-api';
+import { renderLocalized } from './localization-test-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,11 +34,12 @@ const baseTransferProps: TransferSettingsPanelProps = {
 const renderTransferSettings = (
   overrides: Partial<TransferSettingsPanelProps> = {}
 ): string =>
-  renderToStaticMarkup(
+  renderLocalized(
     React.createElement(TransferSettingsPanel, {
       ...baseTransferProps,
       ...overrides
-    })
+    }),
+    'en-US'
   );
 
 const appInfo: FluxoraAppInfo = {
@@ -125,11 +126,12 @@ const exampleApiLimitProvider: FluxoraApiLimitProvider = {
 const renderSettingsWorkspace = (
   overrides: Partial<SettingsWorkspaceProps> = {}
 ): string =>
-  renderToStaticMarkup(
+  renderLocalized(
     React.createElement(SettingsWorkspace, {
       ...baseSettingsWorkspaceProps,
       ...overrides
-    })
+    }),
+    'en-US'
   );
 
 describe('settings redesign', () => {
@@ -202,10 +204,10 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('Choose the renderer language.');
     expect(settingsWorkspace).toContain('<TransferSettingsPanel');
     expect(settingsWorkspace).toContain('settings-panel--developer');
-    expect(settingsWorkspace).toContain('Режим разработчика');
+    expect(settingsWorkspace).toContain("t('settings.developer.mode')");
     expect(settingsWorkspace).toContain('onDeveloperModeChange(!developerModeEnabled)');
     expect(titlebar).toContain('titlebar__mark titlebar__mark--settings');
-    expect(titlebar).toContain("title ?? (isSettingsWindow ? 'Settings' : 'Fluxora')");
+    expect(titlebar).toContain("title ?? (isSettingsWindow ? t('titlebar.settings') : t('titlebar.appName'))");
     expect(settingsWorkspace).not.toContain('Account bridge');
     expect(settingsWorkspace).not.toContain('Link Nexus Mods with OAuth');
     expect(settingsWorkspace).not.toContain('Refresh status');
@@ -303,7 +305,7 @@ describe('settings redesign', () => {
     const html = renderTransferSettings();
 
     expect(html).toContain('Mod Organizer 2');
-    expect(html).toContain('Перенести');
+    expect(html).toContain('Transfer');
     expect(html).toContain('settings-service-row--transfer');
     expect(html).not.toContain('Build transfer');
     expect(html).not.toContain('MO2 transfer progress');
@@ -317,13 +319,13 @@ describe('settings redesign', () => {
   it('renders developer settings as the final settings section with build and stack facts', () => {
     const html = renderSettingsWorkspace();
 
-    expect(html).toContain('Для разработчиков');
-    expect(html).toContain('Режим разработчика');
+    expect(html).toContain('For developers');
+    expect(html).toContain('Developer mode');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
-    expect(html).toContain('Дата последней сборки');
+    expect(html).toContain('Last build date');
     expect(html).toContain('2026-07-03 10:15 UTC');
-    expect(html).toContain('Версия Fluxora');
+    expect(html).toContain('Fluxora version');
     expect(html).toContain('Tauri 2 / React / TypeScript');
     expect(html).toContain('Rust shell / C++ core');
     expect(html).toContain('0.0.0-test');

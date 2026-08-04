@@ -290,6 +290,16 @@ describe('single-agent chat persistence', () => {
     expect(storage.getItem('fluxora.theme')).toBe('dark');
   });
 
+  it('localizes the fallback build label for a new scoped session', () => {
+    const session = loadAiSession(
+      new MemoryStorage(),
+      { projectId: 'alpha' },
+      'ru-RU'
+    );
+
+    expect(session.buildLabel).toBe('Выбранная сборка');
+  });
+
   it('persists unlimited independent tabs inside each build scope', () => {
     const storage = new MemoryStorage();
     let session = loadAiSession(storage, { projectId: 'alpha', projectName: 'Alpha' });

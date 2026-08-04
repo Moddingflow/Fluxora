@@ -1,5 +1,6 @@
 import type { FluxoraProject } from '../../../shared/fluxora-api';
 import type { ProjectLibraryStats } from './LibraryHome';
+import { normalizeAppLocale, translateForLanguage } from '../../../localization';
 
 export interface ProjectRuntimeSummary {
   projectId: string;
@@ -89,9 +90,9 @@ const formatProjectBytes = (value: number | null): string => {
   return `${gigabytes.toFixed(gigabytes >= 10 ? 1 : 2)} GB`;
 };
 
-const formatProjectDate = (value: string | null): string => {
+const formatProjectDate = (value: string | null, language: string): string => {
   if (!value) {
-    return 'Not tracked';
+    return translateForLanguage(language, 'library.notTracked');
   }
 
   const numeric = Number(value);
@@ -103,7 +104,7 @@ const formatProjectDate = (value: string | null): string => {
     return value;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(normalizeAppLocale(language), {
     year: 'numeric',
     month: 'short',
     day: '2-digit'
@@ -112,12 +113,13 @@ const formatProjectDate = (value: string | null): string => {
 
 export const buildProjectLibraryStats = (
   project: FluxoraProject,
-  runtime?: ProjectRuntimeSummary
+  runtime?: ProjectRuntimeSummary,
+  language = 'en-US'
 ): ProjectLibraryStats => {
   const matchingRuntime = runtime?.projectId === project.id ? runtime : undefined;
 
   return {
-    lastLaunch: formatProjectDate(readTextMetric(project, projectMetricKeys.lastLaunch)),
+    lastLaunch: formatProjectDate(readTextMetric(project, projectMetricKeys.lastLaunch), language),
     size: formatProjectBytes(readNumberMetric(project, projectMetricKeys.size)),
     mods: formatOptionalCount(
       matchingRuntime?.modCount ?? readNumberMetric(project, projectMetricKeys.mods)

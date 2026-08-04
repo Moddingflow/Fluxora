@@ -51,7 +51,7 @@ describe('install progress store', () => {
     expect(secondListener).not.toHaveBeenCalled();
     expect(store.getSnapshot('second')).toBe(untouchedSnapshot);
     expect(store.getSnapshot('first')).toMatchObject({
-      label: 'Распаковка',
+      label: 'Extracting',
       progressPercent: 25,
       state: 'extracting'
     });
@@ -86,7 +86,7 @@ describe('install progress store', () => {
 
     expect(shouldAcceptInstallOperation(extracting, queued)).toBe(false);
     expect(store.getSnapshot('install')).toMatchObject({
-      label: 'Распаковка',
+      label: 'Extracting',
       progressPercent: 10,
       state: 'extracting'
     });
@@ -107,5 +107,6 @@ describe('install progress store', () => {
     expect(store.getSnapshot('first').operation).toBeNull();
     expect(store.getSnapshot('second')).toBe(secondSnapshot);
     expect(installProgressLabel(operation('first', 'needsReview'))).toBe('');
+    expect(installProgressLabel(operation('first', 'extracting'), 'ru-RU')).toBe('Распаковка');
   });
 });

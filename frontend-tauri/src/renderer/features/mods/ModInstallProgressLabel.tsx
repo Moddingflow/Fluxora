@@ -1,10 +1,12 @@
 import { memo } from 'react';
 
 import {
+  installProgressLabel,
   useInstallProgress,
   type InstallProgressStore
 } from './install-progress-store';
 import { recordListPerformanceRowCommit } from '../../performance/list-performance-benchmark';
+import { useLocalization } from '../../../localization/react';
 
 interface ModInstallProgressLabelProps {
   fallbackLabel: string;
@@ -20,13 +22,16 @@ export const ModInstallProgressLabel = memo(({
   progressStore
 }: ModInstallProgressLabelProps) => {
   recordListPerformanceRowCommit('mods', orderId);
+  const { locale } = useLocalization();
   const progress = useInstallProgress(progressStore, operationId);
 
   if (progress.state === 'needsReview') {
     return null;
   }
 
-  const label = progress.label || fallbackLabel;
+  const label = progress.operation
+    ? installProgressLabel(progress.operation, locale) || fallbackLabel
+    : fallbackLabel;
   return <span className="mod-install-pending-label">{label}</span>;
 });
 

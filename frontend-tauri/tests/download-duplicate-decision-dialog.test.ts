@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { LocalizationProvider } from '../src/localization/react';
 import { DownloadDuplicateDecisionDialog } from '../src/renderer/features/downloads/DownloadDuplicateDecisionDialog';
 import type { FluxoraDownloadEntry } from '../src/shared/fluxora-api';
 
@@ -48,12 +49,18 @@ const duplicateEntry = (
 });
 
 const renderDialog = (entry: FluxoraDownloadEntry): string =>
-  renderToStaticMarkup(React.createElement(DownloadDuplicateDecisionDialog, {
-    entry,
-    isResolving: false,
-    errorMessage: null,
-    onResolve: () => undefined
-  }));
+  renderToStaticMarkup(
+    React.createElement(
+      LocalizationProvider,
+      { language: 'ru-RU' },
+      React.createElement(DownloadDuplicateDecisionDialog, {
+        entry,
+        isResolving: false,
+        errorMessage: null,
+        onResolve: () => undefined
+      })
+    )
+  );
 
 describe('download duplicate decision dialog', () => {
   it('renders the new-version status with two designed actions and no redundant cancel action', () => {
@@ -86,7 +93,7 @@ describe('download duplicate decision dialog', () => {
   it('shows one plain archive name and only the replace action for an identical archive', () => {
     const markup = renderDialog(duplicateEntry('same-file'));
 
-    expect(markup).toContain('Точно такой же архив уже есть в Downloads');
+    expect(markup).toContain('Точно такой же архив уже есть в разделе «Загрузки»');
     expect(markup).toContain('Заменить');
     expect(markup.match(/SkyUI 1\.0\.1\.7z/g)).toHaveLength(1);
     expect(markup).not.toContain('— 1.0.1');

@@ -35,6 +35,7 @@ import type {
   FluxoraInstallPlan,
   FluxoraPlacementEditsV2
 } from '../../../shared/fluxora-api';
+import { translateForLanguage, type TranslationKey } from '../../../localization';
 
 export type InstallDialogPhase =
   | 'detecting'
@@ -92,85 +93,112 @@ interface InstallDialogProps {
 }
 
 type InstallIconStyle = CSSProperties & { '--install-icon': string };
+type InstallTranslate = (
+  key: TranslationKey,
+  variables?: Record<string, string | number>
+) => string;
 
-const fomodEvidenceText = (evidence: FluxoraFomodDecisionEvidence): string => {
+const fomodEvidenceText = (
+  evidence: FluxoraFomodDecisionEvidence,
+  t: InstallTranslate
+): string => {
   const owner = evidence.sourceName ? ` (${evidence.sourceName})` : '';
   switch (evidence.code) {
     case 'profile.file.match':
       return evidence.actual === 'Active'
-        ? `${evidence.subject} найден и активен${owner}.`
-        : `${evidence.subject}: ${evidence.actual || 'состояние неизвестно'}${owner}.`;
+        ? t('install.evidence.fileActive', { subject: evidence.subject, owner })
+        : t('install.evidence.fileState', {
+            subject: evidence.subject,
+            actual: evidence.actual || t('install.evidence.stateUnknown'),
+            owner
+          });
     case 'fomod.flag.match':
-      return `XML-условие ${evidence.subject} = ${evidence.expected} совпало.`;
+      return t('install.evidence.flagMatch', {
+        subject: evidence.subject,
+        expected: evidence.expected
+      });
     case 'profile.version.match':
-      return `Версия ${evidence.subject}: ${evidence.actual}; требуется ${evidence.expected}.`;
+      return t('install.evidence.versionMatch', {
+        subject: evidence.subject,
+        actual: evidence.actual,
+        expected: evidence.expected
+      });
     case 'tes4.master.active':
-      return `Master ${evidence.subject} активен${owner}.`;
+      return t('install.evidence.masterActive', { subject: evidence.subject, owner });
     case 'tes4.master.provided':
-      return `Master ${evidence.subject} будет установлен вариантом ${evidence.sourceName}.`;
+      return t('install.evidence.masterProvided', {
+        subject: evidence.subject,
+        source: evidence.sourceName
+      });
     case 'tes4.master.inactive':
-      return `Master ${evidence.subject} найден, но неактивен${owner}.`;
+      return t('install.evidence.masterInactive', { subject: evidence.subject, owner });
     case 'tes4.master.missing':
-      return `Master ${evidence.subject} отсутствует.`;
+      return t('install.evidence.masterMissing', { subject: evidence.subject });
     case 'tes4.master.providerNotSelected':
-      return `Master ${evidence.subject} есть в FOMOD, но его вариант не выбран.`;
+      return t('install.evidence.masterNotSelected', { subject: evidence.subject });
     default:
-      return `${evidence.subject || 'Условие'}: ${evidence.actual || evidence.expected || evidence.code}.`;
+      return t('install.evidence.condition', {
+        subject: evidence.subject || t('install.evidence.conditionFallback'),
+        actual: evidence.actual || evidence.expected || evidence.code
+      });
   }
 };
 
-const fomodReasonText = (decision: FluxoraFomodOptionDecision | null): string[] => {
+const fomodReasonText = (
+  decision: FluxoraFomodOptionDecision | null,
+  t: InstallTranslate
+): string[] => {
   if (!decision) {
-    return ['Для этого варианта нет автоматического решения.'];
+    return [t('install.reason.none')];
   }
 
   const reasons = decision.reasonCodes.map((reason) => {
     switch (reason) {
       case 'manual.session':
-        return 'Вы изменили этот вариант вручную.';
+        return t('install.reason.manual');
       case 'memory.contextual':
       case 'memory.global':
       case 'memory.v1WeakHint':
-        return 'Использовано сохранённое личное предпочтение.';
+        return t('install.reason.memory');
       case 'author.recommended':
-        return 'Автор FOMOD пометил вариант как Recommended.';
+        return t('install.reason.recommended');
       case 'author.optional':
-        return 'Автор FOMOD оставил вариант необязательным.';
+        return t('install.reason.optional');
       case 'profile.exactRecommendation':
-        return 'Условия FOMOD совпали с текущим профилем.';
+        return t('install.reason.profileMatch');
       case 'tes4.masters.satisfied':
-        return 'Все master-зависимости варианта доступны.';
+        return t('install.reason.mastersSatisfied');
       case 'fomod.required':
       case 'fomod.selectAll':
-        return 'FOMOD требует установить этот вариант.';
+        return t('install.reason.required');
       case 'fomod.notUsable':
-        return 'FOMOD пометил вариант как NotUsable.';
+        return t('install.reason.notUsable');
       case 'dependency.cycle':
-        return 'Обнаружен цикл условий; выбор оставлен пользователю.';
+        return t('install.reason.cycle');
       case 'dependency.unknown':
-        return 'Не удалось надёжно проверить зависимость.';
+        return t('install.reason.dependencyUnknown');
       case 'group.ambiguous':
-        return 'Несколько вариантов имеют одинаковый приоритет.';
+        return t('install.reason.ambiguous');
       case 'tes4.reviewRequired':
       case 'tes4.masterUnavailable':
-        return 'TES4 master-зависимости требуют ручной проверки.';
+        return t('install.reason.masterReview');
       default:
-        return reason || 'Решение принято по правилам FOMOD.';
+        return reason || t('install.reason.default');
     }
   });
-  return [...reasons, ...decision.evidence.map(fomodEvidenceText)];
+  return [...reasons, ...decision.evidence.map((evidence) => fomodEvidenceText(evidence, t))];
 };
 
-const fomodWarningText = (warning: string): string => {
+const fomodWarningText = (warning: string, t: InstallTranslate): string => {
   switch (warning) {
     case 'moduleDependencies.unknown':
-      return 'Версию игры или script extender не удалось определить. Автовыбор отключён; выберите вручную.';
+      return t('install.warning.dependenciesUnknown');
     case 'moduleDependencies.unsatisfied':
-      return 'Требования FOMOD к версии игры или инструментов не выполнены.';
+      return t('install.warning.dependenciesUnsatisfied');
     case 'autoselect.unavailable':
-      return 'Автовыбор недоступен для этой игры; варианты остаются доступными вручную.';
+      return t('install.warning.autoUnavailable');
     default:
-      return 'Некоторые зависимости не удалось проверить автоматически.';
+      return t('install.warning.generic');
   }
 };
 
@@ -224,7 +252,7 @@ export function InstallDialog({
   evaluation,
   existingModName,
   installDialog,
-  language = 'ru-RU',
+  language = 'en-US',
   onArchiveTreeScrollTopChange,
   onClose,
   onContinueFromFomod,
@@ -237,6 +265,8 @@ export function InstallDialog({
   onResolveExistingMod,
   onSubmitInstallOptions
 }: InstallDialogProps) {
+  const t: InstallTranslate = (key, variables) =>
+    translateForLanguage(language, key, variables);
   const modNameInputRef = useRef<HTMLInputElement>(null);
   const modNameSelectionRef = useRef<{
     start: number;
@@ -321,9 +351,9 @@ export function InstallDialog({
     );
 
     return (
-      <nav className="install-step-sidebar" aria-label="FOMOD steps">
+      <nav className="install-step-sidebar" aria-label={t('install.fomod.stepsAria')}>
         <header className="install-step-sidebar__header">
-          <strong>Installation steps</strong>
+          <strong>{t('install.fomod.steps')}</strong>
         </header>
         <div className="install-step-sidebar__list">
           {evaluation.visibleSteps.map((step, index) => {
@@ -353,7 +383,10 @@ export function InstallDialog({
           })}
         </div>
         <footer className="install-step-sidebar__footer">
-          Step {currentStepIndex + 1} of {evaluation.visibleSteps.length}
+          {t('install.fomod.stepCounter', {
+            current: currentStepIndex + 1,
+            total: evaluation.visibleSteps.length
+          })}
         </footer>
       </nav>
     );
@@ -390,19 +423,25 @@ export function InstallDialog({
       (autoSelection?.unresolvedGroups ?? []).flatMap((group) => group.optionIds)
     );
     const detailsDecision = detailsOption ? decisions.get(detailsOption.option.id) ?? null : null;
-    const detailsReasons = fomodReasonText(detailsDecision);
+    const detailsReasons = fomodReasonText(detailsDecision, t);
     const detailsReasonTitle = detailsOption?.isSelected
-      ? 'Почему выбрано'
+      ? t('install.fomod.whySelected')
       : detailsDecision?.action === 'manual'
-        ? 'Почему нужен ручной выбор'
-        : 'Почему не выбрано';
+        ? t('install.fomod.whyManual')
+        : t('install.fomod.whyNotSelected');
     const autoSelectionAvailable = profileContext?.autoSelectionAvailable !== false && Boolean(autoSelection);
     const selectionOriginLabel = installDialog.fomodInstaller.selectionOrigin === 'restored'
-      ? 'Восстановлено'
-      : 'Пересчитано';
+      ? t('install.fomod.restored')
+      : t('install.fomod.recalculated');
     const summaryText = autoSelectionAvailable
-      ? `${selectionOriginLabel} · ${evaluation.selectedOptionIds.length} выбрано · ${autoSelection?.unresolvedGroups.length ?? 0} требует решения`
-      : `Автовыбор недоступен${profileContext?.unavailableReason ? ` · ${profileContext.unavailableReason}` : ''}`;
+      ? t('install.fomod.summary', {
+          origin: selectionOriginLabel,
+          selected: evaluation.selectedOptionIds.length,
+          unresolved: autoSelection?.unresolvedGroups.length ?? 0
+        })
+      : profileContext?.unavailableReason
+        ? t('install.fomod.autoUnavailableReason', { reason: profileContext.unavailableReason })
+        : t('install.fomod.autoUnavailable');
 
     return (
       <div className="install-fomod-wizard">
@@ -424,7 +463,9 @@ export function InstallDialog({
                 }}
               >
                 <RefreshCw size={14} aria-hidden="true" />
-                {installDialog.isRecalculatingFomod ? 'Пересчёт…' : 'Пересчитать'}
+                {installDialog.isRecalculatingFomod
+                  ? t('install.fomod.recalculating')
+                  : t('install.fomod.recalculate')}
               </button>
               <button
                 ref={fomodResetButtonRef}
@@ -439,26 +480,26 @@ export function InstallDialog({
                   onResetFomod();
                 }}
               >
-                Вернуть автоподбор
+                {t('install.fomod.resetAuto')}
               </button>
             </div>
           </div>
           {autoSelection?.installBlocked ? (
             <div className="install-validation" role="alert">
               <AlertTriangle size={16} aria-hidden="true" />
-              <span>Требования FOMOD к игре или инструментам не выполнены.</span>
+              <span>{t('install.warning.dependenciesUnsatisfied')}</span>
             </div>
           ) : autoSelection?.warnings.length ? (
             <div className="fomod-smart-select__warning" role="status">
               <AlertTriangle size={14} aria-hidden="true" />
-              <span>{fomodWarningText(autoSelection.warnings[0])}</span>
+              <span>{fomodWarningText(autoSelection.warnings[0], t)}</span>
             </div>
           ) : null}
         </div>
         <div className="install-fomod-body">
           <section className="install-fomod-options">
             <div className="install-section-heading">
-              <h3>{currentStep?.stepName ?? 'Options'}</h3>
+              <h3>{currentStep?.stepName ?? t('install.fomod.options')}</h3>
             </div>
 
             {installDialog.validationMessage ? (
@@ -481,7 +522,7 @@ export function InstallDialog({
                     data-invalid={!group.isSelectionValid}
                   >
                     <header>
-                      <strong>{group.group.name || 'Options'}</strong>
+                      <strong>{group.group.name || t('install.fomod.options')}</strong>
                     </header>
                     <div className="fomod-options">
                       {group.options.map((option, optionIndex) => {
@@ -498,17 +539,17 @@ export function InstallDialog({
                           )
                         );
                         const optionStatus = manualOptionIds.has(option.option.id)
-                          ? 'Изменено вручную'
+                          ? t('install.fomod.status.manual')
                           : hasMasterWarning
-                            ? 'Предупреждение о master'
+                            ? t('install.fomod.status.masterWarning')
                             : decision?.action === 'manual' || unresolvedOptionIds.has(option.option.id)
-                              ? 'Нужен выбор'
+                              ? t('install.fomod.status.choiceNeeded')
                               : option.isSelected && (decision?.action === 'select' || decision?.action === 'locked')
-                                ? 'Выбрано автоматически'
+                                ? t('install.fomod.status.autoSelected')
                                 : decision?.action === 'locked'
-                                  ? 'Заблокировано FOMOD'
+                                  ? t('install.fomod.status.locked')
                                   : decision
-                                    ? 'Не выбрано автоматически'
+                                    ? t('install.fomod.status.autoNotSelected')
                                     : '';
                         const statusId = `${groupIdentity}-option-${optionIndex}-status`;
                         return (
@@ -560,10 +601,10 @@ export function InstallDialog({
                             </span>
                             <FomodOptionImage imagePath={option.option.imagePath} />
                             <span className="fomod-option__text">
-                              <strong>{option.option.name || 'Option'}</strong>
+                              <strong>{option.option.name || t('install.fomod.option')}</strong>
                               <small>{option.effectiveType}</small>
                               {option.wasPreviouslySelected ? (
-                                <small className="fomod-option__previous">Previously selected</small>
+                                <small className="fomod-option__previous">{t('install.fomod.previouslySelected')}</small>
                               ) : null}
                               {optionStatus ? (
                                 <small
@@ -586,15 +627,17 @@ export function InstallDialog({
             </div>
           </section>
 
-          <aside className="install-fomod-preview" aria-label="FOMOD option details">
+          <aside className="install-fomod-preview" aria-label={t('install.fomod.detailsAria')}>
             <FomodPreviewImage imagePath={previewImage} />
             <div className="install-fomod-preview__copy">
-              <p className="eyebrow">{activeOption ? 'Option details' : 'Current choice'}</p>
+              <p className="eyebrow">{activeOption
+                ? t('install.fomod.optionDetails')
+                : t('install.fomod.currentChoice')}</p>
               <strong>{detailsOption?.option.name ?? installDialog.fomodInstaller.moduleName}</strong>
               <span>
                 {detailsOption?.option.description ||
                   installDialog.fomodInstaller.moduleVersion ||
-                  'No description provided.'}
+                  t('install.fomod.noDescription')}
               </span>
               <section className="fomod-selection-reasons" aria-live="polite">
                 <strong>{detailsReasonTitle}</strong>
@@ -617,7 +660,7 @@ export function InstallDialog({
               onClick={() => onMoveFomodStep(-1)}
             >
               <ChevronLeft size={16} aria-hidden="true" />
-              Previous
+              {t('install.previous')}
             </button>
             <button
               ref={fomodFinalActionButtonRef}
@@ -638,13 +681,13 @@ export function InstallDialog({
             >
               {canMoveNext ? (
                 <>
-                  Next
+                  {t('install.next')}
                   <ChevronRight size={16} aria-hidden="true" />
                 </>
               ) : (
                 <>
                   <CheckCircle2 size={16} aria-hidden="true" />
-                  {installDialog.isSubmitting ? 'Подготовка…' : 'Установить'}
+                  {installDialog.isSubmitting ? t('install.preparing') : t('install.action')}
                 </>
               )}
             </button>
@@ -655,7 +698,8 @@ export function InstallDialog({
   };
 
   const renderInstallOptions = () => {
-    const validation = installDialog.validationMessage ?? validateInstallModName(installDialog.modName);
+    const validation = installDialog.validationMessage ??
+      validateInstallModName(installDialog.modName, language);
     const installTitle =
       normalizeInstallModName(installDialog.modName) ||
       installDialog.source.displayName ||
@@ -664,10 +708,10 @@ export function InstallDialog({
     return (
       <div className="install-simple">
         <label className="field install-name-field">
-          <span>Mod name</span>
+          <span>{t('install.modName')}</span>
           <input
             ref={modNameInputRef}
-            aria-label={`Mod name for ${installTitle}`}
+            aria-label={t('install.modNameFor', { name: installTitle })}
             value={installDialog.modName}
             disabled={installDialog.isSubmitting}
             onBlur={() => {
@@ -714,7 +758,7 @@ export function InstallDialog({
       role="status"
       aria-live="polite"
     >
-      <span className="sr-only">Определяем тип установщика</span>
+      <span className="sr-only">{t('install.detecting')}</span>
       <div className="field install-name-field install-detecting-skeleton__field" aria-hidden="true">
         <Skeleton className="install-detecting-skeleton__label" />
         <Skeleton className="install-detecting-skeleton__input" />
@@ -734,34 +778,34 @@ export function InstallDialog({
         <section className="install-existing-mod__message" role="alert">
           <AlertTriangle size={18} aria-hidden="true" />
           <div>
-            <strong>Уже есть мод с таким же названием</strong>
+            <strong>{t('install.conflict.title')}</strong>
             <span>{conflictName}</span>
           </div>
         </section>
-        <div className="install-existing-mod__choices" aria-label="Existing mod install mode">
+        <div className="install-existing-mod__choices" aria-label={t('install.conflict.aria')}>
           <button
             type="button"
             disabled={installDialog.isSubmitting}
             onClick={() => onResolveExistingMod(1)}
           >
-            <strong>Заменить</strong>
-            <span>Полностью заменяет мод.</span>
+            <strong>{t('install.conflict.replace')}</strong>
+            <span>{t('install.conflict.replaceDetail')}</span>
           </button>
           <button
             type="button"
             disabled={installDialog.isSubmitting}
             onClick={() => onResolveExistingMod(2)}
           >
-            <strong>Объединить</strong>
-            <span>Перезаписывает только файлы с одинаковыми названиями.</span>
+            <strong>{t('install.conflict.merge')}</strong>
+            <span>{t('install.conflict.mergeDetail')}</span>
           </button>
           <button
             type="button"
             disabled={installDialog.isSubmitting}
             onClick={() => onResolveExistingMod('installNew')}
           >
-            <strong>Это другой мод</strong>
-            <span>Устанавливает отдельную копию с уникальным именем.</span>
+            <strong>{t('install.conflict.separate')}</strong>
+            <span>{t('install.conflict.separateDetail')}</span>
           </button>
         </div>
       </div>
@@ -803,11 +847,11 @@ export function InstallDialog({
     normalizeInstallModName(installDialog.modName) ||
     installDialog.source.displayName ||
     installDialog.source.fileName ||
-    'Install mod';
+    t('install.title');
   const dialogAriaLabel =
     installDialog.phase === 'detecting'
-      ? 'Установка мода'
-      : `Install ${dialogTitle}`;
+      ? t('install.title')
+      : t('install.namedAria', { name: dialogTitle });
 
   return (
     <div className="install-modal-backdrop" role="presentation">
@@ -828,12 +872,12 @@ export function InstallDialog({
                 aria-hidden="true"
                 style={{ '--install-icon': `url("${installModIcon}")` } as InstallIconStyle}
               />
-              <strong>Установка мода</strong>
+              <strong>{t('install.title')}</strong>
             </div>
             <button
               className="icon-button"
               type="button"
-              title="Закрыть окно установки"
+              title={t('install.closeWindow')}
               disabled={installDialog.isSubmitting}
               onClick={onClose}
             >
@@ -850,8 +894,8 @@ export function InstallDialog({
             {installDialog.phase === 'error' ? (
               <div className="install-error" role="alert">
                 <AlertTriangle size={20} aria-hidden="true" />
-                <strong>Install flow failed</strong>
-                <span>{installDialog.errorMessage ?? 'Operation failed.'}</span>
+                <strong>{t('install.errorTitle')}</strong>
+                <span>{t('install.errorGeneric')}</span>
               </div>
             ) : null}
           </div>
@@ -881,7 +925,7 @@ export function InstallDialog({
                   }}
                 >
                   <FolderTree size={15} aria-hidden="true" />
-                  Подробнее
+                  {t('install.details')}
                 </button>
               ) : installDialog.phase === 'details' ? (
                 renderPlacementAssessment()
@@ -899,7 +943,7 @@ export function InstallDialog({
                     type="button"
                     onClick={onClose}
                   >
-                    Close
+                    {t('install.close')}
                   </button>
                 ) : null}
                 {installDialog.phase === 'options' ? (
@@ -908,12 +952,12 @@ export function InstallDialog({
                     type="button"
                     disabled={
                       installDialog.isSubmitting ||
-                      Boolean(validateInstallModName(installDialog.modName))
+                      Boolean(validateInstallModName(installDialog.modName, language))
                     }
                     onClick={onSubmitInstallOptions}
                   >
                     <Play size={16} aria-hidden="true" />
-                    {installDialog.isSubmitting ? 'Подготовка…' : 'Установить'}
+                    {installDialog.isSubmitting ? t('install.preparing') : t('install.action')}
                   </button>
                 ) : null}
                 {installDialog.phase === 'details' ? (
@@ -925,7 +969,7 @@ export function InstallDialog({
                       onClick={() => onPatch({ phase: 'options', validationMessage: null })}
                     >
                       <ChevronLeft size={15} aria-hidden="true" />
-                      {language.toLocaleLowerCase().startsWith('de') ? 'Zurück' : language.toLocaleLowerCase().startsWith('en') ? 'Back' : 'Назад'}
+                      {t('install.back')}
                     </button>
                     <button
                       className="primary-button"
@@ -935,18 +979,12 @@ export function InstallDialog({
                         installDialog.placementValidationPending ||
                         Boolean(installDialog.validationMessage) ||
                         !installDialog.layoutPreview?.canInstall ||
-                        Boolean(validateInstallModName(installDialog.modName))
+                        Boolean(validateInstallModName(installDialog.modName, language))
                       }
                       onClick={onSubmitInstallOptions}
                     >
                       <Play size={16} aria-hidden="true" />
-                      {installDialog.isSubmitting
-                        ? 'Подготовка…'
-                        : language.toLocaleLowerCase().startsWith('de')
-                          ? 'Installieren'
-                          : language.toLocaleLowerCase().startsWith('en')
-                            ? 'Install'
-                            : 'Установить'}
+                      {installDialog.isSubmitting ? t('install.preparing') : t('install.action')}
                     </button>
                   </>
                 ) : null}

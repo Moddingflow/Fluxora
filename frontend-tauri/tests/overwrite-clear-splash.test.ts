@@ -15,11 +15,12 @@ describe('overwrite clear splash', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain('OverwriteClearSplashState');
-    expect(app).toContain('const overwriteClearMessages = [');
+    expect(app).toContain('const overwriteClearMessageKeys: TranslationKey[] = [');
+    expect(app).toContain('overwriteClearMessageKeys.map((key) => t(key))');
     expect(app).toContain('setOverwriteClearSplash({');
     expect(app).toContain('window.fluxora.mods.clearOverwrite');
     expect(app).toContain('messages={overwriteClearMessages}');
-    expect(app).toContain('Прогресс очистки override');
+    expect(app).toContain("detail={t('app.ui.overrideProgress')}");
     expect(app).not.toContain('Overwrite folder cleared.');
   });
 });

@@ -93,6 +93,7 @@ use update_service::{
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_INVOKE_ERROR_SCHEMA: &str = "fluxora.tauri.bridge-error.v1";
+const SETTINGS_LANGUAGE_CHANGED_EVENT: &str = "fluxora:settings:language-changed";
 const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 10 * 60 * 1_000 + 30_000;
@@ -7902,6 +7903,22 @@ fn validate_public_bridge_method(method: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+fn language_changed_event_payload(
+    method: &str,
+    result: &Result<Value, String>,
+    operation_id: &str,
+) -> Option<Value> {
+    if method != "settings.setLanguage" {
+        return None;
+    }
+
+    let language = result.as_ref().ok()?.get("language")?.as_str()?;
+    Some(json!({
+        "language": language,
+        "operationId": operation_id
+    }))
+}
+
 #[tauri::command]
 async fn fluxora_bridge_request(
     app: AppHandle,
@@ -7979,6 +7996,10 @@ async fn execute_bridge_request(
     let result = bridge
         .request(&app, &method, params, request, timeout_ms)
         .await;
+
+    if let Some(payload) = language_changed_event_payload(&method, &result, &operation_id) {
+        let _ = app.emit(SETTINGS_LANGUAGE_CHANGED_EVENT, &payload);
+    }
 
     let log_app = app.clone();
     let log_method = method.clone();
@@ -11642,6 +11663,28 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn successful_language_mutation_selects_cross_window_event_payload() {
+        let success = Ok(json!({ "language": "ru-ru" }));
+        let failure = Err("language write failed".to_string());
+
+        assert_eq!(
+            language_changed_event_payload("settings.setLanguage", &success, "op_language_ru"),
+            Some(json!({
+                "language": "ru-ru",
+                "operationId": "op_language_ru"
+            }))
+        );
+        assert_eq!(
+            language_changed_event_payload("settings.getLanguage", &success, "op_language_ru"),
+            None
+        );
+        assert_eq!(
+            language_changed_event_payload("settings.setLanguage", &failure, "op_language_ru"),
+            None
+        );
+    }
 
     #[test]
     fn taskbar_progress_maps_normal_percentage() {

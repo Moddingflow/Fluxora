@@ -7,6 +7,8 @@ This folder is the Fluxora product UI. Before larger UI, bridge or parity change
 - Tauri Rust shell for window lifecycle, single-instance handling, safe commands and shell integration.
 - TypeScript across renderer, the `window.fluxora` facade and tests.
 - React + Vite for the renderer UI.
+- i18next with complete bundled `en-US`, `de-DE` and `ru-RU` JSON catalogs; see `src/localization/README.md`.
+- Native-authoritative locale startup and a typed cross-window language event, so every open product window switches together without fallback-language frames.
 - Tauri bundler with the Vite plugin for dev and package workflows.
 - Vitest for focused unit tests.
 - Playwright for Tauri smoke tests.

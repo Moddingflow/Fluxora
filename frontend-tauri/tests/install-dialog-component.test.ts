@@ -49,6 +49,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: null,
         existingModName: null,
+        language: 'ru-RU',
         installDialog: detectingDialog(),
         onArchiveTreeScrollTopChange: vi.fn(),
         onClose: vi.fn(),
@@ -126,6 +127,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: null,
         existingModName: null,
+        language: 'ru-RU',
         installDialog: {
           ...detectingDialog(),
           phase: 'details',
@@ -319,6 +321,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
         existingModName: null,
+        language: 'ru-RU',
         installDialog: state,
         onArchiveTreeScrollTopChange: vi.fn(),
         onClose: vi.fn(),
@@ -339,7 +342,7 @@ describe('InstallDialog', () => {
     expect(markup).toContain('Выбрано автоматически');
     expect(markup).toContain('Нужен выбор');
     expect(markup).toContain('Почему выбрано');
-    expect(markup).toContain('Master Lux.esp активен (Lux).');
+    expect(markup).toContain('Мастер-файл Lux.esp активен (Lux).');
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain('aria-describedby=');
 
@@ -348,6 +351,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
         existingModName: null,
+        language: 'ru-RU',
         installDialog: { ...state, activeFomodOptionId: 'free-crops' },
         onArchiveTreeScrollTopChange: vi.fn(),
         onClose: vi.fn(),
@@ -365,7 +369,7 @@ describe('InstallDialog', () => {
     expect(optionalMarkup).toContain('Почему не выбрано');
     expect(optionalMarkup).toContain('Автор FOMOD оставил вариант необязательным.');
     expect(optionalMarkup).toContain(
-      'Master Unofficial Skyrim Special Edition Patch.esp активен (Unofficial Skyrim Special Edition Patch).'
+      'Мастер-файл Unofficial Skyrim Special Edition Patch.esp активен (Unofficial Skyrim Special Edition Patch).'
     );
   });
 
@@ -438,6 +442,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
         existingModName: null,
+        language: 'ru-RU',
         installDialog: state,
         onArchiveTreeScrollTopChange: vi.fn(),
         onClose: vi.fn(),
@@ -530,6 +535,7 @@ describe('InstallDialog', () => {
         archiveTreeScrollTop: 0,
         evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
         existingModName: null,
+        language: 'ru-RU',
         installDialog: state,
         onArchiveTreeScrollTopChange: vi.fn(),
         onClose: vi.fn(),

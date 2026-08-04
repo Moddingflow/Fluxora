@@ -215,7 +215,7 @@ const transferredProject: FluxoraProject = {
 
 describe('settings workspace state', () => {
   it('keeps settings sections focused on user-facing configuration', () => {
-    expect(settingsSections.map((section) => section.id)).toEqual([
+    expect(settingsSections().map((section) => section.id)).toEqual([
       'connections',
       'language',
       'privacy',
@@ -223,14 +223,19 @@ describe('settings workspace state', () => {
       'transfer',
       'developers'
     ]);
-    expect(settingsSections).toEqual([
+    expect(settingsSections()).toEqual([
       { id: 'connections', label: 'Connections', hint: '' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
       { id: 'privacy', label: 'Privacy', hint: 'Microphone' },
       { id: 'legal', label: 'Legal documents', hint: 'Offline' },
       { id: 'transfer', label: 'Transfer', hint: 'MO2 import' },
-      { id: 'developers', label: 'Для разработчиков', hint: 'Debug' }
+      { id: 'developers', label: 'For developers', hint: 'Debug' }
     ]);
+    expect(settingsSections('ru-ru').find((section) => section.id === 'developers')).toEqual({
+      id: 'developers',
+      label: 'Для разработчиков',
+      hint: 'Отладка'
+    });
   });
 
   it('keeps developer settings local and points to the original repository', () => {
@@ -254,20 +259,25 @@ describe('settings workspace state', () => {
   });
 
   it('keeps language options paired with country flag metadata', () => {
-    expect(languageOptions.map((language) => language.code)).toEqual([
+    expect(languageOptions().map((language) => language.code)).toEqual([
       'en-us',
       'ru-ru',
       'de-de'
     ]);
-    expect(languageOptions.map((language) => language.countryCode)).toEqual([
+    expect(languageOptions().map((language) => language.countryCode)).toEqual([
       'gb',
       'ru',
       'de'
     ]);
-    expect(languageOptions.map((language) => language.countryName)).toEqual([
+    expect(languageOptions().map((language) => language.countryName)).toEqual([
       'United Kingdom',
       'Russia',
       'Germany'
+    ]);
+    expect(languageOptions('de-de').map((language) => language.label)).toEqual([
+      'Englisch',
+      'Russisch',
+      'Deutsch'
     ]);
   });
 

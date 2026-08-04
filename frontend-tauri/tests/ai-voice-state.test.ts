@@ -219,7 +219,7 @@ describe('AI voice errors and language', () => {
       'voice-4'
     );
     expect(german.userMessage).toBe(
-      'Kein Mikrofon wurde gefunden. Prüfen Sie die Verbindung und versuchen Sie es erneut.'
+      'Kein Mikrofon wurde gefunden. Prüfe die Verbindung und versuche es erneut.'
     );
   });
 });

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { translateForLanguage } from '../../../localization';
 import { moddingFlowIcon } from '../../design-system/assets';
 
 interface AiAccountGateProps {
@@ -7,51 +8,19 @@ interface AiAccountGateProps {
   onConnect: () => void | Promise<void>;
   onCreateAccount: () => void | Promise<void>;
 }
-const copyByLocale = {
-  de: {
-    body: 'Dein Konto bestätigt Premium sicher und ordnet jede Agentennutzung dem richtigen Limit zu.',
-    connect: 'Anmelden',
-    connecting: 'Anmeldung läuft…',
-    create: 'Konto erstellen',
-    creating: 'Wird geöffnet…',
-    error: 'ModdingFlow konnte nicht geöffnet werden. Versuche es erneut.',
-    noAccount: 'Noch kein Konto?',
-    title: 'Bei ModdingFlow anmelden'
-  },
-  en: {
-    body: 'Your account securely confirms Premium and applies the correct limits to every agent run.',
-    connect: 'Sign in',
-    connecting: 'Signing in…',
-    create: 'Create account',
-    creating: 'Opening…',
-    error: 'ModdingFlow could not be opened. Try again.',
-    noAccount: 'No account?',
-    title: 'Sign in to ModdingFlow'
-  },
-  ru: {
-    body: 'Аккаунт нужен, чтобы безопасно подтвердить Premium и применить ваши лимиты к каждому запуску агента.',
-    connect: 'Войти',
-    connecting: 'Входим…',
-    create: 'Создать аккаунт',
-    creating: 'Открываем…',
-    error: 'Не удалось открыть ModdingFlow. Попробуйте ещё раз.',
-    noAccount: 'Нет аккаунта?',
-    title: 'Войдите в ModdingFlow'
-  }
-} as const;
-
-type AccountGateLocale = keyof typeof copyByLocale;
 type BusyAction = 'connect' | 'create' | null;
 
-const localeForLanguage = (language: string): AccountGateLocale => {
-  const normalized = language.trim().toLowerCase();
-  if (normalized.startsWith('de')) return 'de';
-  if (normalized.startsWith('ru')) return 'ru';
-  return 'en';
-};
-
 export function AiAccountGate({ language, onConnect, onCreateAccount }: AiAccountGateProps) {
-  const copy = copyByLocale[localeForLanguage(language)];
+  const copy = {
+    body: translateForLanguage(language, 'ai.account.body'),
+    connect: translateForLanguage(language, 'ai.account.connect'),
+    connecting: translateForLanguage(language, 'ai.account.connecting'),
+    create: translateForLanguage(language, 'ai.account.create'),
+    creating: translateForLanguage(language, 'ai.account.creating'),
+    error: translateForLanguage(language, 'ai.account.error'),
+    noAccount: translateForLanguage(language, 'ai.account.noAccount'),
+    title: translateForLanguage(language, 'ai.account.title')
+  };
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
 

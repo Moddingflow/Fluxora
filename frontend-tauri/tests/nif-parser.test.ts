@@ -307,7 +307,7 @@ describe('nif parser', () => {
     expect(model.meshes[0].indices).toEqual([0, 1, 2]);
     expect(model.texturePaths).toEqual(['textures/armor/preview.dds']);
     expect(model.supportedBlocks).toContain('NiTriShape');
-    expect(model.warnings).not.toContain('No diffuse texture path was found; fallback material will be used.');
+    expect(model.warnings).not.toContain('preview.warning.noDiffuseTexture');
   });
 
   it('parses binary static NiTriShapeData geometry and prioritizes diffuse textures', () => {
@@ -393,7 +393,7 @@ describe('nif parser', () => {
 
     expect(model.meshes).toEqual([]);
     expect(model.warnings).toContain(
-      'NIF contains no renderable triangle geometry; the preview is intentionally empty.'
+      'preview.warning.noGeometry'
     );
   });
 
@@ -492,7 +492,7 @@ describe('nif parser', () => {
     expect(model.meshes[0].indices).toEqual([0, 1, 2]);
     expect(model.meshes[0].uvs).toEqual([0, 0, 1, 0, 0, 1]);
     expect(model.warnings).toContain(
-      'Skinned NIF blocks are rendered as static bind-pose geometry; animation is not previewed.'
+      'preview.warning.skinnedStatic'
     );
     expect(model.warnings).not.toContain(
       'Static geometry for the supported NIF subset was not found; rendering a neutral fallback shape.'
@@ -601,7 +601,7 @@ describe('nif parser', () => {
 
     expect(model.meshes).toHaveLength(1);
     expect(model.texturePaths).toEqual([]);
-    expect(model.warnings).toContain('No diffuse texture path was found; fallback material will be used.');
+    expect(model.warnings).toContain('preview.warning.noDiffuseTexture');
   });
 
   it('rejects unsupported geometry instead of returning a placeholder mesh', () => {

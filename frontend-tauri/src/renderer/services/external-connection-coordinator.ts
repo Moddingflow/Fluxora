@@ -2,6 +2,7 @@ import type {
   FluxoraExternalConnectionSnapshot,
   OperationRequest
 } from '../../shared/fluxora-api';
+import { translateForLanguage } from '../../localization';
 
 const retryDelaysMs = [2_000, 5_000, 15_000, 30_000, 60_000] as const;
 const steadyRetryDelayMs = 5 * 60 * 1_000;
@@ -18,6 +19,7 @@ export interface ExternalConnectionCoordinatorOptions {
   api: ExternalConnectionCoordinatorApi;
   createOperationId: (scope: string) => string;
   initialSnapshot?: FluxoraExternalConnectionSnapshot;
+  language?: () => string;
   onSnapshot: (snapshot: FluxoraExternalConnectionSnapshot) => void;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -115,7 +117,10 @@ export const createExternalConnectionCoordinator = (
                     state: 'temporarilyUnavailable',
                     retryable: true,
                     requiresUserAction: false,
-                    message: 'Connection restoration timed out. Fluxora will retry.',
+                    message: translateForLanguage(
+                      options.language?.() ?? 'en-US',
+                      'connections.restoreTimeout'
+                    ),
                     checkedAtUtc
                   }
                 : provider

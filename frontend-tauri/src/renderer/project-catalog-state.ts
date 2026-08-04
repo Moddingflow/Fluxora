@@ -2,6 +2,7 @@ import type {
   FluxoraGameTemplate,
   FluxoraProject
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 
 export interface ProjectDraft {
   projectName: string;
@@ -115,36 +116,39 @@ export const isProjectDraftStepComplete = (
 export const projectDraftStepError = (
   draft: ProjectDraft,
   stepIndex: number,
-  selectedTemplate?: FluxoraGameTemplate | null
+  selectedTemplate?: FluxoraGameTemplate | null,
+  language?: string | null
 ): string | null => {
   if (stepIndex === 0) {
-    return draft.projectName.trim() ? null : 'Enter a build name.';
+    return draft.projectName.trim() ? null : translateForLanguage(language, 'wizard.enterBuildName');
   }
 
   if (stepIndex === 1) {
-    return draft.templateId.trim() ? null : 'Choose a game template.';
+    return draft.templateId.trim() ? null : translateForLanguage(language, 'wizard.chooseGameTemplate');
   }
 
   if (stepIndex === 2) {
     if (!selectedTemplate) {
-      return 'Choose a game template first.';
+      return translateForLanguage(language, 'wizard.chooseGameTemplateFirst');
     }
 
     const executableName = primaryGameExecutableName(selectedTemplate);
     if (!executableName) {
-      return 'This game template does not declare an official executable.';
+      return translateForLanguage(language, 'wizard.noOfficialExecutable');
     }
 
     if (!draft.gamePath.trim()) {
-      return `Choose ${executableName}.`;
+      return translateForLanguage(language, 'wizard.chooseExecutable', { name: executableName });
     }
 
     return isOfficialGameExecutablePath(selectedTemplate, draft.gamePath)
       ? null
-      : `Select ${executableName}. Other executables cannot be used.`;
+      : translateForLanguage(language, 'wizard.invalidExecutable', { name: executableName });
   }
 
-  return draft.installRootDirectory.trim() ? null : 'Choose an install location.';
+  return draft.installRootDirectory.trim()
+    ? null
+    : translateForLanguage(language, 'wizard.chooseInstallLocation');
 };
 
 export const firstIncompleteProjectDraftStep = (
@@ -165,13 +169,18 @@ export const firstIncompleteProjectDraftStep = (
 export const projectDisplayPath = (project: FluxoraProject): string =>
   project.projectDirectory || project.configPath || project.installRootDirectory;
 
-export const projectCapabilitiesLabel = (project: FluxoraProject): string => {
+export const projectCapabilitiesLabel = (
+  project: FluxoraProject,
+  language = 'en-US'
+): string => {
   const flags = project.gameCapabilities ?? {};
   const labels = [
-    flags.supportsPlugins ? 'plugins' : null,
-    flags.supportsLoadOrder ? 'load order' : null,
-    flags.supportsVfsLaunch ? 'VFS' : null
+    flags.supportsPlugins ? translateForLanguage(language, 'project.capability.plugins') : null,
+    flags.supportsLoadOrder ? translateForLanguage(language, 'project.capability.loadOrder') : null,
+    flags.supportsVfsLaunch ? translateForLanguage(language, 'project.capability.vfs') : null
   ].filter(Boolean);
 
-  return labels.length > 0 ? labels.join(', ') : 'core managed';
+  return labels.length > 0
+    ? labels.join(', ')
+    : translateForLanguage(language, 'project.capability.coreManaged');
 };

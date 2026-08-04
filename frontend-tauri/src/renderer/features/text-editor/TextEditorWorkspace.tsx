@@ -24,9 +24,10 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraTextFileSaveResult
 } from '../../../shared/fluxora-api';
+import type { TranslationKey } from '../../../localization';
+import { useLocalization } from '../../../localization/react';
 import {
-  createRendererOperationId,
-  errorMessage
+  createRendererOperationId
 } from '../../services/renderer-operation-service';
 import type {
   MonacoEditorSurfaceHandle,
@@ -95,32 +96,32 @@ interface PendingReveal {
   matchLength: number;
 }
 
-const languageOptions: TextEditorQuickInputItem[] = [
-  { id: 'plaintext', label: 'Plain Text' },
-  { id: 'json', label: 'JSON' },
-  { id: 'typescript', label: 'TypeScript' },
-  { id: 'javascript', label: 'JavaScript' },
-  { id: 'html', label: 'HTML' },
-  { id: 'css', label: 'CSS' },
-  { id: 'scss', label: 'SCSS' },
-  { id: 'less', label: 'Less' },
-  { id: 'markdown', label: 'Markdown' },
-  { id: 'xml', label: 'XML' },
-  { id: 'yaml', label: 'YAML' },
-  { id: 'ini', label: 'INI / Configuration' },
-  { id: 'papyrus', label: 'Papyrus' },
-  { id: 'cpp', label: 'C / C++' },
-  { id: 'csharp', label: 'C#' },
-  { id: 'rust', label: 'Rust' },
-  { id: 'python', label: 'Python' },
-  { id: 'java', label: 'Java' },
-  { id: 'kotlin', label: 'Kotlin' },
-  { id: 'go', label: 'Go' },
-  { id: 'lua', label: 'Lua' },
-  { id: 'powershell', label: 'PowerShell' },
-  { id: 'shell', label: 'Shell Script' },
-  { id: 'sql', label: 'SQL' },
-  { id: 'graphql', label: 'GraphQL' }
+const languageOptionDescriptors: Array<{ id: string; labelKey: TranslationKey }> = [
+  { id: 'plaintext', labelKey: 'editor.language.plainText' },
+  { id: 'json', labelKey: 'editor.language.json' },
+  { id: 'typescript', labelKey: 'editor.language.typescript' },
+  { id: 'javascript', labelKey: 'editor.language.javascript' },
+  { id: 'html', labelKey: 'editor.language.html' },
+  { id: 'css', labelKey: 'editor.language.css' },
+  { id: 'scss', labelKey: 'editor.language.scss' },
+  { id: 'less', labelKey: 'editor.language.less' },
+  { id: 'markdown', labelKey: 'editor.language.markdown' },
+  { id: 'xml', labelKey: 'editor.language.xml' },
+  { id: 'yaml', labelKey: 'editor.language.yaml' },
+  { id: 'ini', labelKey: 'editor.language.combinedIni' },
+  { id: 'papyrus', labelKey: 'editor.language.papyrus' },
+  { id: 'cpp', labelKey: 'editor.language.combinedCpp' },
+  { id: 'csharp', labelKey: 'editor.language.csharp' },
+  { id: 'rust', labelKey: 'editor.language.rust' },
+  { id: 'python', labelKey: 'editor.language.python' },
+  { id: 'java', labelKey: 'editor.language.java' },
+  { id: 'kotlin', labelKey: 'editor.language.kotlin' },
+  { id: 'go', labelKey: 'editor.language.go' },
+  { id: 'lua', labelKey: 'editor.language.lua' },
+  { id: 'powershell', labelKey: 'editor.language.powershell' },
+  { id: 'shell', labelKey: 'editor.language.shell' },
+  { id: 'sql', labelKey: 'editor.language.sql' },
+  { id: 'graphql', labelKey: 'editor.language.graphql' }
 ];
 
 const formatFileSize = (content: string): string => {
@@ -146,9 +147,10 @@ export function TextEditorWorkspace({
   initialAiFileRef = '',
   initialLine = 1
 }: TextEditorWorkspaceProps) {
+  const { locale, t } = useLocalization();
   const [tabs, setTabs] = useState<TextEditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [statusText, setStatusText] = useState('Ready');
+  const [statusText, setStatusText] = useState(() => t('editor.status.ready'));
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarView, setSidebarView] = useState<TextEditorSidebarView>('explorer');
   const [panelOpen, setPanelOpen] = useState(false);
@@ -197,6 +199,9 @@ export function TextEditorWorkspace({
     [expandedDirectories, fileTreeCache]
   );
   const modName = initialModPath ? fileNameFromPath(initialModPath) : null;
+  const languageOptions = useMemo<TextEditorQuickInputItem[]>(() =>
+    languageOptionDescriptors.map(({ id, labelKey }) => ({ id, label: t(labelKey) })),
+  [t]);
 
   useEffect(() => {
     void loadMonacoEditorSurface();
@@ -250,7 +255,7 @@ export function TextEditorWorkspace({
     }
     loadedInitialRef.current = key;
     const fileName = initialFileName || fileNameFromPath(initialRelativePath);
-    const language = textEditorLanguageForFile(fileName);
+    const language = textEditorLanguageForFile(fileName, locale);
     const loadingTab: TextEditorTab = {
       id: textEditorTabId('mod', `${initialModPath}:${initialRelativePath}`),
       source: 'mod',
@@ -265,7 +270,7 @@ export function TextEditorWorkspace({
       state: 'loading'
     };
     upsertTab(loadingTab);
-    setStatusText(`Opening ${fileName}`);
+    setStatusText(t('editor.status.opening', { name: fileName }));
 
     try {
       const document = await window.fluxora.mods.readTextFile(
@@ -274,10 +279,10 @@ export function TextEditorWorkspace({
         initialRelativePath,
         { operationId: createRendererOperationId('text_editor_mod_read') }
       );
-      upsertTab(createTextEditorTab(document, 'mod', initialModPath));
-      setStatusText('Ready');
-    } catch (error) {
-      const message = errorMessage(error);
+      upsertTab(createTextEditorTab(document, 'mod', initialModPath, locale));
+      setStatusText(t('editor.status.ready'));
+    } catch {
+      const message = t('editor.error.open');
       patchTab(loadingTab.id, { state: 'error', errorMessage: message });
       setStatusText(message);
     }
@@ -287,6 +292,8 @@ export function TextEditorWorkspace({
     initialRelativePath,
     patchTab,
     projectDirectory,
+    locale,
+    t,
     upsertTab
   ]);
 
@@ -303,8 +310,8 @@ export function TextEditorWorkspace({
       return;
     }
     loadedInitialRef.current = key;
-    const fileName = initialFileName || 'Editor';
-    const language = textEditorLanguageForFile(fileName);
+    const fileName = initialFileName || t('editor.empty.title');
+    const language = textEditorLanguageForFile(fileName, locale);
     const tabId = textEditorTabId('ai', initialAiFileRef);
     upsertTab({
       id: tabId,
@@ -319,7 +326,7 @@ export function TextEditorWorkspace({
       languageLabel: language.label,
       state: 'loading'
     });
-    setStatusText(`Opening ${fileName}`);
+    setStatusText(t('editor.status.opening', { name: fileName }));
     try {
       const document = await window.fluxora.ai.readFile({
         chatId: initialAiChatId,
@@ -347,7 +354,7 @@ export function TextEditorWorkspace({
         state: 'idle',
         readOnly,
         errorMessage: readOnly
-          ? 'This file exceeds the bounded editor read window and is open read-only.'
+          ? t('editor.error.boundedRead')
           : undefined
       });
       pendingRevealRef.current = {
@@ -357,9 +364,9 @@ export function TextEditorWorkspace({
         matchLength: 1
       };
       requestAnimationFrame(() => surfaceRef.current?.reveal(initialLine, 1, 1));
-      setStatusText(readOnly ? 'Opened read-only: bounded read was truncated.' : 'Ready');
-    } catch (error) {
-      const message = errorMessage(error);
+      setStatusText(readOnly ? t('editor.status.readOnlyOpened') : t('editor.status.ready'));
+    } catch {
+      const message = t('editor.error.open');
       patchTab(tabId, { state: 'error', errorMessage: message });
       setStatusText(message);
     }
@@ -368,7 +375,9 @@ export function TextEditorWorkspace({
     initialAiFileRef,
     initialFileName,
     initialLine,
+    locale,
     patchTab,
+    t,
     upsertTab
   ]);
 
@@ -436,10 +445,10 @@ export function TextEditorWorkspace({
           return;
         }
         if (isTextEditorTabDirty(currentTab)) {
-          setStatusText('File changed outside Fluxora Editor. Save is blocked until you reopen or resolve it.');
+          setStatusText(t('editor.error.externalChanged'));
           patchTab(currentTab.id, {
             state: 'error',
-            errorMessage: 'External change detected while this tab has unsaved edits.'
+            errorMessage: t('editor.error.externalChangedUnsaved')
           });
           return;
         }
@@ -449,10 +458,10 @@ export function TextEditorWorkspace({
           baseSha256: document.sha256,
           readOnly: document.truncated,
           errorMessage: document.truncated
-            ? 'This file exceeds the bounded editor read window and is open read-only.'
+            ? t('editor.error.boundedRead')
             : undefined
         });
-        setStatusText('Reloaded an external file change.');
+        setStatusText(t('editor.status.externalReloaded'));
       } catch {
         // Transient polling failures do not replace the current editor buffer.
       } finally {
@@ -461,7 +470,7 @@ export function TextEditorWorkspace({
     };
     const interval = window.setInterval(() => void refreshIfExternallyChanged(), 2500);
     return () => window.clearInterval(interval);
-  }, [initialAiChatId, initialAiFileRef, patchTab]);
+  }, [initialAiChatId, initialAiFileRef, patchTab, t]);
 
   const loadTreeDirectory = useCallback(async (relativeDirectory: string) => {
     if (!projectDirectory || !initialModPath) {
@@ -483,8 +492,8 @@ export function TextEditorWorkspace({
         { operationId: createRendererOperationId('text_editor_file_tree') }
       );
       setFileTreeCache((current) => ({ ...current, [relativeDirectory]: entries }));
-    } catch (error) {
-      setFileTreeError(errorMessage(error));
+    } catch {
+      setFileTreeError(t('editor.error.fileTree'));
     } finally {
       treeRequestsRef.current.delete(requestKey);
       setLoadingDirectories((current) => {
@@ -493,7 +502,7 @@ export function TextEditorWorkspace({
         return next;
       });
     }
-  }, [initialModPath, projectDirectory]);
+  }, [initialModPath, projectDirectory, t]);
 
   useEffect(() => {
     if (!projectDirectory || !initialModPath) {
@@ -545,7 +554,7 @@ export function TextEditorWorkspace({
       return;
     }
 
-    const language = textEditorLanguageForFile(fileName);
+    const language = textEditorLanguageForFile(fileName, locale);
     const loadingTab: TextEditorTab = {
       id: tabId,
       source: 'mod',
@@ -560,7 +569,7 @@ export function TextEditorWorkspace({
       state: 'loading'
     };
     upsertTab(loadingTab);
-    setStatusText(`Opening ${fileName}`);
+    setStatusText(t('editor.status.opening', { name: fileName }));
     try {
       const document = await window.fluxora.mods.readTextFile(
         projectDirectory,
@@ -568,10 +577,10 @@ export function TextEditorWorkspace({
         relativePath,
         { operationId: createRendererOperationId('text_editor_mod_read') }
       );
-      upsertTab(createTextEditorTab(document, 'mod', initialModPath));
-      setStatusText('Ready');
-    } catch (error) {
-      const message = errorMessage(error);
+      upsertTab(createTextEditorTab(document, 'mod', initialModPath, locale));
+      setStatusText(t('editor.status.ready'));
+    } catch {
+      const message = t('editor.error.open');
       patchTab(tabId, { state: 'error', errorMessage: message });
       setStatusText(message);
     }
@@ -588,32 +597,32 @@ export function TextEditorWorkspace({
       return;
     }
 
-    setStatusText(`Opening ${fileNameFromPath(result.path)}`);
+    setStatusText(t('editor.status.opening', { name: fileNameFromPath(result.path) }));
     try {
       const document = await window.fluxora.textFiles.read(
         result.path,
         { operationId: createRendererOperationId('text_editor_file_read') }
       );
-      upsertTab(createTextEditorTab(document, 'file'));
-      setStatusText('Ready');
-    } catch (error) {
-      setStatusText(errorMessage(error));
+      upsertTab(createTextEditorTab(document, 'file', undefined, locale));
+      setStatusText(t('editor.status.ready'));
+    } catch {
+      setStatusText(t('editor.error.open'));
     }
   };
 
   const saveTab = useCallback(async (tab: TextEditorTab): Promise<boolean> => {
     if (tab.readOnly) {
-      setStatusText(tab.errorMessage || 'This tab is read-only.');
+      setStatusText(tab.errorMessage || t('editor.error.readOnly'));
       return false;
     }
     const contentToSave = tab.content;
     patchTab(tab.id, { state: 'saving', errorMessage: undefined });
-    setStatusText(`Saving ${tab.fileName}`);
+    setStatusText(t('editor.status.saving', { name: tab.fileName }));
     try {
       let result: FluxoraTextFileSaveResult;
       if (tab.source === 'ai') {
         if (!tab.aiChatId || !tab.fileRef || !tab.baseSha256) {
-          throw new Error('AI file context is unavailable.');
+          throw new Error(t('editor.error.aiContext'));
         }
         const extension = tab.fileName.toLowerCase().split('.').pop() ?? '';
         const format = extension === 'json'
@@ -654,15 +663,15 @@ export function TextEditorWorkspace({
           readOnly: refreshed.truncated,
           state: 'idle',
           errorMessage: refreshed.truncated
-            ? 'This file exceeds the bounded editor read window and is open read-only.'
+            ? t('editor.error.boundedRead')
             : undefined
         } : item));
-        setStatusText(`Saved ${tab.fileName}`);
+        setStatusText(t('editor.status.saved', { name: tab.fileName }));
         return true;
       }
       if (tab.source === 'mod') {
         if (!projectDirectory || !tab.modPath || !tab.relativePath) {
-          throw new Error('Project or mod file context is unavailable.');
+          throw new Error(t('editor.error.projectContext'));
         }
         result = await window.fluxora.mods.saveTextFile(
           projectDirectory,
@@ -688,15 +697,15 @@ export function TextEditorWorkspace({
         state: 'idle',
         errorMessage: undefined
       } : item));
-      setStatusText(`Saved ${result.fileName || tab.fileName}`);
+      setStatusText(t('editor.status.saved', { name: result.fileName || tab.fileName }));
       return true;
-    } catch (error) {
-      const message = errorMessage(error);
+    } catch {
+      const message = t('editor.error.save');
       patchTab(tab.id, { state: 'error', errorMessage: message });
       setStatusText(message);
       return false;
     }
-  }, [patchTab, projectDirectory, replaceTabs]);
+  }, [patchTab, projectDirectory, replaceTabs, t]);
 
   const saveActive = async () => {
     const tab = tabsRef.current.find((item) => item.id === activeTabId);
@@ -712,7 +721,7 @@ export function TextEditorWorkspace({
     }
     const saveTarget = await window.fluxora.dialogs.saveTextFile(
       tab.path || tab.fileName,
-      'Save text file'
+      t('editor.dialog.saveTextFile')
     );
     if (saveTarget.canceled || !saveTarget.path) {
       return;
@@ -722,13 +731,13 @@ export function TextEditorWorkspace({
     const alreadyOpen = tabsRef.current.find((item) => item.id === targetId && item.id !== tab.id);
     if (alreadyOpen) {
       setActiveTabId(alreadyOpen.id);
-      setStatusText(`${alreadyOpen.fileName} is already open. Close it before Save As.`);
+      setStatusText(t('editor.error.alreadyOpen', { name: alreadyOpen.fileName }));
       return;
     }
 
     const contentToSave = tab.content;
     patchTab(tab.id, { state: 'saving', errorMessage: undefined });
-    setStatusText(`Saving ${fileNameFromPath(saveTarget.path)}`);
+    setStatusText(t('editor.status.saving', { name: fileNameFromPath(saveTarget.path) }));
     try {
       const result = await window.fluxora.textFiles.save(
         saveTarget.path,
@@ -737,7 +746,7 @@ export function TextEditorWorkspace({
       );
       const latestTab = tabsRef.current.find((item) => item.id === tab.id) ?? tab;
       const fileName = result.fileName || fileNameFromPath(result.path || saveTarget.path);
-      const language = textEditorLanguageForFile(fileName);
+      const language = textEditorLanguageForFile(fileName, locale);
       const nextTab: TextEditorTab = {
         ...latestTab,
         id: textEditorTabId('file', result.path || saveTarget.path),
@@ -755,9 +764,9 @@ export function TextEditorWorkspace({
       replaceTabs((current) => current.map((item) => item.id === tab.id ? nextTab : item));
       surfaceRef.current?.disposeModel(tab.id);
       setActiveTabId(nextTab.id);
-      setStatusText(`Saved ${fileName}`);
-    } catch (error) {
-      const message = errorMessage(error);
+      setStatusText(t('editor.status.saved', { name: fileName }));
+    } catch {
+      const message = t('editor.error.save');
       patchTab(tab.id, { state: 'error', errorMessage: message });
       setStatusText(message);
     }
@@ -835,8 +844,8 @@ export function TextEditorWorkspace({
       setPendingClose({ kind: 'window' });
       return;
     }
-    void closeWindowAfterConfirmation().catch((error) => setStatusText(errorMessage(error)));
-  }, [closeWindowAfterConfirmation]);
+    void closeWindowAfterConfirmation().catch(() => setStatusText(t('editor.error.close')));
+  }, [closeWindowAfterConfirmation, t]);
 
   useEffect(() => {
     const handleRequest = () => requestWindowClose();
@@ -901,7 +910,7 @@ export function TextEditorWorkspace({
     } else if (closeKind === 'all') {
       closeAllNow();
     } else {
-      void closeWindowAfterConfirmation().catch((error) => setStatusText(errorMessage(error)));
+      void closeWindowAfterConfirmation().catch(() => setStatusText(t('editor.error.close')));
     }
   };
 
@@ -918,7 +927,7 @@ export function TextEditorWorkspace({
       return;
     }
     patchTab(activeTab.id, { languageId, languageLabel });
-    setStatusText(`Language mode: ${languageLabel}`);
+    setStatusText(t('editor.status.languageMode', { name: languageLabel }));
   };
 
   const revealLocation = (location: PendingReveal) => {
@@ -1080,59 +1089,59 @@ export function TextEditorWorkspace({
   const menuGroups = useMemo<TextEditorMenuGroup[]>(() => [
     {
       id: 'file',
-      label: 'File',
+      label: t('editor.menu.file'),
       items: [
-        { id: 'file.open', label: 'Open File…', shortcut: 'Ctrl+O' },
-        { id: 'file.save', label: 'Save', shortcut: 'Ctrl+S', disabled: !activeTab },
-        { id: 'file.saveAs', label: 'Save As…', shortcut: 'Ctrl+Shift+S', disabled: !activeTab },
-        { id: 'file.saveAll', label: 'Save All', shortcut: 'Ctrl+Alt+S', disabled: dirtyTabs.length === 0 },
-        { id: 'file.close', label: 'Close Editor', shortcut: 'Ctrl+W', disabled: !activeTab, separatorBefore: true },
-        { id: 'file.closeAll', label: 'Close All Editors', disabled: tabs.length === 0 }
+        { id: 'file.open', label: t('editor.action.openFileEllipsis'), shortcut: 'Ctrl+O' },
+        { id: 'file.save', label: t('editor.action.save'), shortcut: 'Ctrl+S', disabled: !activeTab },
+        { id: 'file.saveAs', label: t('editor.action.saveAs'), shortcut: 'Ctrl+Shift+S', disabled: !activeTab },
+        { id: 'file.saveAll', label: t('editor.action.saveAll'), shortcut: 'Ctrl+Alt+S', disabled: dirtyTabs.length === 0 },
+        { id: 'file.close', label: t('editor.action.closeEditor'), shortcut: 'Ctrl+W', disabled: !activeTab, separatorBefore: true },
+        { id: 'file.closeAll', label: t('editor.action.closeAllEditors'), disabled: tabs.length === 0 }
       ]
     },
     {
       id: 'edit',
-      label: 'Edit',
+      label: t('editor.menu.edit'),
       items: [
-        { id: 'edit.undo', label: 'Undo', shortcut: 'Ctrl+Z', disabled: !activeTab },
-        { id: 'edit.redo', label: 'Redo', shortcut: 'Ctrl+Y', disabled: !activeTab },
-        { id: 'edit.find', label: 'Find', shortcut: 'Ctrl+F', disabled: !activeTab, separatorBefore: true },
-        { id: 'edit.replace', label: 'Replace', shortcut: 'Ctrl+H', disabled: !activeTab },
-        { id: 'edit.selectAll', label: 'Select All', shortcut: 'Ctrl+A', disabled: !activeTab },
-        { id: 'edit.format', label: 'Format Document', shortcut: 'Shift+Alt+F', disabled: !activeTab, separatorBefore: true }
+        { id: 'edit.undo', label: t('editor.action.undo'), shortcut: 'Ctrl+Z', disabled: !activeTab },
+        { id: 'edit.redo', label: t('editor.action.redo'), shortcut: 'Ctrl+Y', disabled: !activeTab },
+        { id: 'edit.find', label: t('editor.action.find'), shortcut: 'Ctrl+F', disabled: !activeTab, separatorBefore: true },
+        { id: 'edit.replace', label: t('editor.action.replace'), shortcut: 'Ctrl+H', disabled: !activeTab },
+        { id: 'edit.selectAll', label: t('editor.action.selectAll'), shortcut: 'Ctrl+A', disabled: !activeTab },
+        { id: 'edit.format', label: t('editor.action.formatDocument'), shortcut: 'Shift+Alt+F', disabled: !activeTab, separatorBefore: true }
       ]
     },
     {
       id: 'selection',
-      label: 'Selection',
+      label: t('editor.menu.selection'),
       items: [
-        { id: 'selection.cursorAbove', label: 'Add Cursor Above', shortcut: 'Ctrl+Alt+Up', disabled: !activeTab },
-        { id: 'selection.cursorBelow', label: 'Add Cursor Below', shortcut: 'Ctrl+Alt+Down', disabled: !activeTab },
-        { id: 'selection.addNext', label: 'Add Next Occurrence', shortcut: 'Ctrl+D', disabled: !activeTab }
+        { id: 'selection.cursorAbove', label: t('editor.action.addCursorAbove'), shortcut: 'Ctrl+Alt+Up', disabled: !activeTab },
+        { id: 'selection.cursorBelow', label: t('editor.action.addCursorBelow'), shortcut: 'Ctrl+Alt+Down', disabled: !activeTab },
+        { id: 'selection.addNext', label: t('editor.action.addNextOccurrence'), shortcut: 'Ctrl+D', disabled: !activeTab }
       ]
     },
     {
       id: 'view',
-      label: 'View',
+      label: t('editor.menu.view'),
       items: [
-        { id: 'view.palette', label: 'Command Palette…', shortcut: 'Ctrl+Shift+P' },
-        { id: 'view.explorer', label: 'Explorer', shortcut: 'Ctrl+B', checked: sidebarOpen && sidebarView === 'explorer', separatorBefore: true },
-        { id: 'view.search', label: 'Search', shortcut: 'Ctrl+Shift+F', checked: sidebarOpen && sidebarView === 'search' },
-        { id: 'view.problems', label: 'Problems', shortcut: 'Ctrl+J', checked: panelOpen },
-        { id: 'view.minimap', label: 'Minimap', checked: minimapEnabled, separatorBefore: true },
-        { id: 'view.wordWrap', label: 'Word Wrap', shortcut: 'Alt+Z', checked: wordWrapEnabled }
+        { id: 'view.palette', label: t('editor.action.commandPaletteEllipsis'), shortcut: 'Ctrl+Shift+P' },
+        { id: 'view.explorer', label: t('editor.action.explorer'), shortcut: 'Ctrl+B', checked: sidebarOpen && sidebarView === 'explorer', separatorBefore: true },
+        { id: 'view.search', label: t('editor.action.search'), shortcut: 'Ctrl+Shift+F', checked: sidebarOpen && sidebarView === 'search' },
+        { id: 'view.problems', label: t('editor.action.problems'), shortcut: 'Ctrl+J', checked: panelOpen },
+        { id: 'view.minimap', label: t('editor.action.minimap'), checked: minimapEnabled, separatorBefore: true },
+        { id: 'view.wordWrap', label: t('editor.action.wordWrap'), shortcut: 'Alt+Z', checked: wordWrapEnabled }
       ]
     },
     {
       id: 'go',
-      label: 'Go',
+      label: t('editor.menu.go'),
       items: [
-        { id: 'go.file', label: 'Go to File…', shortcut: 'Ctrl+P' },
-        { id: 'go.line', label: 'Go to Line…', shortcut: 'Ctrl+G', disabled: !activeTab },
-        { id: 'go.nextProblem', label: 'Next Problem', shortcut: 'F8', disabled: !activeTab, separatorBefore: true },
-        { id: 'go.previousProblem', label: 'Previous Problem', shortcut: 'Shift+F8', disabled: !activeTab },
-        { id: 'go.nextEditor', label: 'Next Editor', shortcut: 'Ctrl+Tab', disabled: tabs.length < 2 },
-        { id: 'go.previousEditor', label: 'Previous Editor', shortcut: 'Ctrl+Shift+Tab', disabled: tabs.length < 2 }
+        { id: 'go.file', label: t('editor.action.goToFileEllipsis'), shortcut: 'Ctrl+P' },
+        { id: 'go.line', label: t('editor.action.goToLine'), shortcut: 'Ctrl+G', disabled: !activeTab },
+        { id: 'go.nextProblem', label: t('editor.action.nextProblem'), shortcut: 'F8', disabled: !activeTab, separatorBefore: true },
+        { id: 'go.previousProblem', label: t('editor.action.previousProblem'), shortcut: 'Shift+F8', disabled: !activeTab },
+        { id: 'go.nextEditor', label: t('editor.action.nextEditor'), shortcut: 'Ctrl+Tab', disabled: tabs.length < 2 },
+        { id: 'go.previousEditor', label: t('editor.action.previousEditor'), shortcut: 'Ctrl+Shift+Tab', disabled: tabs.length < 2 }
       ]
     }
   ], [
@@ -1143,18 +1152,19 @@ export function TextEditorWorkspace({
     sidebarOpen,
     sidebarView,
     tabs.length,
+    t,
     wordWrapEnabled
   ]);
 
   const commandPaletteItems = useMemo<TextEditorQuickInputItem[]>(() =>
-    menuGroups.flatMap((group) => group.items)
+    menuGroups.flatMap((group) => group.items
       .filter((item) => !item.disabled)
       .map((item) => ({
-        id: item.id,
-        label: item.label.replace('…', ''),
-        detail: groupLabelForCommand(item.id),
-        shortcut: item.shortcut
-      })),
+          id: item.id,
+          label: item.label.replace('…', ''),
+          detail: group.label,
+          shortcut: item.shortcut
+        }))),
   [menuGroups]);
 
   const quickInputItems = quickInputMode === 'commands'
@@ -1170,10 +1180,10 @@ export function TextEditorWorkspace({
         : [];
 
   const quickInputLabel = quickInputMode === 'commands'
-    ? 'Command Palette'
+    ? t('editor.action.commandPalette')
     : quickInputMode === 'files'
-      ? 'Go to File'
-      : 'Select Language Mode';
+      ? t('editor.action.goToFile')
+      : t('editor.quickInput.selectLanguage');
 
   const handleQuickInputAccept = (item: TextEditorQuickInputItem) => {
     const mode = quickInputMode;
@@ -1188,58 +1198,58 @@ export function TextEditorWorkspace({
   };
 
   const closeDialogLabel = pendingClose?.kind === 'tab'
-    ? tabs.find((tab) => tab.id === pendingClose.tabId)?.fileName ?? 'this file'
-    : `${dirtyTabs.length} unsaved file${dirtyTabs.length === 1 ? '' : 's'}`;
+    ? tabs.find((tab) => tab.id === pendingClose.tabId)?.fileName ?? t('editor.close.thisFile')
+    : t('editor.close.unsavedFiles', { count: dirtyTabs.length });
 
   const breadcrumbs = activeTab ? pathSegments(activeTab.relativePath ?? activeTab.path) : [];
 
   return (
-    <section className="text-editor-window" aria-label="Fluxora code editor">
+    <section className="text-editor-window" aria-label={t('editor.aria.window')}>
       <header className="text-editor-topbar">
         <TextEditorMenuBar groups={menuGroups} onCommand={executeCommand} />
-        <div className="text-editor-toolbar" aria-label="Editor actions">
-          <button aria-label="Open File" title="Open File (Ctrl+O)" type="button" onClick={() => void openFile()}>
+        <div className="text-editor-toolbar" aria-label={t('editor.aria.actions')}>
+          <button aria-label={t('editor.action.openFile')} title={`${t('editor.action.openFile')} (Ctrl+O)`} type="button" onClick={() => void openFile()}>
             <FolderOpen size={15} />
           </button>
-          <button aria-label="Save" disabled={!activeTab} title="Save (Ctrl+S)" type="button" onClick={() => void saveActive()}>
+          <button aria-label={t('editor.action.save')} disabled={!activeTab} title={`${t('editor.action.save')} (Ctrl+S)`} type="button" onClick={() => void saveActive()}>
             <Save size={15} />
           </button>
-          <button aria-label="Command Palette" title="Command Palette (Ctrl+Shift+P)" type="button" onClick={() => setQuickInputMode('commands')}>
+          <button aria-label={t('editor.action.commandPalette')} title={`${t('editor.action.commandPalette')} (Ctrl+Shift+P)`} type="button" onClick={() => setQuickInputMode('commands')}>
             <Command size={15} />
           </button>
-          <button aria-label="Toggle Problems" aria-pressed={panelOpen} title="Problems (Ctrl+J)" type="button" onClick={() => setPanelOpen((current) => !current)}>
+          <button aria-label={t('editor.action.toggleProblems')} aria-pressed={panelOpen} title={`${t('editor.action.problems')} (Ctrl+J)`} type="button" onClick={() => setPanelOpen((current) => !current)}>
             <PanelBottom size={15} />
           </button>
         </div>
       </header>
 
       <div className="text-editor-workbench" data-sidebar-open={sidebarOpen ? 'true' : 'false'}>
-        <nav className="text-editor-activitybar" aria-label="Editor views">
+        <nav className="text-editor-activitybar" aria-label={t('editor.aria.views')}>
           <button
-            aria-label="Explorer"
+            aria-label={t('editor.action.explorer')}
             aria-pressed={sidebarOpen && sidebarView === 'explorer'}
             data-active={sidebarOpen && sidebarView === 'explorer' ? 'true' : undefined}
-            title="Explorer (Ctrl+B)"
+            title={`${t('editor.action.explorer')} (Ctrl+B)`}
             type="button"
             onClick={() => executeCommand('view.explorer')}
           >
             <Files size={21} />
           </button>
           <button
-            aria-label="Search"
+            aria-label={t('editor.action.search')}
             aria-pressed={sidebarOpen && sidebarView === 'search'}
             data-active={sidebarOpen && sidebarView === 'search' ? 'true' : undefined}
-            title="Search (Ctrl+Shift+F)"
+            title={`${t('editor.action.search')} (Ctrl+Shift+F)`}
             type="button"
             onClick={() => executeCommand('view.search')}
           >
             <Search size={21} />
           </button>
           <button
-            aria-label="Problems"
+            aria-label={t('editor.action.problems')}
             aria-pressed={panelOpen}
             data-active={panelOpen ? 'true' : undefined}
-            title="Problems (Ctrl+J)"
+            title={`${t('editor.action.problems')} (Ctrl+J)`}
             type="button"
             onClick={() => executeCommand('view.problems')}
           >
@@ -1274,7 +1284,7 @@ export function TextEditorWorkspace({
         ) : null}
 
         <main className="text-editor-editor-group">
-          <div className="text-editor-editor-tabs" role="tablist" aria-label="Open editors">
+          <div className="text-editor-editor-tabs" role="tablist" aria-label={t('editor.aria.openEditors')}>
             {tabs.map((tab) => {
               const dirty = isTextEditorTabDirty(tab);
               return (
@@ -1302,23 +1312,23 @@ export function TextEditorWorkspace({
                   <FileCode2 size={14} />
                   <span>{tab.fileName}</span>
                   <button
-                    aria-label={`Close ${tab.fileName}`}
+                    aria-label={t('editor.aria.closeFile', { name: tab.fileName })}
                     className="text-editor-tab-close"
-                    title="Close Editor"
+                    title={t('editor.action.closeEditor')}
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
                       requestCloseTab(tab.id);
                     }}
                   >
-                    {dirty ? <i aria-label="Unsaved" /> : <X size={13} />}
+                    {dirty ? <i aria-label={t('editor.aria.unsaved')} /> : <X size={13} />}
                   </button>
                 </div>
               );
             })}
           </div>
 
-          <nav className="text-editor-breadcrumbs" aria-label="File breadcrumbs">
+          <nav className="text-editor-breadcrumbs" aria-label={t('editor.aria.breadcrumbs')}>
             {breadcrumbs.map((segment, index) => (
               <span key={`${segment}:${index}`}>
                 {index > 0 ? <b aria-hidden="true">›</b> : null}
@@ -1331,7 +1341,7 @@ export function TextEditorWorkspace({
           <div className="text-editor-canvas">
             {activeTab ? (
               activeTab.state === 'loading' ? (
-                <div className="text-editor-loading" aria-busy="true" aria-label={`Loading ${activeTab.fileName}`}>
+                <div className="text-editor-loading" aria-busy="true" aria-label={t('editor.aria.loadingFile', { name: activeTab.fileName })}>
                   <span />
                   <span />
                   <span />
@@ -1339,12 +1349,12 @@ export function TextEditorWorkspace({
               ) : activeTab.state === 'error' ? (
                 <div className="text-editor-error" role="status">
                   <CircleAlert size={20} />
-                  <strong>Could not open {activeTab.fileName}</strong>
-                  <span>{activeTab.errorMessage ?? 'File unavailable.'}</span>
-                  <button type="button" onClick={() => requestCloseTab(activeTab.id)}>Close Editor</button>
+                  <strong>{t('editor.fileOpenFailed', { name: activeTab.fileName })}</strong>
+                  <span>{activeTab.errorMessage ?? t('editor.error.fileUnavailable')}</span>
+                  <button type="button" onClick={() => requestCloseTab(activeTab.id)}>{t('editor.action.closeEditor')}</button>
                 </div>
               ) : (
-                <Suspense fallback={<div className="text-editor-loading" aria-label="Loading code editor" aria-busy="true"><span /><span /><span /></div>}>
+                <Suspense fallback={<div className="text-editor-loading" aria-label={t('editor.aria.loadingEditor')} aria-busy="true"><span /><span /><span /></div>}>
                   <LazyMonacoEditorSurface
                     minimapEnabled={minimapEnabled}
                     onChange={updateActiveContent}
@@ -1363,14 +1373,14 @@ export function TextEditorWorkspace({
             ) : (
               <div className="text-editor-empty">
                 <FileCode2 size={34} />
-                <strong>Fluxora Editor</strong>
-                <span>Open a code or text file to begin.</span>
+                <strong>{t('editor.empty.title')}</strong>
+                <span>{t('editor.empty.description')}</span>
                 <div>
                   <button type="button" onClick={() => void openFile()}>
-                    <FolderOpen size={15} /> Open File
+                    <FolderOpen size={15} /> {t('editor.action.openFile')}
                   </button>
                   <button type="button" onClick={() => setQuickInputMode('commands')}>
-                    <Command size={15} /> Command Palette
+                    <Command size={15} /> {t('editor.action.commandPalette')}
                   </button>
                 </div>
               </div>
@@ -1378,12 +1388,12 @@ export function TextEditorWorkspace({
           </div>
 
           {panelOpen ? (
-            <section className="text-editor-panel" aria-label="Problems panel">
+            <section className="text-editor-panel" aria-label={t('editor.aria.problemsPanel')}>
               <header>
                 <button className="text-editor-panel-tab" data-active="true" type="button">
-                  PROBLEMS <span>{problemLocations.length}</span>
+                  {t('editor.problems.heading')} <span>{problemLocations.length}</span>
                 </button>
-                <button aria-label="Close Problems" title="Close Panel" type="button" onClick={() => setPanelOpen(false)}>
+                <button aria-label={t('editor.action.closeProblems')} title={t('editor.action.closePanel')} type="button" onClick={() => setPanelOpen(false)}>
                   <X size={14} />
                 </button>
               </header>
@@ -1408,7 +1418,7 @@ export function TextEditorWorkspace({
                   </button>
                 ))}
                 {problemLocations.length === 0 ? (
-                  <div className="text-editor-panel-empty">No problems detected in open editors.</div>
+                  <div className="text-editor-panel-empty">{t('editor.problems.empty')}</div>
                 ) : null}
               </div>
             </section>
@@ -1416,9 +1426,9 @@ export function TextEditorWorkspace({
         </main>
       </div>
 
-      <footer className="text-editor-statusbar" aria-label="Editor status">
+      <footer className="text-editor-statusbar" aria-label={t('editor.aria.status')}>
         <div>
-          <button title="Show Problems" type="button" onClick={() => setPanelOpen(true)}>
+          <button title={t('editor.action.showProblems')} type="button" onClick={() => setPanelOpen(true)}>
             <CircleAlert size={13} /> {errorCount} <span>△ {warningCount}</span>
           </button>
           <span title={statusText}>{statusText}</span>
@@ -1426,15 +1436,15 @@ export function TextEditorWorkspace({
         <div>
           {activeTab ? (
             <>
-              {cursor.selectionCount > 1 ? <span>{cursor.selectionCount} selections</span> : null}
-              <button title="Go to Line (Ctrl+G)" type="button" onClick={() => runEditorAction('editor.action.gotoLine')}>
-                Ln {cursor.line}, Col {cursor.column}
+              {cursor.selectionCount > 1 ? <span>{t('editor.status.selections', { count: cursor.selectionCount })}</span> : null}
+              <button title={`${t('editor.action.goToLine')} (Ctrl+G)`} type="button" onClick={() => runEditorAction('editor.action.gotoLine')}>
+                {t('editor.status.position', { line: cursor.line, column: cursor.column })}
               </button>
-              <span>{cursor.insertSpaces ? 'Spaces' : 'Tab Size'}: {cursor.tabSize}</span>
+              <span>{cursor.insertSpaces ? t('editor.status.spaces') : t('editor.status.tabSize')}: {cursor.tabSize}</span>
               <span>UTF-8</span>
               <span>{detectLineEnding(activeTab.content)}</span>
-              {wordWrapEnabled ? <span>Word Wrap</span> : null}
-              <button title="Select Language Mode" type="button" onClick={() => setQuickInputMode('language')}>
+              {wordWrapEnabled ? <span>{t('editor.action.wordWrap')}</span> : null}
+              <button title={t('editor.action.selectLanguageMode')} type="button" onClick={() => setQuickInputMode('language')}>
                 {activeTab.languageLabel}
               </button>
               <span>{formatFileSize(activeTab.content)}</span>
@@ -1447,7 +1457,11 @@ export function TextEditorWorkspace({
         <TextEditorQuickInput
           items={quickInputItems}
           label={quickInputLabel}
-          placeholder={quickInputMode === 'commands' ? 'Type a command' : quickInputMode === 'files' ? 'Type a file name' : 'Select language mode'}
+          placeholder={quickInputMode === 'commands'
+            ? t('editor.quickInput.typeCommand')
+            : quickInputMode === 'files'
+              ? t('editor.quickInput.typeFile')
+              : t('editor.quickInput.selectLanguagePlaceholder')}
           prefix={quickInputMode === 'commands' ? '>' : undefined}
           onAccept={handleQuickInputAccept}
           onDismiss={() => setQuickInputMode(null)}
@@ -1463,15 +1477,15 @@ export function TextEditorWorkspace({
           <section className="text-editor-close-dialog" role="alertdialog" aria-modal="true" aria-labelledby="text-editor-close-title">
             <CircleAlert size={20} />
             <div>
-              <h2 id="text-editor-close-title">Save changes?</h2>
-              <p>Save changes to {closeDialogLabel} before closing.</p>
+              <h2 id="text-editor-close-title">{t('editor.close.title')}</h2>
+              <p>{t('editor.close.description', { name: closeDialogLabel })}</p>
             </div>
             <footer>
               <button autoFocus disabled={closeActionBusy} type="button" onClick={() => void saveBeforePendingClose()}>
-                {pendingClose.kind === 'tab' ? 'Save' : 'Save All'}
+                {pendingClose.kind === 'tab' ? t('editor.action.save') : t('editor.action.saveAll')}
               </button>
-              <button disabled={closeActionBusy} type="button" onClick={discardPendingClose}>Don&apos;t Save</button>
-              <button disabled={closeActionBusy} type="button" onClick={() => setPendingClose(null)}>Cancel</button>
+              <button disabled={closeActionBusy} type="button" onClick={discardPendingClose}>{t('editor.action.dontSave')}</button>
+              <button disabled={closeActionBusy} type="button" onClick={() => setPendingClose(null)}>{t('editor.action.cancel')}</button>
             </footer>
           </section>
         </div>
@@ -1479,11 +1493,3 @@ export function TextEditorWorkspace({
     </section>
   );
 }
-
-const groupLabelForCommand = (commandId: string): string => {
-  if (commandId.startsWith('file.')) return 'File';
-  if (commandId.startsWith('edit.')) return 'Edit';
-  if (commandId.startsWith('selection.')) return 'Selection';
-  if (commandId.startsWith('view.')) return 'View';
-  return 'Go';
-};

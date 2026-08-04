@@ -46,6 +46,7 @@ import {
   installPlacementContextMenuPositionFromPoint,
   type InstallPlacementContextMenuPosition
 } from './install-placement-context-menu';
+import { translateForLanguage, type TranslationKey } from '../../../localization';
 
 interface InstallPlacementEditorProps {
   preview: FluxoraContentLayoutPreview;
@@ -71,95 +72,66 @@ interface PlacementCopy {
   cancel: string;
   validating: string;
   treeLabel: string;
+  expand: string;
+  collapse: string;
+  namedMenu: (name: string) => string;
+  namedActions: (name: string) => string;
   includeItem: (name: string) => string;
   selectionCount: (count: number) => string;
   problemCount: (count: number) => string;
   reason: Record<string, string>;
 }
 
-const copies: Record<'ru' | 'en' | 'de', PlacementCopy> = {
-  ru: {
-    title: 'Структура архива', data: 'Data', gameRoot: 'Корень игры', attention: 'Требует внимания',
-    undo: 'Отменить', redo: 'Повторить', newFolder: 'Новая папка', reset: 'Сбросить',
-    moveTo: 'Переместить в…', rename: 'Переименовать', delete: 'Удалить', cancel: 'Отмена',
-    validating: 'Проверяем структуру…', treeLabel: 'Назначение файлов архива',
-    selectionCount: (count) => `Выбрано: ${count}`,
-    problemCount: (count) => `Проблем: ${count}`,
-    reason: {
-      'drop.target.invalid': 'Сюда нельзя перемещать файлы.',
-      'drop.selection.invalid': 'Системные разделы и проблемные элементы нельзя перемещать.',
-      'drop.self': 'Папку нельзя поместить внутрь самой себя.',
-      'drop.same-parent': 'Элемент уже находится в этой папке.',
-      'drop.group.not-allowed': 'Хотя бы один элемент группы нельзя поместить в выбранный раздел.',
-      'drop.source.missing': 'Исходный элемент больше не найден.',
-      'drop.collision': 'В целевой папке уже есть элемент с таким именем.',
-      'drop.path.invalid': 'Путь содержит недопустимое для Windows имя.',
-      'folder.name.empty': 'Введите имя папки.',
-      'folder.name.invalid': 'Имя содержит недопустимые символы.',
-      'folder.name.reserved': 'Это имя зарезервировано Windows.',
-      'folder.delete.not-empty': 'Удалить можно только пустую созданную папку.',
-      'folder.parent.invalid': 'Выберите доступную папку назначения.',
-      'folder.rename.invalid': 'Эту папку нельзя переименовать.'
-    },
-    includeItem: (name) => `Устанавливать ${name}`
-  },
-  en: {
-    title: 'Archive structure', data: 'Data', gameRoot: 'Game root', attention: 'Needs attention',
-    undo: 'Undo', redo: 'Redo', newFolder: 'New folder', reset: 'Reset', moveTo: 'Move to…',
-    rename: 'Rename', delete: 'Delete', cancel: 'Cancel', validating: 'Validating structure…',
-    treeLabel: 'Archive file placement', selectionCount: (count) => `Selected: ${count}`,
-    problemCount: (count) => `Problems: ${count}`,
-    reason: {
-      'drop.target.invalid': 'Items cannot be moved here.',
-      'drop.selection.invalid': 'System roots and blocked items cannot be moved.',
-      'drop.self': 'A folder cannot be moved into itself.',
-      'drop.same-parent': 'The item is already in this folder.',
-      'drop.group.not-allowed': 'At least one selected item is not allowed in this target.',
-      'drop.source.missing': 'The source item is no longer available.',
-      'drop.collision': 'An item with the same name already exists at the target.',
-      'drop.path.invalid': 'The path contains a name that Windows does not allow.',
-      'folder.name.empty': 'Enter a folder name.',
-      'folder.name.invalid': 'The folder name contains invalid characters.',
-      'folder.name.reserved': 'This name is reserved by Windows.',
-      'folder.delete.not-empty': 'Only an empty folder created here can be deleted.',
-      'folder.parent.invalid': 'Select an available destination folder.',
-      'folder.rename.invalid': 'This folder cannot be renamed.'
-    },
-    includeItem: (name) => `Install ${name}`
-  },
-  de: {
-    title: 'Archivstruktur', data: 'Data', gameRoot: 'Spielverzeichnis', attention: 'Erfordert Aufmerksamkeit',
-    undo: 'Rückgängig', redo: 'Wiederholen', newFolder: 'Neuer Ordner', reset: 'Zurücksetzen',
-    moveTo: 'Verschieben nach…', rename: 'Umbenennen', delete: 'Löschen', cancel: 'Abbrechen',
-    validating: 'Struktur wird geprüft…', treeLabel: 'Archivdateien zuordnen',
-    selectionCount: (count) => `Ausgewählt: ${count}`,
-    problemCount: (count) => `Probleme: ${count}`,
-    reason: {
-      'drop.target.invalid': 'Elemente können hier nicht abgelegt werden.',
-      'drop.selection.invalid': 'Systembereiche und blockierte Elemente können nicht verschoben werden.',
-      'drop.self': 'Ein Ordner kann nicht in sich selbst verschoben werden.',
-      'drop.same-parent': 'Das Element befindet sich bereits in diesem Ordner.',
-      'drop.group.not-allowed': 'Mindestens ein ausgewähltes Element ist für dieses Ziel nicht zulässig.',
-      'drop.source.missing': 'Das Quellelement ist nicht mehr verfügbar.',
-      'drop.collision': 'Am Ziel ist bereits ein gleichnamiges Element vorhanden.',
-      'drop.path.invalid': 'Der Pfad enthält einen unter Windows unzulässigen Namen.',
-      'folder.name.empty': 'Ordnernamen eingeben.',
-      'folder.name.invalid': 'Der Ordnername enthält unzulässige Zeichen.',
-      'folder.name.reserved': 'Dieser Name ist unter Windows reserviert.',
-      'folder.delete.not-empty': 'Nur ein hier erstellter leerer Ordner kann gelöscht werden.',
-      'folder.parent.invalid': 'Einen verfügbaren Zielordner auswählen.',
-      'folder.rename.invalid': 'Dieser Ordner kann nicht umbenannt werden.'
-    },
-    includeItem: (name) => `${name} installieren`
-  }
-};
+const placementReasonKeys = [
+  'drop.target.invalid',
+  'drop.selection.invalid',
+  'drop.self',
+  'drop.same-parent',
+  'drop.group.not-allowed',
+  'drop.source.missing',
+  'drop.collision',
+  'drop.path.invalid',
+  'folder.name.empty',
+  'folder.name.invalid',
+  'folder.name.reserved',
+  'folder.delete.not-empty',
+  'folder.parent.invalid',
+  'folder.rename.invalid'
+] as const;
 
-const copyFor = (language: string): PlacementCopy =>
-  language.toLocaleLowerCase().startsWith('de')
-    ? copies.de
-    : language.toLocaleLowerCase().startsWith('en')
-      ? copies.en
-      : copies.ru;
+const copyFor = (language: string): PlacementCopy => {
+  const text = (key: TranslationKey, variables?: Record<string, string | number>) =>
+    translateForLanguage(language, key, variables);
+  return {
+    title: text('placement.title'),
+    data: text('placement.data'),
+    gameRoot: text('placement.gameRoot'),
+    attention: text('placement.attention'),
+    undo: text('placement.undo'),
+    redo: text('placement.redo'),
+    newFolder: text('placement.newFolder'),
+    reset: text('placement.reset'),
+    moveTo: text('placement.moveTo'),
+    rename: text('placement.rename'),
+    delete: text('placement.delete'),
+    cancel: text('placement.cancel'),
+    validating: text('placement.validating'),
+    treeLabel: text('placement.treeLabel'),
+    expand: text('placement.expand'),
+    collapse: text('placement.collapse'),
+    namedMenu: (name) => text('placement.namedMenu', { name }),
+    namedActions: (name) => text('placement.namedActions', { name }),
+    selectionCount: (count) => text('placement.selectionCount', { count }),
+    problemCount: (count) => text('placement.problemCount', { count }),
+    includeItem: (name) => text('placement.includeItem', { name }),
+    reason: Object.fromEntries(
+      placementReasonKeys.map((key) => [
+        key,
+        text(`placement.reason.${key}` as TranslationKey)
+      ])
+    )
+  };
+};
 
 const rowHeight = 34;
 const visibleRows = 15;
@@ -243,8 +215,8 @@ export function InstallPlacementEditor({
   const dropResultRef = useRef<PlacementEditResult | null>(null);
 
   const rows = useMemo(
-    () => buildInstallPlacementRows(preview, edits, collapsed),
-    [collapsed, edits, preview]
+    () => buildInstallPlacementRows(preview, edits, collapsed, language),
+    [collapsed, edits, language, preview]
   );
   const rowByKey = useMemo(() => new Map(rows.map((row) => [row.key, row])), [rows]);
   const contextMenuRow = rowContextMenu ? rowByKey.get(rowContextMenu.key) ?? null : null;
@@ -744,7 +716,7 @@ export function InstallPlacementEditor({
                   type="button"
                   className="install-placement-row__disclosure"
                   tabIndex={-1}
-                  aria-label={isCollapsed ? 'Expand' : 'Collapse'}
+                  aria-label={isCollapsed ? copy.expand : copy.collapse}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => { event.stopPropagation(); toggleCollapsed(row.key); }}
                 >
@@ -785,7 +757,7 @@ export function InstallPlacementEditor({
                   tabIndex={-1}
                   aria-haspopup="menu"
                   aria-expanded={rowContextMenu?.key === row.key}
-                  aria-label={`${localizedName(row)} menu`}
+                  aria-label={copy.namedMenu(localizedName(row))}
                   data-install-placement-context-menu-trigger="true"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
@@ -810,7 +782,7 @@ export function InstallPlacementEditor({
         <div
           className="mod-row-menu mod-row-menu--context install-placement-context-menu"
           role="menu"
-          aria-label={`${localizedName(contextMenuRow)} actions`}
+          aria-label={copy.namedActions(localizedName(contextMenuRow))}
           data-install-placement-context-menu-surface="true"
           style={{
             left: rowContextMenu.left,

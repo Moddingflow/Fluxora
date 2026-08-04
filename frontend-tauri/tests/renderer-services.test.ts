@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  bridgeStatusLabel,
+  bridgeStatusCode,
   cleanupCreatedProject,
   createProjectFromDraft,
   loadProjectCatalog,
@@ -112,9 +112,9 @@ describe('renderer operation services', () => {
 
 describe('project catalog service', () => {
   it('labels bridge status without leaking status details into App', () => {
-    expect(bridgeStatusLabel(null)).toBe('checking');
-    expect(bridgeStatusLabel({ ready: true } as never)).toBe('ready');
-    expect(bridgeStatusLabel({ ready: false } as never)).toBe('error');
+    expect(bridgeStatusCode(null)).toBe('checking');
+    expect(bridgeStatusCode({ ready: true } as never)).toBe('ready');
+    expect(bridgeStatusCode({ ready: false } as never)).toBe('error');
   });
 
   it('upserts projects by stable project identity', () => {

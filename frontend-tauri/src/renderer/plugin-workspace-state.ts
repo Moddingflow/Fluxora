@@ -3,6 +3,7 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 import {
   isOrderItemHiddenByCollapsedSeparator,
   orderItemMovePlan,
@@ -89,19 +90,24 @@ export const emptyPluginWorkspaceState = (): PluginWorkspaceState => ({
   errorMessage: null
 });
 
-export const pluginItemTitle = (item: FluxoraPluginOrderItem): string =>
-  item.isSeparator ? item.separatorTitle || 'Separator' : item.name || item.id;
+export const pluginItemTitle = (item: FluxoraPluginOrderItem, language = 'en-US'): string =>
+  item.isSeparator
+    ? item.separatorTitle || translateForLanguage(language, 'plugin.separator')
+    : item.name || item.id;
 
-export const pluginSourceLabel = (item: FluxoraPluginOrderItem | null): string => {
+export const pluginSourceLabel = (
+  item: FluxoraPluginOrderItem | null,
+  language = 'en-US'
+): string => {
   if (!item) {
-    return 'No plugin selected';
+    return translateForLanguage(language, 'plugin.noneSelected');
   }
 
   if (item.isSeparator) {
-    return 'Separator';
+    return translateForLanguage(language, 'plugin.separator');
   }
 
-  return item.sourceMod.trim() || 'game data';
+  return item.sourceMod.trim() || translateForLanguage(language, 'plugin.gameData');
 };
 
 const missingMasterNameCollator = new Intl.Collator(undefined, {
@@ -420,9 +426,12 @@ export const pluginOrderDependencyViolation = (
 };
 
 export const pluginOrderDependencyBlockedReason = (
-  violation: PluginOrderDependencyViolation
-): string =>
-  `${violation.dependentName} должен загружаться после ${violation.masterName}.`;
+  violation: PluginOrderDependencyViolation,
+  language?: string | null
+): string => translateForLanguage(language, 'app.message.pluginMustLoadAfter', {
+  dependent: violation.dependentName,
+  master: violation.masterName
+});
 
 export const targetIndexForPluginMove = (
   items: FluxoraPluginOrderItem[],
@@ -554,7 +563,8 @@ export const assessPluginOrderItemSelectionReorder = (
   selectedOrderIds: ReadonlySet<string>,
   targetOrderId: string,
   placement: OrderDropPlacement = 'after',
-  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>(),
+  language?: string | null
 ): PluginOrderReorderAssessment => {
   const source = items.find((item) => item.orderId === sourceOrderId);
   const movingItems = selectedOrderIds.has(sourceOrderId)
@@ -588,7 +598,7 @@ export const assessPluginOrderItemSelectionReorder = (
   if (violation) {
     return {
       items: null,
-      blockedReason: pluginOrderDependencyBlockedReason(violation)
+      blockedReason: pluginOrderDependencyBlockedReason(violation, language)
     };
   }
 
@@ -709,49 +719,59 @@ const pluginOrderMinimumTargetIndex = (
   return Math.min(pluginOrderFirstUnlockedTargetIndex(items), Math.max(0, items.length - 1));
 };
 
-export const pluginStatusText = (item: FluxoraPluginOrderItem | null): string => {
+export const pluginStatusText = (
+  item: FluxoraPluginOrderItem | null,
+  language = 'en-US'
+): string => {
   if (!item) {
-    return 'No plugin selected';
+    return translateForLanguage(language, 'plugin.noneSelected');
   }
 
   if (item.isSeparator) {
-    return 'Separator row';
+    return translateForLanguage(language, 'plugin.status.separator');
   }
 
   if (item.isLocked) {
-    return 'Locked';
+    return translateForLanguage(language, 'plugin.status.locked');
   }
 
   if (sortedPluginMissingMasters(item).length > 0) {
-    return 'Missing masters';
+    return translateForLanguage(language, 'plugin.status.missingMasters');
   }
 
-  return item.isEnabled ? 'Enabled' : 'Disabled';
+  return translateForLanguage(
+    language,
+    item.isEnabled ? 'plugin.status.enabled' : 'plugin.status.disabled'
+  );
 };
 
-export const pluginTypeLabel = (item: FluxoraPluginOrderItem | null): string => {
+export const pluginTypeLabel = (
+  item: FluxoraPluginOrderItem | null,
+  language = 'en-US'
+): string => {
   if (!item) {
-    return 'none';
+    return translateForLanguage(language, 'plugin.type.none');
   }
 
   if (item.isSeparator) {
-    return 'separator';
+    return translateForLanguage(language, 'plugin.type.separator');
   }
 
   if (item.isMaster) {
-    return 'master';
+    return translateForLanguage(language, 'plugin.type.master');
   }
 
   if (item.isLight) {
-    return 'light';
+    return translateForLanguage(language, 'plugin.type.light');
   }
 
-  return item.extension || 'plugin';
+  return item.extension || translateForLanguage(language, 'plugin.type.plugin');
 };
 
 export const pluginCapabilityView = (
   project: FluxoraProject | null,
-  bridgeStatus: NativeBridgeStatus | null
+  bridgeStatus: NativeBridgeStatus | null,
+  language?: string | null
 ): PluginCapabilityView => {
   const bridgeFeature = bridgeStatus?.capabilities?.features.plugins;
   const bridgeFeatureState = bridgeFeature?.state;
@@ -778,7 +798,7 @@ export const pluginCapabilityView = (
       loadOrderSupported: false,
       bulkToggleSupported,
       nativeBulkToggleSupported,
-      reason: 'Open a build before using plugins.'
+      reason: translateForLanguage(language, 'capability.openBuildPlugins')
     };
   }
 
@@ -789,7 +809,7 @@ export const pluginCapabilityView = (
       loadOrderSupported,
       bulkToggleSupported: false,
       nativeBulkToggleSupported: false,
-      reason: 'Native bridge is not ready.'
+      reason: translateForLanguage(language, 'capability.bridgeNotReady')
     };
   }
 
@@ -800,7 +820,7 @@ export const pluginCapabilityView = (
       loadOrderSupported,
       bulkToggleSupported: false,
       nativeBulkToggleSupported: false,
-      reason: 'This Fluxora bridge build does not expose plugin workspace methods.'
+      reason: translateForLanguage(language, 'capability.pluginMethodsUnavailable')
     };
   }
 
@@ -811,7 +831,7 @@ export const pluginCapabilityView = (
       loadOrderSupported: false,
       bulkToggleSupported,
       nativeBulkToggleSupported,
-      reason: 'This build game does not support plugins or load order management.'
+      reason: translateForLanguage(language, 'capability.pluginsUnsupported')
     };
   }
 
@@ -822,7 +842,7 @@ export const pluginCapabilityView = (
       loadOrderSupported: false,
       bulkToggleSupported,
       nativeBulkToggleSupported,
-      reason: 'This build can show plugins, but load order editing is disabled by game capabilities.'
+      reason: translateForLanguage(language, 'capability.loadOrderUnsupported')
     };
   }
 

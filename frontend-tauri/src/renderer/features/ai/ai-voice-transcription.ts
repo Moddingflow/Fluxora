@@ -3,6 +3,7 @@ import type {
   FluxoraVoiceTranscriptionRequest,
   FluxoraVoiceTranscriptionResult
 } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 
 export const AI_VOICE_TRANSCRIPTION_WATCHDOG_MIN_MS = 20_000;
 export const AI_VOICE_TRANSCRIPTION_WATCHDOG_MAX_MS = 305_000;
@@ -33,7 +34,7 @@ export async function transcribeVoiceWithWatchdog(
         .catch(() => undefined);
       reject({
         code: 'speech.host.timeout',
-        message: 'The renderer watchdog stopped an unresponsive local speech request.',
+        message: translateForLanguage(metadata.language, 'ai.voice.error.speech.host.timeout'),
         operationId: metadata.operationId ?? 'voice-unknown',
         stage: 'transcribe'
       });

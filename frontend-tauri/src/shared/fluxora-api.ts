@@ -165,6 +165,7 @@ export const FluxoraIpcChannels = {
   projectsRename: 'fluxora:projects:rename',
   securityGetState: 'fluxora:security:get-state',
   settingsGetTheme: 'fluxora:settings:get-theme',
+  settingsLanguageChanged: 'fluxora:settings:language-changed',
   settingsSetTheme: 'fluxora:settings:set-theme',
   shellOpenPath: 'fluxora:shell:open-path',
   shellShowItemInFolder: 'fluxora:shell:show-item-in-folder',
@@ -2593,6 +2594,7 @@ export interface FluxoraApi {
       language: string,
       request?: OperationRequest
     ) => Promise<NativeBridgeLanguageResult>;
+    onLanguageChanged: (callback: (result: NativeBridgeLanguageResult) => void) => () => void;
     getTheme: (request?: OperationRequest) => Promise<NativeBridgeThemeResult>;
     setTheme: (
       theme: FluxoraThemeMode,

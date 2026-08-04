@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocalization } from '../../../localization/react';
 
 export interface TextEditorMenuItem {
   id: string;
@@ -21,6 +22,7 @@ interface TextEditorMenuBarProps {
 }
 
 export function TextEditorMenuBar({ groups, onCommand }: TextEditorMenuBarProps) {
+  const { t } = useLocalization();
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
 
@@ -48,7 +50,7 @@ export function TextEditorMenuBar({ groups, onCommand }: TextEditorMenuBarProps)
   }, [openGroupId]);
 
   return (
-    <nav className="text-editor-menubar" aria-label="Editor menu" ref={rootRef}>
+    <nav className="text-editor-menubar" aria-label={t('editor.aria.menu')} ref={rootRef}>
       {groups.map((group) => {
         const isOpen = group.id === openGroupId;
         return (
@@ -71,7 +73,7 @@ export function TextEditorMenuBar({ groups, onCommand }: TextEditorMenuBarProps)
               {group.label}
             </button>
             {isOpen ? (
-              <div className="text-editor-menubar-popup" role="menu" aria-label={`${group.label} menu`}>
+              <div className="text-editor-menubar-popup" role="menu" aria-label={t('editor.aria.groupMenu', { name: group.label })}>
                 {group.items.map((item) => (
                   <button
                     aria-checked={item.checked}

@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React, { type ComponentProps } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { TransferMo2Page } from '../src/renderer/TransferMo2Page';
 import type { TransferStepId } from '../src/renderer/TransferSettingsPanel';
+import { renderLocalized } from './localization-test-utils';
 
 type TransferMo2PageProps = ComponentProps<typeof TransferMo2Page>;
 
@@ -101,7 +101,7 @@ const renderTransferPage = (
   selectedStep: TransferStepId,
   overrides: Partial<TransferMo2PageProps> = {}
 ): string =>
-  renderToStaticMarkup(React.createElement(TransferMo2Page, { ...baseProps, selectedStep, ...overrides }));
+  renderLocalized(React.createElement(TransferMo2Page, { ...baseProps, selectedStep, ...overrides }));
 
 describe('TransferMo2Page', () => {
   it('uses the shared product wizard stepper instead of a transfer-only variant', () => {
@@ -389,7 +389,7 @@ describe('TransferMo2Page', () => {
       }
     });
 
-    expect(html).toContain('Перенос завершен');
+    expect(html).toContain('Перенос завершён');
     expect(html).not.toContain('Открыть сборку');
     expect(html).not.toContain('Запустить сборку');
     expect(html).not.toContain('В библиотеку');

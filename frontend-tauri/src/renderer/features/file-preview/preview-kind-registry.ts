@@ -1,11 +1,12 @@
 import cuboidIcon from '../../../../../Icons/cuboid.svg';
+import type { TranslationKey } from '../../../localization';
 
 export type FilePreviewKind = 'nif';
 
 export interface FilePreviewKindDescriptor {
   kind: FilePreviewKind;
   extension: string;
-  title: string;
+  titleKey: TranslationKey;
   icon: string;
 }
 
@@ -13,7 +14,7 @@ export const filePreviewKindRegistry: Record<FilePreviewKind, FilePreviewKindDes
   nif: {
     kind: 'nif',
     extension: '.nif',
-    title: '.nif Preview',
+    titleKey: 'preview.nif.title',
     icon: cuboidIcon
   }
 };

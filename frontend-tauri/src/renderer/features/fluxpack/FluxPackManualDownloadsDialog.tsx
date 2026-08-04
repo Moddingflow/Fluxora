@@ -7,6 +7,7 @@ import {
 import { useEffect } from 'react';
 
 import type { FluxoraFluxPackSourceInstallPlan } from '../../../shared/fluxora-api';
+import { useLocalization } from '../../../localization/react';
 
 export interface FluxPackManualDownloadsDialogProps {
   buildName: string;
@@ -27,6 +28,7 @@ export function FluxPackManualDownloadsDialog({
   selectedArchives,
   sources
 }: FluxPackManualDownloadsDialogProps) {
+  const { t } = useLocalization();
   const completedCount = sources.filter((source) => Boolean(selectedArchives[source.sourceId])).length;
   const currentSource =
     sources.find((source) => !selectedArchives[source.sourceId]) ?? sources.at(-1) ?? null;
@@ -57,13 +59,13 @@ export function FluxPackManualDownloadsDialog({
         <header className="fluxpack-export-dialog__header">
           <div className="fluxpack-export-dialog__title">
             <Download aria-hidden="true" size={17} />
-            <strong id="fluxpack-manual-download-title">Ручная загрузка</strong>
+            <strong id="fluxpack-manual-download-title">{t('fluxpack.manual.title')}</strong>
           </div>
           <button
-            aria-label="Закрыть ручную загрузку"
+            aria-label={t('fluxpack.manual.close')}
             className="icon-button"
             onClick={onCancel}
-            title="Закрыть"
+            title={t('titlebar.close')}
             type="button"
           >
             <X aria-hidden="true" size={16} />
@@ -74,7 +76,10 @@ export function FluxPackManualDownloadsDialog({
           <div className="fluxpack-manual-download-dialog__queue">
             <div className="fluxpack-manual-download-dialog__summary">
               <strong title={buildName}>{buildName}</strong>
-              <span>{completedCount} из {sources.length}</span>
+              <span>{t('fluxpack.manual.progress', {
+                completed: completedCount,
+                total: sources.length
+              })}</span>
             </div>
             <div className="fluxpack-manual-download-dialog__sources" role="list">
               {sources.map((source) => {
@@ -116,24 +121,24 @@ export function FluxPackManualDownloadsDialog({
               type="button"
             >
               <Download aria-hidden="true" size={17} />
-              Скачать на {currentSource.providerDisplayName}
+              {t('fluxpack.manual.download', { provider: currentSource.providerDisplayName })}
             </button>
             <button
               className="tool-button manual-download-dialog__pick-action"
               onClick={() => onPickArchive(currentSource)}
               type="button"
             >
-              Выбрать загруженный файл
+              {t('fluxpack.manual.pick')}
             </button>
           </div>
         </div>
 
         <footer className="fluxpack-export-dialog__actions">
           <button className="tool-button" onClick={onCancel} type="button">
-            Отмена
+            {t('fluxpack.manual.cancel')}
           </button>
           <button className="primary-button" disabled={!allSelected} onClick={onInstall} type="button">
-            Начать установку
+            {t('fluxpack.manual.install')}
           </button>
         </footer>
       </section>

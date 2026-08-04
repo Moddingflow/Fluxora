@@ -1,4 +1,5 @@
 import { modOrganizerIcon } from './design-system/assets';
+import { useLocalization } from '../localization/react';
 
 export type TransferStepId = 'source' | 'destination' | 'review';
 
@@ -17,40 +18,41 @@ export const TransferSettingsPanel = ({
   isRunning,
   onOpenTransfer
 }: TransferSettingsPanelProps) => {
+  const { t } = useLocalization();
   const disabled = isRunning || Boolean(busyLabel) || !bridgeReady || !transferAvailable;
   const disabledReason = !bridgeReady
-    ? 'Native bridge is not ready'
+    ? t('transfer.disabled.bridge')
     : !transferAvailable
-      ? 'MO2 transfer is unavailable'
+      ? t('transfer.disabled.unavailable')
       : isRunning
-        ? 'MO2 transfer is already running'
-        : busyLabel ?? 'Open transfer flow';
+        ? t('transfer.disabled.running')
+        : busyLabel ?? t('transfer.disabled.open');
 
   return (
-    <div className="settings-panel settings-panel--transfer" aria-label="Mod Organizer transfer settings">
+    <div className="settings-panel settings-panel--transfer" aria-label={t('transfer.settings.aria')}>
       <div className="settings-connections-list">
         <div
           className="settings-service-row settings-service-row--connection settings-service-row--transfer"
           data-status={disabled ? 'checking' : 'ready'}
         >
-          <div className="settings-service-main" aria-label="Mod Organizer 2">
+          <div className="settings-service-main" aria-label={t('transfer.mo2')}>
             <span className="settings-service-icon settings-service-icon--mo2" aria-hidden="true">
               <img src={modOrganizerIcon} alt="" draggable={false} />
             </span>
             <span className="settings-service-copy">
-              <strong>Mod Organizer 2</strong>
+              <strong>{t('transfer.mo2')}</strong>
             </span>
           </div>
           <button
             className="primary-button settings-transfer-button"
             type="button"
             aria-busy={isRunning || Boolean(busyLabel)}
-            aria-label="Перенести сборку из Mod Organizer 2"
+            aria-label={t('transfer.open')}
             disabled={disabled}
-            title={disabled ? disabledReason : 'Перенести сборку из Mod Organizer 2'}
+            title={disabled ? disabledReason : t('transfer.open')}
             onClick={onOpenTransfer}
           >
-            Перенести
+            {t('transfer.action')}
           </button>
         </div>
       </div>

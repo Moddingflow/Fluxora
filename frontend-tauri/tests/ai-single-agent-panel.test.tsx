@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AiChatPanel } from '../src/renderer/features/ai/AiChatPanel';
 import { createAiMessage, createAiSession, initialAiChatState } from '../src/renderer/features/ai/ai-chat-state';
+import { renderLocalized } from './localization-test-utils';
 
 describe('single-agent panel', () => {
   it('uses named body grid areas with the input as the final track', () => {
@@ -112,7 +113,7 @@ describe('single-agent panel', () => {
     const chat = session.chats[0];
     const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: [], session };
     const noop = () => undefined;
-    const html = renderToStaticMarkup(createElement(AiChatPanel, {
+    const html = renderLocalized(createElement(AiChatPanel, {
       hostReady: true,
       language: 'ru-RU',
       quota: {
@@ -148,7 +149,7 @@ describe('single-agent panel', () => {
       onSend: noop,
       onSelectChat: noop,
       onToggleCollapse: noop
-    }));
+    }), 'ru-RU');
 
     expect(html).toContain('Войдите в ModdingFlow');
     expect(html).toContain('Аккаунт нужен, чтобы безопасно подтвердить Premium');
@@ -222,7 +223,7 @@ describe('single-agent panel', () => {
     }));
     const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: chat.messages, session };
     const noop = () => undefined;
-    const html = renderToStaticMarkup(createElement(AiChatPanel, {
+    const html = renderLocalized(createElement(AiChatPanel, {
       hostReady: true,
       state,
       onCancel: noop,
@@ -239,14 +240,14 @@ describe('single-agent panel', () => {
       onSend: noop,
       onSelectChat: noop,
       onToggleCollapse: noop
-    }));
+    }), 'ru-RU');
 
     expect(html).toContain('Использовано контекста:');
     expect(html).toContain('1 048 576');
     expect(html).toContain('Google result');
-    expect(html).toContain('Undo');
+    expect(html).toContain('Отменить');
     expect(html).toContain('mods.set_enabled');
-    expect(html).toContain('Native postcondition verified');
+    expect(html).toContain('Нативное постусловие проверено');
     expect(html).toContain('ai-file-change__added');
     expect(html).toContain('ai-file-change__removed');
     expect(html).not.toContain('Undo run');
@@ -257,7 +258,7 @@ describe('single-agent panel', () => {
     expect(html).not.toContain('tool-schema');
     expect(html).not.toContain('ai-debug-1');
     expect(html).not.toMatch(/Routing preset|Subagent|Model selector/);
-    expect(html).toContain('aria-label="Start voice input"');
+    expect(html).toContain('aria-label="Начать голосовой ввод"');
     expect(html).toContain('data:image/svg+xml');
 
     const developerHtml = renderToStaticMarkup(createElement(AiChatPanel, {

@@ -48,6 +48,9 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  if (!server) {
+    return;
+  }
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
@@ -65,7 +68,8 @@ const setupCopy = {
     install: 'Install',
     success: 'Fluxora is ready',
     updateTitle: 'Updating Fluxora',
-    upToDate: 'The latest version is installed.'
+    upToDate: 'The latest version is installed.',
+    commitLocked: 'The commit has started. Setup must remain open until recovery is safe.'
   },
   de: {
     languageTitle: 'Sprache auswählen',
@@ -76,7 +80,8 @@ const setupCopy = {
     install: 'Installieren',
     success: 'Fluxora ist bereit',
     updateTitle: 'Fluxora wird aktualisiert',
-    upToDate: 'Die neueste Version ist installiert.'
+    upToDate: 'Die neueste Version ist installiert.',
+    commitLocked: 'Die Übernahme hat begonnen. Das Installationsprogramm muss geöffnet bleiben, bis eine sichere Wiederherstellung gewährleistet ist.'
   },
   ru: {
     languageTitle: 'Выберите язык',
@@ -87,7 +92,8 @@ const setupCopy = {
     install: 'Установить',
     success: 'Fluxora готова',
     updateTitle: 'Обновление Fluxora',
-    upToDate: 'Установлена последняя версия.'
+    upToDate: 'Установлена последняя версия.',
+    commitLocked: 'Началось применение изменений. Не закрывайте установщик, пока безопасное восстановление не будет гарантировано.'
   }
 } as const;
 
@@ -421,7 +427,7 @@ for (const language of ['en', 'de', 'ru'] as const) {
     await expect(page.getByText(/repair|repar|восстанов/iu)).toBeVisible();
     await page.getByRole('button', { name: setupCopy[language].install }).click();
     await expect(page.getByText('bin/Fluxora.exe')).toBeVisible();
-    await expect(page.getByText(/commit|festgeschrieben|commit/iu)).toBeVisible();
+    await expect(page.getByText(setupCopy[language].commitLocked)).toBeVisible();
     if (language === 'en') {
       await page.screenshot({
         animations: 'disabled',

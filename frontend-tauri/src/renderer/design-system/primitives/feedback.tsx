@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
 
+import { useLocalization } from '../../../localization/react';
 import { cx } from './utils';
 
 export type SkeletonProps = HTMLAttributes<HTMLSpanElement>;
@@ -177,7 +178,7 @@ export interface LoadingSplashProps extends Omit<HTMLAttributes<HTMLDivElement>,
 export function LoadingSplash({
   appName,
   buildName,
-  cancelLabel = 'Cancel',
+  cancelLabel,
   cancelTitle,
   className,
   detail,
@@ -192,19 +193,23 @@ export function LoadingSplash({
   title,
   ...rest
 }: LoadingSplashProps) {
+  const { t } = useLocalization();
   const isStarting = state === 'starting';
   const progressValue = clampProgress(progress);
-  const resolvedTitle = title ?? (isStarting ? 'Launching build' : 'Build is running');
+  const resolvedCancelLabel = cancelLabel ?? t('app.ui.cancel');
+  const resolvedTitle = title ?? (
+    isStarting ? t('common.loading.launchingBuild') : t('common.loading.buildRunning')
+  );
   const resolvedSubtitle =
     subtitle ??
     (isStarting
       ? (detail ??
         (buildName
-          ? `Preparing ${buildName}.`
-          : 'The native core is preparing the build.'))
+          ? t('common.loading.preparingNamed', { name: buildName })
+          : t('common.loading.preparingBuild')))
       : appName
-        ? `Close ${appName} to return to Fluxora.`
-        : 'Close the launched app to return to Fluxora.');
+        ? t('common.loading.closeNamed', { name: appName })
+        : t('common.loading.closeLaunched'));
   const messageItems = useMemo(() => {
     const source = messages?.length ? messages : [resolvedTitle];
     return source.filter(Boolean);
@@ -244,11 +249,11 @@ export function LoadingSplash({
       {onCancel ? (
         <button
           className="flx-loading-splash__cancel"
-          title={cancelTitle ?? (typeof cancelLabel === 'string' ? cancelLabel : undefined)}
+          title={cancelTitle ?? (typeof resolvedCancelLabel === 'string' ? resolvedCancelLabel : undefined)}
           type="button"
           onClick={onCancel}
         >
-          {cancelLabel}
+          {resolvedCancelLabel}
         </button>
       ) : null}
       <div className="flx-loading-splash__panel">
@@ -262,7 +267,7 @@ export function LoadingSplash({
         {isStarting ? (
           <div className="flx-loading-splash__progress">
             <ProgressBar
-              aria-label={typeof detail === 'string' ? detail : 'Loading progress'}
+              aria-label={typeof detail === 'string' ? detail : t('common.loadingProgress')}
               indeterminate={indeterminate}
               value={progressValue}
             />

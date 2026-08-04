@@ -5,6 +5,7 @@ import {
 } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type FormEvent } from 'react';
 
+import { translateForLanguage, type TranslationKey } from '../../../localization';
 import { INSTALL_MOD_NAME_MAX_LENGTH } from '../../install-workspace-state';
 
 export type ItemRenameKind = 'mod' | 'download';
@@ -37,87 +38,24 @@ export interface ItemRenameDialogCopy {
   unchangedMessage: string;
 }
 
-const copyByLanguage: Record<'de' | 'en' | 'ru', Record<ItemRenameKind, ItemRenameDialogCopy>> = {
-  en: {
-    mod: {
-      closeLabel: 'Close mod rename',
-      copyPathLabel: 'Copy as path',
-      inputLabel: 'New mod name',
-      menuRenameLabel: 'Rename',
-      renameLabel: 'Rename',
-      renamingLabel: 'Renaming…',
-      title: 'Rename mod',
-      unchangedMessage: 'Enter a different mod name.'
-    },
-    download: {
-      closeLabel: 'Close file rename',
-      copyPathLabel: 'Copy as path',
-      inputLabel: 'New file name',
-      menuRenameLabel: 'Rename',
-      renameLabel: 'Rename',
-      renamingLabel: 'Renaming…',
-      title: 'Rename file',
-      unchangedMessage: 'Enter a different file name.'
-    }
-  },
-  de: {
-    mod: {
-      closeLabel: 'Mod-Umbenennung schließen',
-      copyPathLabel: 'Als Pfad kopieren',
-      inputLabel: 'Neuer Mod-Name',
-      menuRenameLabel: 'Umbenennen',
-      renameLabel: 'Umbenennen',
-      renamingLabel: 'Wird umbenannt…',
-      title: 'Mod umbenennen',
-      unchangedMessage: 'Gib einen anderen Mod-Namen ein.'
-    },
-    download: {
-      closeLabel: 'Datei-Umbenennung schließen',
-      copyPathLabel: 'Als Pfad kopieren',
-      inputLabel: 'Neuer Dateiname',
-      menuRenameLabel: 'Umbenennen',
-      renameLabel: 'Umbenennen',
-      renamingLabel: 'Wird umbenannt…',
-      title: 'Datei umbenennen',
-      unchangedMessage: 'Gib einen anderen Dateinamen ein.'
-    }
-  },
-  ru: {
-    mod: {
-      closeLabel: 'Закрыть переименование мода',
-      copyPathLabel: 'Копировать как путь',
-      inputLabel: 'Новое название мода',
-      menuRenameLabel: 'Переименовать',
-      renameLabel: 'Переименовать',
-      renamingLabel: 'Переименование…',
-      title: 'Переименовать мод',
-      unchangedMessage: 'Введите другое название мода.'
-    },
-    download: {
-      closeLabel: 'Закрыть переименование файла',
-      copyPathLabel: 'Копировать как путь',
-      inputLabel: 'Новое имя файла',
-      menuRenameLabel: 'Переименовать',
-      renameLabel: 'Переименовать',
-      renamingLabel: 'Переименование…',
-      title: 'Переименовать файл',
-      unchangedMessage: 'Введите другое имя файла.'
-    }
-  }
-};
-
 export const itemRenameDialogCopy = (
   language: string | null | undefined,
   kind: ItemRenameKind
 ): ItemRenameDialogCopy => {
-  const normalized = language?.trim().toLocaleLowerCase() ?? '';
-  if (normalized.startsWith('ru')) {
-    return copyByLanguage.ru[kind];
-  }
-  if (normalized.startsWith('de')) {
-    return copyByLanguage.de[kind];
-  }
-  return copyByLanguage.en[kind];
+  const copy = (field: string) => translateForLanguage(
+    language,
+    `itemRename.${kind}.${field}` as TranslationKey
+  );
+  return {
+    closeLabel: copy('close'),
+    copyPathLabel: copy('copyPath'),
+    inputLabel: copy('input'),
+    menuRenameLabel: copy('menu'),
+    renameLabel: copy('rename'),
+    renamingLabel: copy('renaming'),
+    title: copy('title'),
+    unchangedMessage: copy('unchanged')
+  };
 };
 
 const archiveSuffixes = [

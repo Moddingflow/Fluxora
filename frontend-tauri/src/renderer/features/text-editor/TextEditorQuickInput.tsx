@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocalization } from '../../../localization/react';
 
 export interface TextEditorQuickInputItem {
   id: string;
@@ -24,6 +25,7 @@ export function TextEditorQuickInput({
   onAccept,
   onDismiss
 }: TextEditorQuickInputProps) {
+  const { t } = useLocalization();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const normalizedQuery = query.trim().toLowerCase();
@@ -88,7 +90,7 @@ export function TextEditorQuickInput({
             }}
           />
         </label>
-        <div className="text-editor-quick-input-results" role="listbox" aria-label={`${label} results`}>
+        <div className="text-editor-quick-input-results" role="listbox" aria-label={t('editor.aria.searchResults', { name: label })}>
           {filteredItems.map((item, index) => (
             <button
               aria-selected={selectedIndex === index}
@@ -108,7 +110,7 @@ export function TextEditorQuickInput({
             </button>
           ))}
           {filteredItems.length === 0 ? (
-            <div className="text-editor-quick-input-empty">No matching results</div>
+            <div className="text-editor-quick-input-empty">{t('editor.quickInput.noResults')}</div>
           ) : null}
         </div>
       </section>

@@ -147,7 +147,7 @@ export type AiChatAction =
       rollbackState: 'available' | 'rolling-back' | 'rolled-back' | 'blocked';
     };
 
-export const DEFAULT_AI_CHAT_TITLE = 'New chat';
+export const DEFAULT_AI_CHAT_TITLE = '';
 
 const nowIso = (now = new Date()) => now.toISOString();
 const compactId = (value: string) => value.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48) || 'build';
@@ -177,7 +177,7 @@ export function createAiChatThread(scopeKey: string, now = new Date()): AiChatTh
 
 export function createAiSession(
   scopeKey = 'no-build',
-  buildLabel = 'No build selected',
+  buildLabel = '',
   now = new Date()
 ): AiSession {
   const chat = createAiChatThread(scopeKey, now);

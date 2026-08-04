@@ -1,9 +1,11 @@
 import { Icon } from '../../renderer/design-system/icons';
 import { IconButton } from '../../renderer/design-system/primitives';
-import type { WindowActionResult } from '../contracts';
+import type { InstallerLanguage, WindowActionResult } from '../contracts';
+import { translate } from '../i18n';
 import './installer-titlebar.css';
 
 export interface InstallerTitlebarProps {
+  language: InstallerLanguage;
   onMinimize: () => Promise<WindowActionResult>;
   onClose: () => Promise<WindowActionResult>;
   onCloseBlocked: (reasonKey: string) => void;
@@ -11,6 +13,7 @@ export interface InstallerTitlebarProps {
 }
 
 export function InstallerTitlebar({
+  language,
   onClose,
   onCloseBlocked,
   onMinimize,
@@ -24,7 +27,11 @@ export function InstallerTitlebar({
   };
 
   return (
-    <header aria-label={`${title} window chrome`} className="installer-titlebar" data-tauri-drag-region>
+    <header
+      aria-label={translate(language, 'installer.window.chrome', { title })}
+      className="installer-titlebar"
+      data-tauri-drag-region
+    >
       <div className="installer-titlebar__brand" data-tauri-drag-region>
         <Icon
           aria-hidden="true"
@@ -35,9 +42,12 @@ export function InstallerTitlebar({
         <span data-tauri-drag-region>{title}</span>
       </div>
       <div className="installer-titlebar__drag" data-tauri-drag-region />
-      <div aria-label="Window controls" className="installer-titlebar__controls">
+      <div
+        aria-label={translate(language, 'installer.window.controls')}
+        className="installer-titlebar__controls"
+      >
         <IconButton
-          label="Minimize"
+          label={translate(language, 'installer.window.minimize')}
           onClick={() => void onMinimize()}
           size="sm"
           variant="bare"
@@ -45,7 +55,7 @@ export function InstallerTitlebar({
           <Icon name="window-minimize" size={14} />
         </IconButton>
         <IconButton
-          label="Close"
+          label={translate(language, 'installer.window.close')}
           onClick={() => void runClose()}
           size="sm"
           variant="bare"

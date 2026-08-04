@@ -32,7 +32,7 @@ export const projectCatalogFallback: FluxoraProjectCatalog = {
   operationId: ''
 };
 
-export const bridgeStatusLabel = (status: NativeBridgeStatus | null): string => {
+export const bridgeStatusCode = (status: NativeBridgeStatus | null): string => {
   if (!status) {
     return 'checking';
   }

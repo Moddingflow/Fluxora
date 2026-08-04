@@ -9,6 +9,7 @@ import type {
   FluxoraFluxPackProviderProgress,
   FluxoraProject
 } from '../../../shared/fluxora-api';
+import { useLocalization } from '../../../localization/react';
 
 export type OperationOverlayKind =
   | 'build-create'
@@ -96,8 +97,10 @@ const FluxPackSourceProgress = ({
   label,
   percent,
   providers
-}: FluxPackSourceProgressProps) => (
-  <div className="fluxpack-source-progress">
+}: FluxPackSourceProgressProps) => {
+  const { t } = useLocalization();
+  return (
+    <div className="fluxpack-source-progress">
     <div
       aria-label={label}
       aria-valuemax={100}
@@ -120,7 +123,7 @@ const FluxPackSourceProgress = ({
       ))}
     </div>
     <strong className="fluxpack-source-progress__percent">{percent}%</strong>
-    <div className="fluxpack-source-progress__legend" aria-label="Источники установки">
+    <div className="fluxpack-source-progress__legend" aria-label={t('operation.sources')}>
       {providers.map((provider) => (
         <span
           data-provider={providerDataId(provider.providerId)}
@@ -133,8 +136,9 @@ const FluxPackSourceProgress = ({
         </span>
       ))}
     </div>
-  </div>
-);
+    </div>
+  );
+};
 
 export const OperationOverlay = ({
   cancellationSupported,
@@ -142,6 +146,7 @@ export const OperationOverlay = ({
   onClose,
   overlay
 }: OperationOverlayProps) => {
+  const { t } = useLocalization();
   if (!overlay) {
     return null;
   }
@@ -150,11 +155,11 @@ export const OperationOverlay = ({
     overlay.isRunning && overlay.percent === null && overlay.kind !== 'fluxpack-export';
   const percent = Math.max(0, Math.min(100, overlay.percent ?? 0));
   const tone = operationOverlayTone(overlay);
-  const progressLabel = isIndeterminate ? 'Ожидаем данные' : `${percent}%`;
+  const progressLabel = isIndeterminate ? t('operation.waiting') : `${percent}%`;
   const showProviderProgress =
     overlay.kind === 'fluxpack-install' && Boolean(overlay.providers?.length);
   const stepText =
-    overlay.errorText || overlay.resultText || overlay.statusText || 'Подготавливаем операцию';
+    overlay.errorText || overlay.resultText || overlay.statusText || t('operation.preparing');
   const showCurrentItemDetail = !(overlay.kind === 'build-delete' && tone === 'running');
   const detailText = showCurrentItemDetail ? overlay.currentItem || overlay.title : null;
   const canCancelBuildCreate =
@@ -174,7 +179,7 @@ export const OperationOverlay = ({
         aria-label={overlay.title}
         className={`operation-overlay operation-overlay--loading-splash operation-overlay--${overlay.kind}`}
         data-state={tone}
-        detail="Удаление файла из загрузок"
+        detail={t('operation.deletingDownload')}
         messages={[overlay.title]}
         open
         progress={percent}
@@ -201,11 +206,11 @@ export const OperationOverlay = ({
                 onClick={onCancel}
                 type="button"
               >
-                Отменить
+                {t('operation.cancel')}
               </button>
             ) : showClose ? (
               <button className="operation-splash__action" onClick={onClose} type="button">
-                Закрыть
+                {t('operation.close')}
               </button>
             ) : null}
           </div>
@@ -230,13 +235,13 @@ export const OperationOverlay = ({
         <div className="operation-progress">
           {showProviderProgress ? (
             <FluxPackSourceProgress
-              label={`${overlay.title}: прогресс`}
+              label={t('operation.progress', { title: overlay.title })}
               percent={percent}
               providers={overlay.providers ?? []}
             />
           ) : (
             <ProgressBar
-              aria-label={`${overlay.title}: прогресс`}
+              aria-label={t('operation.progress', { title: overlay.title })}
               className={`operation-progress__bar${isIndeterminate ? '' : ' operation-progress__bar--percent'}`}
               indeterminate={isIndeterminate}
               value={percent}
@@ -244,7 +249,7 @@ export const OperationOverlay = ({
             />
           )}
           <div className="operation-splash__step">
-            <span>Сейчас</span>
+            <span>{t('operation.now')}</span>
             <strong>{stepText}</strong>
           </div>
         </div>

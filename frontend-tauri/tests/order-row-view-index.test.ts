@@ -302,6 +302,30 @@ describe('order row view indexes', () => {
     expect(second.byOrderId.get('mod-4999')).toBe(first.byOrderId.get('mod-4999'));
   });
 
+  it('invalidates localized row derivations when the language changes', () => {
+    const item = modItem('localized-mod', 'Localized mod', 0);
+    const english = buildModRowViewIndex([item], {
+      language: 'en-US',
+      selectedItem: null,
+      collapsedSeparatorOrderIds: new Set()
+    });
+    const russian = buildModRowViewIndex(
+      [{ ...item }],
+      {
+        language: 'ru-RU',
+        selectedItem: null,
+        collapsedSeparatorOrderIds: new Set()
+      },
+      english
+    );
+
+    expect(english.byOrderId.get('localized-mod')?.status.label).toBe('No overwrite');
+    expect(russian.byOrderId.get('localized-mod')?.status.label).toBe('Нет перезаписи');
+    expect(russian.byOrderId.get('localized-mod')).not.toBe(
+      english.byOrderId.get('localized-mod')
+    );
+  });
+
   it('reuses flat 5k view entries across native clones and derives only changed rows', () => {
     const mods = Array.from({ length: 5_000 }, (_, index) =>
       modItem(`mod-${index}`, `Mod ${index}`, index)

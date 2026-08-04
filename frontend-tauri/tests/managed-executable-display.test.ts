@@ -32,10 +32,10 @@ describe('managed executable display', () => {
       }
     ]
   ] as const)('describes %s without renderer state', (kind, expected) => {
-    expect(managedExecutableDisplay(kind, 'Foundation')).toEqual(expected);
+    expect(managedExecutableDisplay(kind, 'Foundation', 'ru-RU')).toEqual(expected);
   });
 
   it('leaves ordinary executables unmanaged', () => {
-    expect(managedExecutableDisplay(undefined, 'Foundation')).toBeNull();
+    expect(managedExecutableDisplay(undefined, 'Foundation', 'ru-RU')).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 
 import updateIcon from '../../../../../Icons/hard-drive-download.svg';
+import { useLocalization } from '../../../localization/react';
 import type { AppUpdateToolbarViewState } from './app-update-state';
 
 export interface AppUpdateToolbarButtonProps {
@@ -8,6 +9,7 @@ export interface AppUpdateToolbarButtonProps {
 }
 
 export function AppUpdateToolbarButton({ update }: AppUpdateToolbarButtonProps) {
+  const { t } = useLocalization();
   if (update.state === 'hidden') {
     return null;
   }
@@ -26,19 +28,19 @@ export function AppUpdateToolbarButton({ update }: AppUpdateToolbarButtonProps) 
   const label = (() => {
     switch (update.state) {
       case 'available':
-        return `Скачать и установить обновление Fluxora ${update.version}`;
+        return t('update.available', { version: update.version });
       case 'downloading':
-        return `Загрузка обновления Fluxora ${update.version}: ${progressPercent}%. Отменить`;
+        return t('update.downloading', { version: update.version, percent: progressPercent ?? 0 });
       case 'waitingForOperations':
-        return `Обновление Fluxora ${update.version} ожидает завершения операций. Отменить`;
+        return t('update.waiting', { version: update.version });
       case 'readyToInstall':
-        return `Обновление Fluxora ${update.version} готово к установке. Отменить`;
+        return t('update.ready', { version: update.version });
       case 'launchingUpdater':
-        return `Запускается установка обновления Fluxora ${update.version}`;
+        return t('update.launching', { version: update.version });
       case 'error':
         return update.retryable
-          ? `Не удалось установить обновление Fluxora ${update.version}. ${update.errorMessage}. Повторить`
-          : `Не удалось установить обновление Fluxora ${update.version}. ${update.errorMessage}. Повтор недоступен`;
+          ? t('update.errorRetry', { version: update.version, error: update.errorMessage })
+          : t('update.errorNoRetry', { version: update.version, error: update.errorMessage });
     }
   })();
   const tooltip = label;

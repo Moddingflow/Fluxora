@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { LocalizationProvider } from '../src/localization/react';
 import {
   OperationOverlay,
   type OperationOverlayState
@@ -39,12 +40,16 @@ const renderOverlay = (
   cancellationSupported = false
 ): string =>
   renderToStaticMarkup(
-    React.createElement(OperationOverlay, {
-      cancellationSupported,
-      onCancel: noop,
-      onClose: noop,
-      overlay: nextOverlay
-    })
+    React.createElement(
+      LocalizationProvider,
+      { language: 'ru-RU' },
+      React.createElement(OperationOverlay, {
+        cancellationSupported,
+        onCancel: noop,
+        onClose: noop,
+        overlay: nextOverlay
+      })
+    )
   );
 
 describe('operation overlays', () => {
@@ -309,11 +314,11 @@ describe('operation overlays', () => {
     expect(percentRule).toContain('font-weight: 800;');
   });
 
-  it('starts FluxPack packaging with user-facing Russian copy and a real zero percent', () => {
+  it('starts FluxPack packaging with localized copy and a real zero percent', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
-    expect(app).toContain("title: 'Упаковываем сборку'");
-    expect(app).toContain("statusText: 'Изучаем сборку'");
+    expect(app).toContain("title: t('app.operation.packageBuild')");
+    expect(app).toContain("statusText: t('app.operation.inspectingBuild')");
     expect(app).toMatch(/kind: 'fluxpack-export',[\s\S]*?percent: 0/);
     expect(app).not.toContain("title: 'Packaging FluxPack'");
     expect(app).not.toContain("statusText: 'Writing FluxPack manifest'");

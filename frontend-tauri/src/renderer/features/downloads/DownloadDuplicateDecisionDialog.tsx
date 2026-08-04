@@ -5,6 +5,7 @@ import type {
   FluxoraDownloadDuplicateChoice,
   FluxoraDownloadEntry
 } from '../../../shared/fluxora-api';
+import { useLocalization } from '../../../localization/react';
 
 export interface DownloadDuplicateDecisionDialogProps {
   entry: FluxoraDownloadEntry | null;
@@ -13,22 +14,25 @@ export interface DownloadDuplicateDecisionDialogProps {
   onResolve: (choice: FluxoraDownloadDuplicateChoice) => void;
 }
 
-const directionText = (entry: FluxoraDownloadEntry): string => {
+const directionText = (
+  entry: FluxoraDownloadEntry,
+  t: ReturnType<typeof useLocalization>['t']
+): string => {
   switch (entry.duplicateDecision?.direction) {
     case 'same-file':
-      return 'Точно такой же архив уже есть в Downloads. При замене Fluxora сразу уберёт старый архив из списка и скачает новый на его место.';
+      return t('downloadDuplicate.direction.same-file');
     case 'downgrade':
-      return 'Вы скачиваете более старую версию. Установленный мод не изменится.';
+      return t('downloadDuplicate.direction.downgrade');
     case 'mixed':
-      return 'В Downloads одновременно есть более старые и более новые версии этой цепочки.';
+      return t('downloadDuplicate.direction.mixed');
     case 'upgrade':
     default:
-      return 'В Downloads уже есть более ранняя версия этого файла Nexus.';
+      return t('downloadDuplicate.direction.upgrade');
   }
 };
 
-const fileLabel = (fileName: string, version: string): string =>
-  version.trim() ? `${fileName || 'Файл Nexus'} — ${version}` : fileName || 'Файл Nexus';
+const fileLabel = (fileName: string, version: string, fallback: string): string =>
+  version.trim() ? `${fileName || fallback} — ${version}` : fileName || fallback;
 
 export function DownloadDuplicateDecisionDialog({
   entry,
@@ -36,6 +40,7 @@ export function DownloadDuplicateDecisionDialog({
   isResolving,
   onResolve
 }: DownloadDuplicateDecisionDialogProps) {
+  const { t } = useLocalization();
   const replaceButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -71,10 +76,10 @@ export function DownloadDuplicateDecisionDialog({
     return null;
   }
   const isSameFile = decision.direction === 'same-file';
-  const cancelLabel = isSameFile ? 'Закрыть' : 'Отменить загрузку';
+  const cancelLabel = isSameFile ? t('downloadDuplicate.close') : t('downloadDuplicate.cancel');
   const dialogTitleId = isSameFile ? 'download-duplicate-title' : 'download-duplicate-status';
   const sameFileArchiveName =
-    decision.incomingFile.fileName.trim() || entry.fileName.trim() || 'Файл Nexus';
+    decision.incomingFile.fileName.trim() || entry.fileName.trim() || t('downloadDuplicate.nexusFile');
 
   return (
     <div className="download-duplicate-backdrop" role="presentation">
@@ -88,15 +93,15 @@ export function DownloadDuplicateDecisionDialog({
         <header className="download-duplicate-dialog__header">
           {isSameFile ? (
             <strong className="download-duplicate-dialog__title" id="download-duplicate-title">
-              Повторная установка мода
+              {t('downloadDuplicate.reinstall')}
             </strong>
           ) : (
             <div className="download-duplicate-dialog__status" id="download-duplicate-status">
               <span aria-hidden="true" className="download-duplicate-dialog__status-dot" />
               <strong>
                 {decision.direction === 'upgrade'
-                  ? 'Найдена новая версия'
-                  : 'Нужно подтвердить версию'}
+                  ? t('downloadDuplicate.newVersion')
+                  : t('downloadDuplicate.confirmVersion')}
               </strong>
             </div>
           )}
@@ -117,22 +122,30 @@ export function DownloadDuplicateDecisionDialog({
         <div className="download-duplicate-dialog__body">
           <p id="download-duplicate-summary" className="download-duplicate-dialog__warning">
             {decision.direction !== 'upgrade' ? <AlertTriangle size={16} aria-hidden="true" /> : null}
-            <span>{directionText(entry)}</span>
+            <span>{directionText(entry, t)}</span>
           </p>
           {isSameFile ? (
             <p className="download-duplicate-dialog__archive-name">{sameFileArchiveName}</p>
           ) : (
             <dl className="download-duplicate-dialog__files">
               <div>
-                <dt>Входящий файл</dt>
-                <dd>{fileLabel(decision.incomingFile.fileName, decision.incomingFile.version)}</dd>
+                <dt>{t('downloadDuplicate.incoming')}</dt>
+                <dd>{fileLabel(
+                  decision.incomingFile.fileName,
+                  decision.incomingFile.version,
+                  t('downloadDuplicate.nexusFile')
+                )}</dd>
               </div>
               <div>
-                <dt>В Downloads</dt>
+                <dt>{t('downloadDuplicate.existing')}</dt>
                 <dd>
                   <ul>
                     {decision.existingFiles.map((file) => (
-                      <li key={file.id}>{fileLabel(file.fileName, file.version)}</li>
+                      <li key={file.id}>{fileLabel(
+                        file.fileName,
+                        file.version,
+                        t('downloadDuplicate.nexusFile')
+                      )}</li>
                     ))}
                   </ul>
                 </dd>
@@ -152,7 +165,9 @@ export function DownloadDuplicateDecisionDialog({
             type="button"
             onClick={() => onResolve('replace')}
           >
-            {isResolving ? (isSameFile ? 'Заменяем…' : 'Применяем…') : 'Заменить'}
+            {isResolving
+              ? (isSameFile ? t('downloadDuplicate.replacing') : t('downloadDuplicate.applying'))
+              : t('downloadDuplicate.replace')}
           </button>
           {!isSameFile ? (
             <button
@@ -163,7 +178,7 @@ export function DownloadDuplicateDecisionDialog({
               type="button"
               onClick={() => onResolve('keepBoth')}
             >
-              Сохранить оба
+              {t('downloadDuplicate.keepBoth')}
             </button>
           ) : null}
         </footer>

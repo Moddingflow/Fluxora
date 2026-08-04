@@ -9,6 +9,7 @@ import type {
   FluxoraFomodOption,
   FluxoraPlacementOverride
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 
 export type InstallSourceKind = 'download' | 'archive';
 
@@ -106,23 +107,28 @@ export const INSTALL_MOD_NAME_MAX_LENGTH = 255;
 export const normalizeInstallModName = (value: string): string =>
   value.trim().replace(/^[.\s]+|[.\s]+$/g, '');
 
-export const validateInstallModName = (value: string): string => {
+export const validateInstallModName = (
+  value: string,
+  language?: string | null
+): string => {
   const name = normalizeInstallModName(value);
   if (!name) {
-    return 'Enter a mod name.';
+    return translateForLanguage(language, 'install.validation.modNameRequired');
   }
 
   if (name.length > INSTALL_MOD_NAME_MAX_LENGTH) {
-    return `The name must be ${INSTALL_MOD_NAME_MAX_LENGTH} characters or fewer.`;
+    return translateForLanguage(language, 'install.validation.modNameTooLong', {
+      count: INSTALL_MOD_NAME_MAX_LENGTH
+    });
   }
 
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) {
-    return 'The name contains characters that cannot be used in a folder name.';
+    return translateForLanguage(language, 'install.validation.folderCharacters');
   }
 
   const deviceName = name.split('.')[0]?.toLocaleUpperCase() ?? '';
   if (reservedDeviceNames.has(deviceName)) {
-    return 'This name is reserved by Windows. Choose another name.';
+    return translateForLanguage(language, 'install.validation.windowsReserved');
   }
 
   return '';
@@ -144,26 +150,30 @@ const joinRelativePath = (folder: string, child: string): string => {
   return normalizedFolder ? `${normalizedFolder}/${normalizedChild}` : normalizedChild;
 };
 
-const displayNameForTarget = (target: string): string => {
+const displayNameForTarget = (
+  target: string,
+  language?: string | null
+): string => {
   switch (target) {
     case 'data':
-      return 'Data';
+      return translateForLanguage(language, 'placement.data');
     case 'gameRoot':
-      return 'Game root';
+      return translateForLanguage(language, 'placement.gameRoot');
     case 'profile':
-      return 'Profile';
+      return translateForLanguage(language, 'app.ui.profile');
     case 'overwrite':
-      return 'Overwrite';
+      return translateForLanguage(language, 'app.ui.overwrite');
     case 'blocked':
-      return 'Blocked';
+      return translateForLanguage(language, 'install.placement.blocked');
     default:
-      return target || 'Archive';
+      return target || translateForLanguage(language, 'install.placement.archive');
   }
 };
 
 const displayPathForEntry = (
   entry: FluxoraContentLayoutPreviewEntry,
-  override?: PlacementOverrideMap[string]
+  override?: PlacementOverrideMap[string],
+  language?: string | null
 ): string => {
   const target = override?.target ?? entry.target;
   const targetRelativePath = normalizePath(override?.targetRelativePath ?? entry.targetRelativePath);
@@ -171,17 +181,27 @@ const displayPathForEntry = (
 
   switch (target) {
     case 'data':
-      return targetRelativePath ? `Data/${targetRelativePath}` : 'Data';
+      return targetRelativePath
+        ? `${displayNameForTarget(target, language)}/${targetRelativePath}`
+        : displayNameForTarget(target, language);
     case 'gameRoot':
       return targetRelativePath || sourcePath;
     case 'profile':
-      return targetRelativePath ? `Profile/${targetRelativePath}` : 'Profile';
+      return targetRelativePath
+        ? `${displayNameForTarget(target, language)}/${targetRelativePath}`
+        : displayNameForTarget(target, language);
     case 'overwrite':
-      return targetRelativePath ? `Overwrite/${targetRelativePath}` : 'Overwrite';
+      return targetRelativePath
+        ? `${displayNameForTarget(target, language)}/${targetRelativePath}`
+        : displayNameForTarget(target, language);
     case 'blocked':
-      return sourcePath ? `Blocked/${sourcePath}` : 'Blocked';
+      return sourcePath
+        ? `${displayNameForTarget(target, language)}/${sourcePath}`
+        : displayNameForTarget(target, language);
     default:
-      return targetRelativePath ? `${displayNameForTarget(target)}/${targetRelativePath}` : sourcePath;
+      return targetRelativePath
+        ? `${displayNameForTarget(target, language)}/${targetRelativePath}`
+        : sourcePath;
   }
 };
 
@@ -213,7 +233,8 @@ interface PlacementNode {
 
 export const buildArchivePlacementRows = (
   preview: FluxoraContentLayoutPreview,
-  overrides: PlacementOverrideMap = {}
+  overrides: PlacementOverrideMap = {},
+  language?: string | null
 ): ArchivePlacementRow[] => {
   const root: PlacementNode = {
     key: 'root',
@@ -236,7 +257,7 @@ export const buildArchivePlacementRows = (
   for (const entry of sortedEntries) {
     const override = overrides[entry.sourcePath];
     const target = override?.target ?? entry.target;
-    const displayPath = displayPathForEntry(entry, override);
+    const displayPath = displayPathForEntry(entry, override, language);
     const parts = displayPath.split('/').filter(Boolean);
     if (parts.length === 0) {
       continue;
@@ -363,70 +384,85 @@ export const createPlacementOverrides = (
 
 export const buildPlacementSummaryText = (
   preview: FluxoraContentLayoutPreview,
-  overrideCount: number
+  overrideCount: number,
+  language = 'en-US'
 ): string => {
-  const summary = preview.explanationSummary || 'Fluxora built an archive placement plan.';
-  const changed = overrideCount > 0 ? ` Manual changes: ${overrideCount}.` : '';
-  return `${summary} Files: ${preview.summary.totalEntries}, planned: ${preview.summary.plannedEntries}.${changed}`;
+  const summary = preview.explanationSummary || translateForLanguage(language, 'install.placement.planBuilt');
+  const changed = overrideCount > 0
+    ? ` ${translateForLanguage(language, 'install.placement.manualChanges', { count: overrideCount })}`
+    : '';
+  return `${summary} ${translateForLanguage(language, 'install.placement.summary', {
+    files: preview.summary.totalEntries,
+    planned: preview.summary.plannedEntries
+  })}${changed}`;
 };
 
 export const buildPlacementPreviewLines = (
   preview: FluxoraContentLayoutPreview,
-  overrideCount: number
+  overrideCount: number,
+  language = 'en-US'
 ): string[] => {
   const lines: string[] = [];
   if (overrideCount > 0) {
-    lines.push(`Manual placement changes: ${overrideCount}`);
+    lines.push(translateForLanguage(language, 'install.placement.manualChanges', { count: overrideCount }));
   }
 
   for (const finding of preview.validationFindings.filter((item) => item.blocksInstall)) {
-    lines.push(`${finding.path || 'Blocker'}: ${finding.message}`);
+    lines.push(`${finding.path || translateForLanguage(language, 'install.placement.blocker')}: ${finding.message}`);
   }
 
   for (const finding of preview.validationFindings.filter((item) => !item.blocksInstall)) {
-    lines.push(`${finding.path || 'Warning'}: ${finding.message}`);
+    lines.push(`${finding.path || translateForLanguage(language, 'install.placement.warning')}: ${finding.message}`);
   }
 
   for (const entry of preview.entries.slice(0, 8)) {
     const target =
       entry.target === 'blocked'
-        ? 'blocked'
-        : `${displayNameForTarget(entry.target)}/${entry.targetRelativePath}`.replace(/\/$/, '');
+        ? translateForLanguage(language, 'install.placement.blocked')
+        : `${displayNameForTarget(entry.target, language)}/${entry.targetRelativePath}`.replace(/\/$/, '');
     lines.push(`${entry.sourcePath} -> ${target}: ${entry.explanation}`);
   }
 
   if (preview.entries.length > 8) {
-    lines.push(`More files: ${preview.entries.length - 8}`);
+    lines.push(translateForLanguage(language, 'install.placement.moreFiles', {
+      count: preview.entries.length - 8
+    }));
   }
 
   return lines;
 };
 
-export const installSourceLabel = (source: InstallSource): string => {
+export const installSourceLabel = (source: InstallSource, language = 'en-US'): string => {
   const label = source.fileName || fileNameFromPath(source.sourcePath) || source.displayName;
-  return source.kind === 'download' ? `Download · ${label}` : `Archive · ${label}`;
+  return translateForLanguage(
+    language,
+    source.kind === 'download' ? 'install.source.download' : 'install.source.archive',
+    { name: label }
+  );
 };
 
 export const installDestinationPreview = (
   modsDirectory: string | undefined,
-  modName: string
+  modName: string,
+  language = 'en-US'
 ): string => {
-  const name = normalizeInstallModName(modName) || 'new mod';
+  const name = normalizeInstallModName(modName) || translateForLanguage(language, 'install.newMod');
   const root = modsDirectory?.trim().replace(/[\\/]+$/g, '');
   return root ? `${root}\\${name}` : `mods\\${name}`;
 };
 
 export const installCategoryLabel = (
   preview: FluxoraContentLayoutPreview,
-  isFomod: boolean
+  isFomod: boolean,
+  language = 'en-US'
 ): string => {
   const state = preview.summary.hasBlockers
-    ? 'blocked'
+    ? translateForLanguage(language, 'install.category.blocked')
     : preview.summary.hasWarnings
-      ? 'needs review'
-      : 'ready';
-  const game = preview.gameDisplayName || preview.gameId || 'content layout';
-  return [game, isFomod ? 'FOMOD' : 'simple archive', state].join(' · ');
+      ? translateForLanguage(language, 'install.category.needsReview')
+      : translateForLanguage(language, 'install.category.ready');
+  const game = preview.gameDisplayName || preview.gameId || translateForLanguage(language, 'install.category.contentLayout');
+  return [game, isFomod ? 'FOMOD' : translateForLanguage(language, 'install.category.simpleArchive'), state].join(' · ');
 };
 
 const normalizeDependencyFile = (file: string): string => file.trim().replace(/\//g, '\\').replace(/^\\+/, '');
@@ -499,7 +535,8 @@ const isGroupType = (group: FluxoraFomodGroup, type: string): boolean =>
 
 export const evaluateFomodWizard = (
   installer: FluxoraFomodInstaller,
-  selectedOptionIds: string[]
+  selectedOptionIds: string[],
+  language?: string | null
 ): EvaluatedFomodWizard => {
   const selected = new Set(selectedOptionIds.filter(Boolean));
   const previous = new Set(installer.previousSelectedOptionIds.filter(Boolean));
@@ -549,10 +586,16 @@ export const evaluateFomodWizard = (
       const validationMessage = isSelectionValid
         ? ''
         : exactlyOne
-          ? `Choose one option in "${group.name || 'Options'}".`
+          ? translateForLanguage(language, 'install.fomod.chooseExactlyOne', {
+              group: group.name || translateForLanguage(language, 'install.fomod.options')
+            })
           : atLeastOne
-            ? `Choose at least one option in "${group.name || 'Options'}".`
-            : `Choose no more than one option in "${group.name || 'Options'}".`;
+            ? translateForLanguage(language, 'install.fomod.chooseAtLeastOne', {
+                group: group.name || translateForLanguage(language, 'install.fomod.options')
+              })
+            : translateForLanguage(language, 'install.fomod.chooseAtMostOne', {
+                group: group.name || translateForLanguage(language, 'install.fomod.options')
+              });
 
       return {
         group,
@@ -587,12 +630,14 @@ export const evaluateFomodWizard = (
     visibleSteps.push({
       stepIndex,
       visibleNumber: visibleSteps.length + 1,
-      stepName: step.name || 'Step',
+      stepName: step.name || translateForLanguage(language, 'install.fomod.step'),
       groups,
       isSelectionValid: groups.every((group) => group.isSelectionValid) && !acknowledgementMissing,
       validationMessage:
         groupMessage ||
-        (acknowledgementMissing ? 'Confirm that you have read and understood this step.' : '')
+        (acknowledgementMissing
+          ? translateForLanguage(language, 'install.fomod.confirmAcknowledgement')
+          : '')
     });
   }
 

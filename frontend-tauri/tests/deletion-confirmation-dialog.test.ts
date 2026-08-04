@@ -22,13 +22,15 @@ const renderDialog = (
   kind: DeletionConfirmationKind,
   itemName = 'SkyUI 5.2',
   itemCount?: number,
-  description?: string
+  description?: string,
+  language = 'ru-ru'
 ) =>
   renderToStaticMarkup(
     React.createElement(DeletionConfirmationDialog, {
       itemCount,
       itemName,
       kind,
+      language,
       description,
       onCancel: noop,
       onConfirm: noop
@@ -63,14 +65,21 @@ describe('deletion confirmation dialog', () => {
     expect(renderDialog('download', 'Texture Pack.7z', 5)).toContain('5 файлов');
   });
 
+  it('provides complete English and German deletion copy', () => {
+    expect(renderDialog('download', 'Texture Pack.7z', 5, undefined, 'en-us')).toContain(
+      '5 files'
+    );
+    expect(renderDialog('mod', 'SkyUI 5.2', 2, undefined, 'de-de')).toContain('2 Mods');
+    expect(renderDialog('build', 'Skyrim', 1, undefined, 'de-de')).toContain('Build löschen');
+  });
+
   it('warns that deleting an archive affects the global game library but not installed mods', () => {
     const warning =
       'Архив будет удалён из глобальной библиотеки Downloads для всех сборок этой игры. Уже установленные моды останутся на месте.';
     expect(renderDialog('download', 'Texture Pack.7z', 1, warning)).toContain(warning);
 
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
-    expect(app).toContain('глобальной библиотеки Downloads для всех сборок этой игры');
-    expect(app).toContain('Уже установленные моды останутся на месте');
+    expect(app).toContain("t('app.message.downloadDeleteDescription')");
   });
 
   it('routes destructive mod, separator, build and download actions through the in-app confirmation', () => {

@@ -33,6 +33,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -66,6 +67,16 @@ import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
 import { AppTitlebar } from './components/chrome/AppTitlebar';
+import {
+  normalizeAppLocale,
+  translateForLanguage,
+  type TranslationKey
+} from '../localization';
+import {
+  appLanguageReducer,
+  initialAppLanguageState
+} from '../localization/app-language-state';
+import { LocalizationProvider, useLocalization } from '../localization/react';
 import { useAppUpdate } from './features/update/use-app-update';
 import {
   AdaptiveVirtualList,
@@ -518,26 +529,25 @@ const FilePreviewWorkspace = lazy(async () => {
   return { default: module.FilePreviewWorkspace };
 });
 
-const bodySlideLaunchErrorMessage = (error: unknown): string => {
+const bodySlideLaunchErrorMessage = (error: unknown, language?: string | null): string => {
   const code =
     error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
       ? (error as { code: string }).code
       : '';
-  const messages: Record<string, string> = {
-    BODYSLIDE_EXTERNAL_TOOL:
-      'BodySlide находится вне сборки. Импортируйте BodySlide в сборку и повторите запуск.',
-    BODYSLIDE_X86_UNSUPPORTED: 'Нужен официальный 64-битный BodySlide.',
-    BODYSLIDE_PLATFORM_UNSUPPORTED: 'Управляемый BodySlide поддерживается только в Windows.',
-    BODYSLIDE_RUNTIME_INVALID: 'Файлы установленного BodySlide повреждены или неполны.',
-    BODYSLIDE_GAME_UNSUPPORTED: 'BodySlide v1 поддерживает только Skyrim SE/AE.',
-    BODYSLIDE_OUTPUT_CONFLICT:
-      'Имя BodySlide Output уже занято пользовательским модом. Данные не изменены.',
-    BODYSLIDE_SESSION_ACTIVE: 'BodySlide уже запущен для этой сборки.',
-    BODYSLIDE_SESSION_NOT_FOUND: 'Сессия BodySlide уже завершена или была восстановлена.',
-    BODYSLIDE_VFS_UNAVAILABLE: 'BodySlide нельзя запустить без рабочего Fluxora VFS.',
-    BODYSLIDE_CONFIGURATION_FAILED: 'Не удалось безопасно подготовить конфигурацию BodySlide.'
+  const messages: Record<string, TranslationKey> = {
+    BODYSLIDE_EXTERNAL_TOOL: 'bodyslide.error.externalTool',
+    BODYSLIDE_X86_UNSUPPORTED: 'bodyslide.error.x86Unsupported',
+    BODYSLIDE_PLATFORM_UNSUPPORTED: 'bodyslide.error.platformUnsupported',
+    BODYSLIDE_RUNTIME_INVALID: 'bodyslide.error.runtimeInvalid',
+    BODYSLIDE_GAME_UNSUPPORTED: 'bodyslide.error.gameUnsupported',
+    BODYSLIDE_OUTPUT_CONFLICT: 'bodyslide.error.outputConflict',
+    BODYSLIDE_SESSION_ACTIVE: 'bodyslide.error.sessionActive',
+    BODYSLIDE_SESSION_NOT_FOUND: 'bodyslide.error.sessionNotFound',
+    BODYSLIDE_VFS_UNAVAILABLE: 'bodyslide.error.vfsUnavailable',
+    BODYSLIDE_CONFIGURATION_FAILED: 'bodyslide.error.configurationFailed'
   };
-  return messages[code] ?? errorMessage(error);
+  const key = messages[code];
+  return key ? translateForLanguage(language, key) : errorMessage(error);
 };
 
 type RouteId =
@@ -907,12 +917,15 @@ const readBuildSettingsBootstrap = (key: string): BuildSettingsBootstrap | null 
   }
 };
 
-const effectiveFileTreeSourceLabel = (entry: FluxoraEffectiveFileTreeEntry): string => {
+const effectiveFileTreeSourceLabel = (
+  entry: FluxoraEffectiveFileTreeEntry,
+  language?: string | null
+): string => {
   if (entry.sourceKind === 'game') {
-    return 'Game';
+    return translateForLanguage(language, 'app.source.game');
   }
   if (entry.sourceKind === 'overwrite') {
-    return 'Overwrite';
+    return translateForLanguage(language, 'app.source.overwrite');
   }
   if (entry.sourceKind === 'mod') {
     return entry.sourceName;
@@ -920,17 +933,17 @@ const effectiveFileTreeSourceLabel = (entry: FluxoraEffectiveFileTreeEntry): str
   return '';
 };
 
-const effectiveVirtualPathLabel = (entry: FluxoraEffectiveFileTreeEntry): string =>
-  entry.virtualPath || entry.relativePath || 'Game root';
+const effectiveVirtualPathLabel = (
+  entry: FluxoraEffectiveFileTreeEntry,
+  language?: string | null
+): string => entry.virtualPath || entry.relativePath ||
+  translateForLanguage(language, 'app.source.gameRoot');
 
-const modConflictMarkerLabels: Record<ModConflictMarkerState, string> = {
-  overwrites: 'Перезаписывает',
-  overwritten: 'Перезаписывается',
-  'fully-overwritten': 'Полностью перезаписан'
+const modConflictMarkerKeys: Record<ModConflictMarkerState, TranslationKey> = {
+  overwrites: 'app.conflict.overwrites',
+  overwritten: 'app.conflict.overwritten',
+  'fully-overwritten': 'app.conflict.fullyOverwritten'
 };
-
-const modConflictMarkerTitle = (states: ModConflictMarkerState[]): string =>
-  states.map((state) => modConflictMarkerLabels[state]).join(' · ');
 
 function MenuIcon({ source }: { source: string }) {
   return (
@@ -959,61 +972,47 @@ function ModConflictMarkers({
   className?: string;
   states: ModConflictMarkerState[];
 }) {
+  const { t } = useLocalization();
   if (states.length === 0) {
     return null;
   }
+  const markerTitle = states.map((state) => t(modConflictMarkerKeys[state])).join(' · ');
 
   return (
     <span
-      aria-label={modConflictMarkerTitle(states)}
+      aria-label={markerTitle}
       className={['mod-conflict-markers', className].filter(Boolean).join(' ')}
       role="group"
-      title={modConflictMarkerTitle(states)}
+      title={markerTitle}
     >
       {states.map((state) => (
         <StatusDot
           className="mod-conflict-marker-dot"
           key={state}
-          label={modConflictMarkerLabels[state]}
+          label={t(modConflictMarkerKeys[state])}
           size={18}
           state={state}
-          title={modConflictMarkerLabels[state]}
+          title={t(modConflictMarkerKeys[state])}
         />
       ))}
     </span>
   );
 }
 
-const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
-  { id: 'home', label: 'Home', icon: Home },
-  { id: 'build', label: 'Build', icon: Layers }
+const openingBuildMessageKeys: TranslationKey[] = [
+  'app.opening.loadingBuild',
+  'app.opening.plugins',
+  'app.opening.profile',
+  'app.opening.workspace',
+  'app.opening.almostDone'
 ];
 
-const modDetailsTabs: Array<{ id: ModDetailsTabId; label: string; icon: string }> = [
-  { id: 'files', label: 'Файлы', icon: modDetailsFilesIcon },
-  { id: 'conflicts', label: 'Конфликты', icon: modDetailsConflictsIcon }
+const overwriteClearMessageKeys: TranslationKey[] = [
+  'app.overwriteClear.clearing',
+  'app.overwriteClear.temporary',
+  'app.overwriteClear.refreshing',
+  'app.overwriteClear.almostDone'
 ];
-
-const rightPaneTabs: Array<{ id: RightPaneId; label: string; icon: typeof Layers }> = [
-  { id: 'plugins', label: 'Плагины', icon: Layers },
-  { id: 'data', label: 'Данные', icon: FolderTree },
-  { id: 'downloads', label: 'Загрузки', icon: Download }
-];
-
-const openingBuildMessages = [
-  'Загружаем вашу сборку',
-  'Смотрим плагины',
-  'Проверяем профиль',
-  'Готовим рабочее пространство',
-  'Еще чуть-чуть'
-] as const;
-
-const overwriteClearMessages = [
-  'Очищаем override',
-  'Удаляем временные файлы',
-  'Обновляем список модов',
-  'Почти готово'
-] as const;
 
 const rendererBuildDate =
   typeof import.meta.env.VITE_FLUXORA_BUILD_DATE === 'string'
@@ -1324,13 +1323,6 @@ export const App = () => {
     isBuildSettingsWindow ||
     isModDetailsWindow ||
     isFilePreviewWindow;
-  const appUpdate = useAppUpdate({
-    api: window.fluxora.updates,
-    enabled: !isBuildSettingsWindow && !isModDetailsWindow && !isFilePreviewWindow,
-    automaticChecks: !isSecondaryWindow,
-    acknowledgeRendererHealth: !isSecondaryWindow,
-    releaseSignals: !isSecondaryWindow
-  });
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
   const initialBuildSettingsBootstrap = useMemo(
@@ -1363,6 +1355,61 @@ export const App = () => {
   const [appInfo, setAppInfo] = useState<FluxoraAppInfo | null>(null);
   const [securityState, setSecurityState] = useState<FluxoraSecurityState | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<NativeBridgeStatus | null>(null);
+  const [appLanguage, dispatchAppLanguage] = useReducer(
+    appLanguageReducer,
+    initialAppLanguageState
+  );
+  const appLocale = normalizeAppLocale(appLanguage.language);
+  const appUpdate = useAppUpdate({
+    api: window.fluxora.updates,
+    enabled:
+      appLanguage.ready &&
+      !isBuildSettingsWindow &&
+      !isModDetailsWindow &&
+      !isFilePreviewWindow,
+    automaticChecks: appLanguage.ready && !isSecondaryWindow,
+    acknowledgeRendererHealth: !isSecondaryWindow,
+    language: appLocale,
+    releaseSignals: appLanguage.ready && !isSecondaryWindow
+  });
+  const t = useCallback(
+    (key: TranslationKey, variables?: Record<string, string | number>) =>
+      translateForLanguage(appLocale, key, variables),
+    [appLocale]
+  );
+  const navItems = useMemo<Array<{ id: RouteId; label: string; icon: typeof Home }>>(() => [
+    { id: 'home', label: t('app.nav.home'), icon: Home },
+    { id: 'build', label: t('app.nav.build'), icon: Layers }
+  ], [t]);
+  const modDetailsTabs = useMemo<Array<{ id: ModDetailsTabId; label: string; icon: string }>>(() => [
+    { id: 'files', label: t('app.tab.files'), icon: modDetailsFilesIcon },
+    { id: 'conflicts', label: t('app.tab.conflicts'), icon: modDetailsConflictsIcon }
+  ], [t]);
+  const rightPaneTabs = useMemo<Array<{ id: RightPaneId; label: string; icon: typeof Layers }>>(() => [
+    { id: 'plugins', label: t('app.tab.plugins'), icon: Layers },
+    { id: 'data', label: t('app.tab.data'), icon: FolderTree },
+    { id: 'downloads', label: t('app.tab.downloads'), icon: Download }
+  ], [t]);
+  const openingBuildMessages = useMemo(
+    () => openingBuildMessageKeys.map((key) => t(key)),
+    [t]
+  );
+  const overwriteClearMessages = useMemo(
+    () => overwriteClearMessageKeys.map((key) => t(key)),
+    [t]
+  );
+  useLayoutEffect(() => {
+    if (appLanguage.ready) {
+      document.documentElement.lang = appLocale;
+    }
+  }, [appLanguage.ready, appLocale]);
+
+  useEffect(() => window.fluxora.settings.onLanguageChanged((result) => {
+    dispatchAppLanguage({ type: 'language-confirmed', language: result.language });
+    setBridgeStatus((current) => current
+      ? { ...current, language: result.language, operationId: result.operationId }
+      : current);
+  }), []);
   const [catalog, setCatalog] = useState(projectCatalogFallback);
   const [projects, setProjects] = useState<FluxoraProject[]>(() =>
     initialBuildSettingsBootstrap?.project ? [initialBuildSettingsBootstrap.project] : []
@@ -1478,6 +1525,7 @@ export const App = () => {
           restoreAll: (attempt, request) => window.fluxora.connections.restoreAll(attempt, request)
         },
         createOperationId: createRendererOperationId,
+        language: () => document.documentElement.lang,
         initialSnapshot: connectionSnapshot,
         onSnapshot: (snapshot) => {
           setConnectionSnapshot(snapshot);
@@ -1849,7 +1897,7 @@ export const App = () => {
     },
     onRebaseError: (error, operationId) => {
       const detail = errorMessage(error);
-      setMessage(`Could not update the pending install order: ${detail}`);
+      setMessage(t('app.message.pendingInstallOrderFailed', { error: detail }));
       void window.fluxora.ui.log({
         level: 'warning',
         category: 'ModInstall',
@@ -1914,7 +1962,9 @@ export const App = () => {
               orderId: operation.result.orderId
             });
           }
-          setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
+          setMessage(t('app.message.installComplete', {
+            name: operation.result?.name || operation.targetFolder
+          }));
         } else if (operation.state === 'needsReview') {
           const source = downloadsWorkspaceItemsRef.current.find(
             (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
@@ -1929,7 +1979,7 @@ export const App = () => {
             reopenInstallForReview(operation);
           }
         } else if (operation.state === 'cancelled') {
-          setMessage(`Installation cancelled: ${operation.targetFolder}.`);
+          setMessage(t('app.message.installCancelled', { name: operation.targetFolder }));
           const source = downloadsWorkspaceItemsRef.current.find(
             (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
           );
@@ -1940,7 +1990,9 @@ export const App = () => {
             });
           }
         } else {
-          setMessage(operation.errorMessage || `Could not install ${operation.targetFolder}.`);
+          setMessage(operation.errorMessage || t('app.message.installFailed', {
+            name: operation.targetFolder
+          }));
           const source = downloadsWorkspaceItemsRef.current.find(
             (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
           );
@@ -2170,18 +2222,22 @@ export const App = () => {
   );
   const windowTitle = useMemo(() => {
     if (isBuildSettingsWindow) {
-      return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;
+      return t('titlebar.buildSettings', {
+        name: selectedProject?.name ?? (buildSettingsInitialName || t('titlebar.fallbackBuild'))
+      });
     }
 
     if (isModDetailsWindow) {
-      return modDetailsInitialName || 'Details';
+      return modDetailsInitialName || t('app.ui.details');
     }
 
     if (isFilePreviewWindow) {
-      return `Preview · ${filePreviewInitialName || 'File'}`;
+      return t('titlebar.preview', {
+        name: filePreviewInitialName || t('titlebar.fallbackFile')
+      });
     }
 
-    return isSettingsWindow ? 'Settings' : 'Fluxora';
+    return isSettingsWindow ? t('titlebar.settings') : t('titlebar.appName');
   }, [
     buildSettingsInitialName,
     filePreviewInitialName,
@@ -2190,7 +2246,8 @@ export const App = () => {
     isModDetailsWindow,
     isSettingsWindow,
     modDetailsInitialName,
-    selectedProject?.name
+    selectedProject?.name,
+    t
   ]);
 
   const deferredSearchText = useDeferredValue(searchText);
@@ -2302,14 +2359,14 @@ export const App = () => {
   );
   const aiVoiceBuildTerms = useMemo(() => {
     return measureListPerformanceStage('derive:ai-voice-mod-terms', () => {
-      const selectedName = selectedModItem?.isMod ? modItemTitle(selectedModItem) : '';
+      const selectedName = selectedModItem?.isMod ? modItemTitle(selectedModItem, appLocale) : '';
       const loadedNames = installedMods.map((mod) => mod.name);
       const workspaceNames = modsWorkspace.items
         .filter((item) => item.isMod)
-        .map(modItemTitle);
+        .map((item) => modItemTitle(item, appLocale));
       return [selectedName, selectedProject?.name ?? '', ...loadedNames, ...workspaceNames];
     });
-  }, [installedMods, modsWorkspace.items, selectedModItem, selectedProject?.name]);
+  }, [appLocale, installedMods, modsWorkspace.items, selectedModItem, selectedProject?.name]);
 
   const selectedModDeletionItems = useMemo(
     () =>
@@ -2609,9 +2666,13 @@ export const App = () => {
   const selectedProjectLibraryStats = useMemo(
     () =>
       selectedProject
-        ? buildProjectLibraryStats(selectedProject, selectedProjectRuntimeSummary)
+        ? buildProjectLibraryStats(
+            selectedProject,
+            selectedProjectRuntimeSummary,
+            bridgeStatus?.language
+          )
         : null,
-    [selectedProject, selectedProjectRuntimeSummary]
+    [bridgeStatus?.language, selectedProject, selectedProjectRuntimeSummary]
   );
 
   useEffect(() => {
@@ -2801,9 +2862,13 @@ export const App = () => {
   const installFomodEvaluation = useMemo(
     () =>
       installDialog?.fomodInstaller
-        ? evaluateFomodWizard(installDialog.fomodInstaller, installDialog.selectedFomodOptionIds)
+        ? evaluateFomodWizard(
+            installDialog.fomodInstaller,
+            installDialog.selectedFomodOptionIds,
+            appLocale
+          )
         : null,
-    [installDialog?.fomodInstaller, installDialog?.selectedFomodOptionIds]
+    [appLocale, installDialog?.fomodInstaller, installDialog?.selectedFomodOptionIds]
   );
 
   const installExistingModName = useMemo(
@@ -2815,8 +2880,8 @@ export const App = () => {
   );
 
   const pluginCapabilities = useMemo(
-    () => pluginCapabilityView(selectedProject, bridgeStatus),
-    [bridgeStatus, selectedProject]
+    () => pluginCapabilityView(selectedProject, bridgeStatus, appLocale),
+    [appLocale, bridgeStatus, selectedProject]
   );
   const showPluginMissingMastersStatus = useMemo(
     () => isSkyrimMissingMasterStatusProject(selectedProject),
@@ -2835,7 +2900,7 @@ export const App = () => {
 
         modsWorkspace.items.forEach((item) => {
           if (item.isMod && !item.isEnabled) {
-            addSourceModKey(modItemTitle(item));
+            addSourceModKey(modItemTitle(item, appLocale));
           }
         });
         installedMods.forEach((mod) => {
@@ -2938,6 +3003,7 @@ export const App = () => {
           modsWorkspace.items,
           {
             selectedItem: selectedModItem,
+            language: bridgeStatus?.language,
             collapsedSeparatorOrderIds: modsWorkspace.collapsedSeparatorOrderIds,
             updateResult: currentModUpdateResult,
             conflictMarkerReadyByOrderId
@@ -2948,6 +3014,7 @@ export const App = () => {
     [
       conflictMarkerReadyByOrderId,
       currentModUpdateResult,
+      bridgeStatus?.language,
       modsWorkspace.collapsedSeparatorOrderIds,
       modsWorkspace.items,
       selectedModItem
@@ -3008,8 +3075,8 @@ export const App = () => {
   );
 
   const downloadCapabilities = useMemo(
-    () => downloadCapabilityView(selectedProject, bridgeStatus),
-    [bridgeStatus, selectedProject]
+    () => downloadCapabilityView(selectedProject, bridgeStatus, appLocale),
+    [appLocale, bridgeStatus, selectedProject]
   );
   inboundNxmReadinessRef.current = {
     bridgeReady: Boolean(bridgeStatus?.ready),
@@ -3017,18 +3084,18 @@ export const App = () => {
   };
 
   const profilesCapabilities = useMemo(
-    () => profilesCapabilityView(selectedProject, bridgeStatus),
-    [bridgeStatus, selectedProject]
+    () => profilesCapabilityView(selectedProject, bridgeStatus, appLocale),
+    [appLocale, bridgeStatus, selectedProject]
   );
 
   const executableCapabilities = useMemo(
-    () => executablesCapabilityView(selectedProject, bridgeStatus),
-    [bridgeStatus, selectedProject]
+    () => executablesCapabilityView(selectedProject, bridgeStatus, appLocale),
+    [appLocale, bridgeStatus, selectedProject]
   );
 
   const buildHeaderCapabilities = useMemo(
-    () => buildHeaderCapabilityView(bridgeStatus),
-    [bridgeStatus]
+    () => buildHeaderCapabilityView(bridgeStatus, appLocale),
+    [appLocale, bridgeStatus]
   );
 
   const grassCacheModEntries = useMemo(
@@ -3040,8 +3107,13 @@ export const App = () => {
   );
 
   const grassCacheAction = useMemo(
-    () => ngioGrassCacheActionView(selectedProject, grassCacheModEntries, bridgeStatus),
-    [bridgeStatus, grassCacheModEntries, selectedProject]
+    () => ngioGrassCacheActionView(
+      selectedProject,
+      grassCacheModEntries,
+      bridgeStatus,
+      appLocale
+    ),
+    [appLocale, bridgeStatus, grassCacheModEntries, selectedProject]
   );
 
   const settingsCapabilities = useMemo(
@@ -3150,8 +3222,8 @@ export const App = () => {
   }, [effectiveFileTreeRows, effectiveFileTreeScrollTop]);
 
   const activeLabel = useMemo(
-    () => navItems.find((item) => item.id === activeRoute)?.label ?? 'Home',
-    [activeRoute]
+    () => navItems.find((item) => item.id === activeRoute)?.label ?? t('app.nav.home'),
+    [activeRoute, navItems, t]
   );
 
   const loadCatalog = async (options: LoadCatalogOptions = {}) => {
@@ -3419,7 +3491,7 @@ export const App = () => {
     }
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.mods = loadSequence;
-      setModsBusyLabel('Loading mods');
+      setModsBusyLabel(t('app.busy.loadingMods'));
       setMessage(null);
     }
 
@@ -3838,7 +3910,7 @@ export const App = () => {
       return true;
     }
 
-    setMessage('Saving order...');
+    setMessage(t('app.message.savingOrder'));
     const results = await Promise.allSettled(pendingSaves);
     return results.every((result) => result.status === 'fulfilled');
   };
@@ -3923,7 +3995,11 @@ export const App = () => {
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
         dispatchModsWorkspace({ type: 'item-enabled-set', orderId, isEnabled: previousEnabled });
         updateInstalledModEnabled(item.id, previousEnabled);
-        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${modItemTitle(item)}: ${errorMessage(error)}`);
+        setMessage(t('app.message.toggleModFailed', {
+          action: t(isEnabled ? 'app.ui.enable' : 'app.ui.disable').toLocaleLowerCase(appLocale),
+          name: modItemTitle(item, appLocale),
+          error: errorMessage(error)
+        }));
       }
     } finally {
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
@@ -3986,7 +4062,10 @@ export const App = () => {
       if (modBulkEnableSequenceRef.current === sequence) {
         dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
         setInstalledMods(previousInstalledMods);
-        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all mods: ${errorMessage(error)}`);
+        setMessage(t('app.message.toggleAllModsFailed', {
+          action: t(isEnabled ? 'app.ui.enable' : 'app.ui.disable').toLocaleLowerCase(appLocale),
+          error: errorMessage(error)
+        }));
         await loadModsWorkspace(project, backgroundReorderLoadOptions);
       }
     }
@@ -4076,7 +4155,10 @@ export const App = () => {
 
         if (shouldRevert) {
           dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
-          setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all plugins: ${errorMessage(error)}`);
+          setMessage(t('app.message.toggleAllPluginsFailed', {
+            action: t(isEnabled ? 'app.ui.enable' : 'app.ui.disable').toLocaleLowerCase(appLocale),
+            error: errorMessage(error)
+          }));
           await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
       });
@@ -4167,9 +4249,13 @@ export const App = () => {
         if (shouldRevert) {
           dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
           const targetLabel =
-            targetItems.length === 1 ? pluginItemTitle(targetItems[0]) : 'selected plugins';
+            targetItems.length === 1 ? pluginItemTitle(targetItems[0], appLocale) : t('app.ui.selectedPlugins');
           setMessage(
-            `Could not ${isEnabled ? 'enable' : 'disable'} ${targetLabel}: ${errorMessage(error)}`
+            t('app.message.togglePluginFailed', {
+              action: t(isEnabled ? 'app.ui.enable' : 'app.ui.disable').toLocaleLowerCase(appLocale),
+              name: targetLabel,
+              error: errorMessage(error)
+            })
           );
           await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
         }
@@ -4256,7 +4342,7 @@ export const App = () => {
       )
       .catch((error) => {
         const message = errorMessage(error);
-        setMessage(`Could not save mod order: ${message}`);
+        setMessage(t('app.message.saveModOrderFailed', { error: message }));
         if (modOrderSaveSequenceRef.current === sequence) {
           modOrderClientRevisionRef.current += 1;
           dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
@@ -4366,7 +4452,7 @@ export const App = () => {
       )
       .catch((error) => {
         const message = errorMessage(error);
-        setMessage(`Could not save mod order: ${message}`);
+        setMessage(t('app.message.saveModOrderFailed', { error: message }));
         if (modOrderSaveSequenceRef.current === sequence) {
           modOrderClientRevisionRef.current += 1;
           dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
@@ -4408,11 +4494,11 @@ export const App = () => {
 
   const validateModSeparatorTitle = (title: string) => {
     if (!title) {
-      return 'Введите название разделителя.';
+      return t('app.message.separatorNameRequired');
     }
 
     if (title.length > MOD_CREATION_NAME_MAX_LENGTH) {
-      return `Название должно быть не длиннее ${MOD_CREATION_NAME_MAX_LENGTH} символов.`;
+      return t('app.message.separatorNameTooLong', { count: MOD_CREATION_NAME_MAX_LENGTH });
     }
 
     return '';
@@ -4465,7 +4551,7 @@ export const App = () => {
         ...backgroundReorderLoadOptions,
         resetScroll: false
       });
-      setMessage(`Could not create separator: ${errorMessage(error)}`);
+      setMessage(t('app.message.createSeparatorFailed', { error: errorMessage(error) }));
     } finally {
       setIsCreatingModSeparator(false);
     }
@@ -4487,7 +4573,7 @@ export const App = () => {
 
     setDeletionConfirmation({
       kind: 'separator',
-      itemName: modItemTitle(item),
+      itemName: modItemTitle(item, appLocale),
       itemCount: separatorOrderIds.length,
       onConfirm: () => deleteModSeparators(separatorOrderIds)
     });
@@ -4528,7 +4614,7 @@ export const App = () => {
       await loadModsWorkspace(project, backgroundReorderLoadOptions);
     } catch (error) {
       await loadModsWorkspace(project, backgroundReorderLoadOptions);
-      setMessage(`Could not delete selected separators: ${errorMessage(error)}`);
+      setMessage(t('app.message.deleteSeparatorsFailed', { error: errorMessage(error) }));
     } finally {
       setIsDeletingModSeparators(false);
     }
@@ -4568,7 +4654,7 @@ export const App = () => {
 
     const project = selectedProject;
     const profileName = modWorkspaceProfileName;
-    await runModMutation('Creating empty mod', (operationId) =>
+    await runModMutation(t('app.busy.creatingEmptyMod'), (operationId) =>
       workspaceOrderMutationGate.enqueue(
         async () =>
           window.fluxora.mods.createEmpty(project.projectDirectory, modName, {
@@ -4596,7 +4682,7 @@ export const App = () => {
         : modCreationDialog.name.trim();
     const validationMessage =
       modCreationDialog.kind === 'empty-mod'
-        ? validateInstallModName(name)
+        ? validateInstallModName(name, appLocale)
         : validateModSeparatorTitle(name);
 
     if (validationMessage) {
@@ -4637,7 +4723,9 @@ export const App = () => {
     }
 
     setDeletionConfirmation(null);
-    setMessage(`Нельзя удалить «${modItemTitle(activeTarget)}»: установка выполняется.`);
+      setMessage(t('app.message.deleteInstallingMod', {
+        name: modItemTitle(activeTarget, appLocale)
+      }));
     return true;
   };
 
@@ -4654,7 +4742,7 @@ export const App = () => {
       return;
     }
 
-    const deletedModTitle = modItemTitle(targets[0] ?? item);
+    const deletedModTitle = modItemTitle(targets[0] ?? item, appLocale);
     setDeletionConfirmation({
       kind: 'mod',
       itemName: deletedModTitle,
@@ -4675,7 +4763,7 @@ export const App = () => {
     const profileName = modWorkspaceProfileName;
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
-    const deletedModTitle = modItemTitle(item);
+    const deletedModTitle = modItemTitle(item, appLocale);
 
     const operationId = createRendererOperationId('mods_delete');
     setMessage(null);
@@ -4693,7 +4781,10 @@ export const App = () => {
       await refreshAfterModDeletion(project);
     } catch (error) {
       restoreDeletedModItems(previousItems, previousInstalledMods);
-      setMessage(`Could not delete ${deletedModTitle}: ${errorMessage(error)}`);
+      setMessage(t('app.message.deleteModFailed', {
+        name: deletedModTitle,
+        error: errorMessage(error)
+      }));
     }
   };
 
@@ -4736,7 +4827,7 @@ export const App = () => {
       await refreshAfterModDeletion(project);
     } catch (error) {
       restoreDeletedModItems(previousItems, previousInstalledMods);
-      setMessage(`Could not delete mods: ${errorMessage(error)}`);
+      setMessage(t('app.message.deleteModsFailed', { error: errorMessage(error) }));
     }
   };
 
@@ -4747,20 +4838,20 @@ export const App = () => {
 
     const result = await window.fluxora.shell.openPath(item.id);
     if (!result.ok) {
-      setMessage(result.message ?? 'Mod folder could not be opened.');
+      setMessage(result.message ?? t('app.message.modFolderOpenFailed'));
     }
   };
 
   const openInstalledModSource = async (item: FluxoraModOrderItem) => {
     const sourcePageUrl = resolveModSourcePageUrl(item);
     if (!sourcePageUrl) {
-      setMessage(`Страница источника недоступна для ${modItemTitle(item)}.`);
+      setMessage(t('app.message.sourceUnavailable', { name: modItemTitle(item, appLocale) }));
       return;
     }
 
     const result = await window.fluxora.links.openExternal(sourcePageUrl);
     if (!result.ok) {
-      setMessage('Не удалось открыть страницу источника в браузере.');
+      setMessage(t('app.message.sourceOpenFailed'));
     }
   };
 
@@ -4772,13 +4863,13 @@ export const App = () => {
     const path = item.path?.trim();
 
     if (!path) {
-      setMessage(`Plugin location is not reported for ${pluginItemTitle(item)}.`);
+      setMessage(t('app.message.pluginLocationMissing', { name: pluginItemTitle(item, appLocale) }));
       return;
     }
 
     const result = await window.fluxora.shell.showItemInFolder(path);
     if (!result.ok) {
-      setMessage(result.message ?? 'Plugin location could not be opened.');
+      setMessage(result.message ?? t('app.message.pluginLocationOpenFailed'));
     }
   };
 
@@ -4787,7 +4878,7 @@ export const App = () => {
     project: FluxoraProject | null = selectedProject
   ): Promise<FluxoraModDetailsContent> => {
     if (!project || !item.isMod) {
-      return Promise.reject(new Error('Mod details require an installed mod and an open build.'));
+      return Promise.reject(new Error(t('app.error.modDetailsRequiresBuild')));
     }
 
     const cacheKey = modDetailsContentCacheKey(project.projectDirectory, item.id);
@@ -4830,7 +4921,7 @@ export const App = () => {
       await window.fluxora.windowControls.openModDetails(
         selectedProject.configPath,
         item.id,
-        modItemTitle(item),
+        modItemTitle(item, appLocale),
         modWorkspaceProfileName,
         bootstrapKey,
         bootstrap
@@ -4843,13 +4934,13 @@ export const App = () => {
   const openOverwriteFolder = async () => {
     const path = selectedProject?.paths?.overwriteDirectory;
     if (!path) {
-      setMessage('Overwrite folder is not reported for this build.');
+      setMessage(t('app.message.overwriteMissing'));
       return;
     }
 
     const result = await window.fluxora.shell.openPath(path);
     if (!result.ok) {
-      setMessage(result.message ?? 'Overwrite folder could not be opened.');
+      setMessage(result.message ?? t('app.message.overwriteOpenFailed'));
     }
   };
 
@@ -4860,11 +4951,11 @@ export const App = () => {
 
     const path = selectedProject.paths?.overwriteDirectory;
     if (!path) {
-      setMessage('Overwrite folder is not reported for this build.');
+      setMessage(t('app.message.overwriteMissing'));
       return;
     }
 
-    if (!window.confirm(`Очистить папку перезаписи "${path}"?`)) {
+    if (!window.confirm(t('app.message.overwriteClearConfirm', { path }))) {
       return;
     }
 
@@ -4875,7 +4966,7 @@ export const App = () => {
       buildName: selectedProject.name,
       progress: 6
     });
-    setModsBusyLabel('Очищаем override');
+    setModsBusyLabel(t('app.busy.clearingOverwrite'));
     setMessage(null);
 
     try {
@@ -4916,14 +5007,16 @@ export const App = () => {
     const project = selectedProject;
     const operationId = createRendererOperationId('mods_check_updates_manual');
     setMessage(null);
-    setManualModUpdateSplash(createModUpdateCheckSplashState(operationId));
+    setManualModUpdateSplash(
+      createModUpdateCheckSplashState(operationId, bridgeStatus?.language ?? 'en-US')
+    );
 
     try {
       const result = await modUpdateCoordinator.checkManual(
         project.projectDirectory,
         operationId
       );
-      const transientMessage = modUpdateTransientMessage(result);
+      const transientMessage = modUpdateTransientMessage(result, bridgeStatus?.language);
       if (transientMessage) {
         setManualModUpdateNotice(transientMessage);
         if (manualModUpdateNoticeTimerRef.current !== null) {
@@ -5078,7 +5171,7 @@ export const App = () => {
       workspaceStoreBusyLoadSequenceRef.current.plugins = null;
       setPluginsBusyLabel(null);
     }
-    const capabilities = pluginCapabilityView(project, bridgeStatus);
+    const capabilities = pluginCapabilityView(project, bridgeStatus, appLocale);
     if (!project || !bridgeStatus?.ready) {
       return false;
     }
@@ -5112,7 +5205,7 @@ export const App = () => {
     }
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.plugins = loadSequence;
-      setPluginsBusyLabel('Loading plugins');
+      setPluginsBusyLabel(t('app.busy.loadingPlugins'));
       setMessage(null);
     }
 
@@ -5234,7 +5327,7 @@ export const App = () => {
     }
     pendingWorkspaceFullResyncRef.current = null;
     void performWorkspaceFullResync(pending).catch((error) => {
-      setMessage(`Workspace resync failed: ${errorMessage(error)}`);
+      setMessage(t('app.message.workspaceResyncFailed', { error: errorMessage(error) }));
     });
   };
   flushWorkspaceFullResyncRef.current = flushWorkspaceFullResync;
@@ -5366,7 +5459,11 @@ export const App = () => {
             orderId,
             isEnabled: previousEnabled
           });
-          setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${pluginItemTitle(item)}: ${errorMessage(error)}`);
+        setMessage(t('app.message.togglePluginFailed', {
+          action: t(isEnabled ? 'app.ui.enable' : 'app.ui.disable').toLocaleLowerCase(appLocale),
+          name: pluginItemTitle(item, appLocale),
+          error: errorMessage(error)
+        }));
         }
       });
     trackPluginOrderSave(save);
@@ -5428,7 +5525,7 @@ export const App = () => {
       )
       .catch(async (error) => {
         const message = errorMessage(error);
-        setMessage(`Could not save plugin order: ${message}`);
+        setMessage(t('app.message.savePluginOrderFailed', { error: message }));
         if (pluginOrderSaveSequenceRef.current === sequence) {
           dispatchPluginsWorkspace({
             type: 'items-loaded',
@@ -5496,7 +5593,7 @@ export const App = () => {
       )
       .catch(async (error) => {
         const message = errorMessage(error);
-        setMessage(`Could not save plugin order: ${message}`);
+        setMessage(t('app.message.savePluginOrderFailed', { error: message }));
         if (pluginOrderSaveSequenceRef.current === sequence) {
           dispatchPluginsWorkspace({
             type: 'items-loaded',
@@ -5711,7 +5808,8 @@ export const App = () => {
           new Set(session.sourceOrderIds),
           targetOrderId,
           placement,
-          pluginsWorkspace.collapsedSeparatorOrderIds
+          pluginsWorkspace.collapsedSeparatorOrderIds,
+          appLocale
         );
         reorderedItems = assessment.items;
         blockedReason = assessment.blockedReason;
@@ -6336,7 +6434,7 @@ export const App = () => {
 
     setDeletionConfirmation({
       kind: 'separator',
-      itemName: pluginItemTitle(item),
+      itemName: pluginItemTitle(item, appLocale),
       itemCount: separatorOrderIds.length,
       onConfirm: () => deletePluginSeparators(separatorOrderIds)
     });
@@ -6378,7 +6476,7 @@ export const App = () => {
       await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
     } catch (error) {
       await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
-      setMessage(`Could not delete selected plugin separators: ${errorMessage(error)}`);
+      setMessage(t('app.message.deletePluginSeparatorsFailed', { error: errorMessage(error) }));
     } finally {
       setIsDeletingPluginSeparators(false);
     }
@@ -6411,7 +6509,7 @@ export const App = () => {
       workspaceStoreBusyLoadSequenceRef.current.profiles = null;
       setProfilesBusyLabel(null);
     }
-    const capabilities = profilesCapabilityView(project, bridgeStatus);
+    const capabilities = profilesCapabilityView(project, bridgeStatus, appLocale);
     if (!project || !bridgeStatus?.ready) {
       return null;
     }
@@ -6432,7 +6530,7 @@ export const App = () => {
     dispatchProfilesWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.profiles = loadSequence;
-      setProfilesBusyLabel('Loading profiles');
+      setProfilesBusyLabel(t('app.busy.loadingProfiles'));
       setMessage(null);
     }
 
@@ -6509,11 +6607,11 @@ export const App = () => {
 
     const profileName = profileDraftName.trim();
     if (!profileName) {
-      setMessage('Enter a profile name first.');
+      setMessage(t('app.message.profileNameRequired'));
       return;
     }
 
-    await runProfileMutation('Created profile', (operationId) =>
+    await runProfileMutation(t('app.busy.profileCreated'), (operationId) =>
       window.fluxora.profiles.create(
         selectedProject.projectDirectory,
         profileName,
@@ -6535,11 +6633,11 @@ export const App = () => {
         ? profileDraftName.trim()
         : `${selectedProjectProfileName} Copy`;
     if (!profileName) {
-      setMessage('Enter a profile name first.');
+      setMessage(t('app.message.profileNameRequired'));
       return;
     }
 
-    await runProfileMutation('Cloned profile', (operationId) =>
+    await runProfileMutation(t('app.busy.profileCloned'), (operationId) =>
       window.fluxora.profiles.clone(
         selectedProject.projectDirectory,
         selectedProjectProfileName,
@@ -6557,19 +6655,19 @@ export const App = () => {
     }
 
     if (isDefaultProfileName(selectedProjectProfileName, selectedProjectDefaultProfileName)) {
-      setMessage('The default profile cannot be renamed.');
+      setMessage(t('app.message.defaultProfileRename'));
       return;
     }
 
     const profileName = profileDraftName.trim();
     if (!profileName || profileName === selectedProjectProfileName) {
       setMessage(
-        profileName ? 'Enter a different profile name.' : 'Enter a profile name first.'
+        profileName ? t('app.message.profileNameDifferent') : t('app.message.profileNameRequired')
       );
       return;
     }
 
-    await runProfileMutation('Renamed profile', (operationId) =>
+    await runProfileMutation(t('app.busy.profileRenamed'), (operationId) =>
       window.fluxora.profiles.rename(
         selectedProject.projectDirectory,
         selectedProjectProfileName,
@@ -6587,17 +6685,17 @@ export const App = () => {
     }
 
     if (isDefaultProfileName(selectedProjectProfileName, selectedProjectDefaultProfileName)) {
-      setMessage('The default profile cannot be deleted.');
+      setMessage(t('app.message.defaultProfileDelete'));
       return;
     }
 
     if (profileDeleteArmedName !== selectedProjectProfileName) {
       setProfileDeleteArmedName(selectedProjectProfileName);
-      setMessage(`Click delete again to remove profile "${selectedProjectProfileName}".`);
+      setMessage(t('app.message.profileDeleteAgain', { name: selectedProjectProfileName }));
       return;
     }
 
-    await runProfileMutation('Deleted profile', (operationId) =>
+    await runProfileMutation(t('app.busy.profileDeleted'), (operationId) =>
       window.fluxora.profiles.delete(
         selectedProject.projectDirectory,
         selectedProjectProfileName,
@@ -6614,13 +6712,13 @@ export const App = () => {
 
     const path = selectedProject.paths?.profilesDirectory;
     if (!path) {
-      setMessage('Profiles directory is not reported for this build.');
+      setMessage(t('app.message.profilesDirectoryMissing'));
       return;
     }
 
     const result = await window.fluxora.shell.openPath(path);
     if (!result.ok) {
-      setMessage(result.message ?? 'Profiles directory could not be opened.');
+      setMessage(result.message ?? t('app.message.profilesDirectoryOpenFailed'));
     }
   };
 
@@ -6636,7 +6734,7 @@ export const App = () => {
       workspaceStoreBusyLoadSequenceRef.current.executables = null;
       setExecutablesBusyLabel(null);
     }
-    const capabilities = executablesCapabilityView(project, bridgeStatus);
+    const capabilities = executablesCapabilityView(project, bridgeStatus, appLocale);
     if (!project || !bridgeStatus?.ready) {
       return null;
     }
@@ -6654,7 +6752,7 @@ export const App = () => {
     dispatchExecutablesWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.executables = loadSequence;
-      setExecutablesBusyLabel('Loading executables');
+      setExecutablesBusyLabel(t('app.busy.loadingExecutables'));
       setMessage(null);
     }
 
@@ -6716,7 +6814,7 @@ export const App = () => {
       if (preferred) {
         dispatchExecutablesWorkspace({ type: 'selected', id: preferred.id });
       }
-      setMessage('Executables saved.');
+      setMessage(t('app.message.executablesSaved'));
       return saved;
     } catch (error) {
       setMessage(errorMessage(error));
@@ -6732,7 +6830,7 @@ export const App = () => {
     }
 
     const picked = await window.fluxora.dialogs.pickExecutable(
-      'Add executable',
+      t('app.dialog.addExecutable'),
       selectedProject.gamePath
     );
     if (picked.canceled || !picked.path) {
@@ -6740,7 +6838,7 @@ export const App = () => {
     }
 
     const fileName = fileNameFromPath(picked.path);
-    const displayName = fileName.replace(/\.[^.]+$/, '') || 'Executable';
+    const displayName = fileName.replace(/\.[^.]+$/, '') || t('app.ui.executable');
     await saveExecutableList(
       [
         ...executablesWorkspace.items,
@@ -6753,7 +6851,7 @@ export const App = () => {
           iconPath: ''
         }
       ],
-      'Adding executable',
+      t('app.busy.addingExecutable'),
       picked.path
     );
   };
@@ -6765,13 +6863,15 @@ export const App = () => {
 
     if (executableDeleteArmedId !== selectedExecutableItem.id) {
       setExecutableDeleteArmedId(selectedExecutableItem.id);
-      setMessage(`Click delete again to remove executable "${executableTitle(selectedExecutableItem)}".`);
+      setMessage(t('app.message.executableDeleteAgain', {
+        name: executableTitle(selectedExecutableItem, appLocale)
+      }));
       return;
     }
 
     await saveExecutableList(
       executablesWorkspace.items.filter((entry) => entry.id !== selectedExecutableItem.id),
-      'Deleting executable'
+      t('app.busy.deletingExecutable')
     );
   };
 
@@ -6789,7 +6889,7 @@ export const App = () => {
             }
           : entry
       ),
-      'Saving executable',
+      t('app.busy.savingExecutable'),
       selectedExecutableItem.id
     );
   };
@@ -6800,7 +6900,7 @@ export const App = () => {
     }
 
     const picked = await window.fluxora.dialogs.pickExecutable(
-      'Select executable',
+      t('app.dialog.selectExecutable'),
       executableDraft.executablePath || selectedProject?.gamePath
     );
     if (picked.canceled || !picked.path) {
@@ -6825,7 +6925,7 @@ export const App = () => {
     }
 
     const picked = await window.fluxora.dialogs.pickFolder(
-      'Select working directory',
+      t('app.dialog.selectWorkingDirectory'),
       executableDraft.workingDirectory || selectedProject?.gamePath
     );
     if (picked.canceled || !picked.path) {
@@ -6844,7 +6944,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('executables_icon');
-    setExecutablesBusyLabel('Resolving icon');
+    setExecutablesBusyLabel(t('app.busy.resolvingIcon'));
 
     try {
       const result = await window.fluxora.executables.getIcon(executableDraft.executablePath, {
@@ -6853,7 +6953,7 @@ export const App = () => {
       setExecutableDraft((current) =>
         current ? { ...current, iconPath: result.iconPath } : current
       );
-      setMessage(result.iconPath ? 'Executable icon resolved.' : 'No icon was resolved.');
+      setMessage(result.iconPath ? t('app.message.iconResolved') : t('app.message.iconNotResolved'));
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -6870,23 +6970,24 @@ export const App = () => {
     const launchStartedAtMs = performance.now();
     const managedDisplay = managedExecutableDisplay(
       selectedExecutableItem.managedToolKind,
-      selectedProject.name
+      selectedProject.name,
+      appLocale
     );
     const isManagedBodySlide = selectedExecutableItem.managedToolKind === 'bodySlide';
     let managedSessionId: string | undefined;
     let managedOutcome: 'completed' | 'failed' | 'watcher-error' = 'failed';
     let launchedResult: FluxoraExecutableLaunchResult | null = null;
     let trackedProcessLabel = selectedExecutableItem.displayName;
-    setExecutablesBusyLabel(managedDisplay?.preparationLabel ?? 'Launching executable');
+    setExecutablesBusyLabel(managedDisplay?.preparationLabel ?? t('app.message.launchingExecutable'));
     setExecutableLaunchResult(null);
     setLaunchSplash({
       operationId,
       appName: selectedExecutableItem.displayName,
       buildName: selectedProject.name,
-      detail: managedDisplay?.preparationLabel ?? 'Процесс запускается',
+      detail: managedDisplay?.preparationLabel ?? t('app.message.processStarting'),
       state: 'starting',
       subtitle: selectedProject.name,
-      title: managedDisplay?.preparationLabel ?? 'Процесс запускается'
+      title: managedDisplay?.preparationLabel ?? t('app.message.processStarting')
     });
     setMessage(null);
 
@@ -6900,14 +7001,14 @@ export const App = () => {
       launchedResult = result;
       managedSessionId = result.managedSessionId;
       if (managedSessionId) {
-        setExecutablesBusyLabel('Запуск через VFS');
+        setExecutablesBusyLabel(t('app.busy.vfsLaunch'));
         setLaunchSplash((current) =>
           current?.operationId === operationId
             ? {
                 ...current,
-                detail: 'Запуск через VFS',
+                detail: t('app.operation.vfsLaunch'),
                 subtitle: result.outputMod?.displayName ?? selectedProject.name,
-                title: 'Запуск через VFS'
+                title: t('app.operation.vfsLaunch')
               }
             : current
         );
@@ -6941,8 +7042,8 @@ export const App = () => {
       if (ready.state !== 'running') {
         const reason =
           ready.state === 'timeout'
-            ? `Fluxora не обнаружила ${processName} до истечения времени запуска.`
-            : `${processName} завершился до того, как Fluxora смогла отследить процесс.`;
+            ? t('app.message.processLaunchTimeout', { name: processName })
+            : t('app.message.processExitedBeforeTracking', { name: processName });
         setMessage(reason);
         return;
       }
@@ -6979,39 +7080,39 @@ export const App = () => {
               ? {
                   ...current,
                   appName: active.label,
-                  detail: `Процесс запущен — ${active.label}`,
+                  detail: t('app.message.processLaunched', { name: active.label }),
                   state: 'running',
-                  subtitle: 'Закройте процесс, чтобы продолжить работу в Mod Manager.',
-                  title: `Процесс запущен — ${active.label}`
+                  subtitle: t('app.operation.closeProcess'),
+                  title: t('app.message.processLaunched', { name: active.label })
                 }
               : current
           );
           setMessage(
-            `Процесс запущен — ${active.label}. Закройте процесс, чтобы продолжить работу в Mod Manager.`
+            `${active.label}. ${t('app.operation.closeProcess')}`
           );
         },
         operationId,
         waitForExit: window.fluxora.processes.waitForExit
       });
       managedOutcome = 'completed';
-      setMessage(`${trackedProcessLabel} закрыт. Можно продолжить работу в Mod Manager.`);
+      setMessage(t('app.message.processClosedContinue', { name: trackedProcessLabel }));
     } catch (error) {
       managedOutcome = managedSessionId ? 'watcher-error' : 'failed';
-      setMessage(isManagedBodySlide ? bodySlideLaunchErrorMessage(error) : errorMessage(error));
+      setMessage(isManagedBodySlide ? bodySlideLaunchErrorMessage(error, appLocale) : errorMessage(error));
     } finally {
       if (managedSessionId) {
-        setExecutablesBusyLabel('Обновление output');
+        setExecutablesBusyLabel(t('app.busy.updatingOutput'));
         setLaunchSplash((current) =>
           current?.operationId === operationId
             ? {
                 ...current,
-                detail: 'Обновление output',
+                detail: t('app.operation.updatingOutput'),
                 state: 'starting',
                 subtitle:
                   launchedResult?.outputMod?.displayName ??
                   managedDisplay?.outputModName ??
                   selectedProject.name,
-                title: 'Обновление output'
+                title: t('app.operation.updatingOutput')
               }
             : current
         );
@@ -7024,24 +7125,25 @@ export const App = () => {
           if (completion.deferred) {
             setMessage(
               completion.warnings[0] ??
-                `${managedDisplay?.toolName ?? trackedProcessLabel} всё ещё работает; обновление output завершится при следующем запуске.`
+                t('app.operation.processStillRunning', {
+                  name: managedDisplay?.toolName ?? trackedProcessLabel
+                })
             );
           } else if (managedOutcome === 'completed') {
             const warning = launchedResult?.warnings?.[0] ?? completion.warnings[0];
             setMessage(
               warning
-                ? `${trackedProcessLabel} закрыт. ${warning}`
-                : `${completion.outputMod.displayName} обновлён.`
+                ? t('app.message.processClosedWarning', { name: trackedProcessLabel, warning })
+                : t('app.message.outputUpdated', { name: completion.outputMod.displayName })
             );
           }
         } catch (completionError) {
-          setMessage(
-            `${managedDisplay?.toolName ?? trackedProcessLabel} завершён, но output не удалось обновить: ${
-              isManagedBodySlide
-                ? bodySlideLaunchErrorMessage(completionError)
-                : errorMessage(completionError)
-            }`
-          );
+          setMessage(t('app.message.outputUpdateFailed', {
+            name: managedDisplay?.toolName ?? trackedProcessLabel,
+            error: isManagedBodySlide
+              ? bodySlideLaunchErrorMessage(completionError, appLocale)
+              : errorMessage(completionError)
+          }));
         }
       }
       if (launchedResult) {
@@ -7067,7 +7169,7 @@ export const App = () => {
     }
 
     if (!grassCacheAction.available) {
-      setMessage(grassCacheAction.reason || 'NGIO grass cache generation is not available.');
+      setMessage(grassCacheAction.reason || t('app.message.grassUnavailable'));
       return;
     }
 
@@ -7088,8 +7190,8 @@ export const App = () => {
     beginOperationOverlay({
       operationId,
       kind: 'grass-cache',
-      title: 'Генерация кэша травы',
-      statusText: 'Подготавливаем No Grass In Objects',
+      title: t('app.operation.grassTitle'),
+      statusText: t('app.operation.grassPreparing'),
       currentItem: project.name,
       percent: null
     });
@@ -7103,11 +7205,13 @@ export const App = () => {
         },
         { operationId }
       );
-      const resultText = `Кэш травы создан: ${result.outputModName}`;
+      const resultText = t('app.message.grassCreated', { name: result.outputModName });
       finishOperationOverlay(operationId, resultText);
-      setMessage(
-        `${resultText}. Файлов: ${result.generatedFileCount}, запусков: ${result.launchCount}.`
-      );
+      setMessage(t('app.message.grassResult', {
+        result: resultText,
+        files: result.generatedFileCount,
+        launches: result.launchCount
+      }));
       await loadModsWorkspace(project, {
         resetScroll: false,
         showBusy: false,
@@ -7266,7 +7370,7 @@ export const App = () => {
     placementEdits?: FluxoraPlacementEditsV2
   ): Promise<FluxoraContentLayoutPreview> => {
     if (!project) {
-      throw new Error('Open a build before installing mods.');
+      throw new Error(t('app.error.openBuildBeforeInstall'));
     }
 
     return window.fluxora.downloads.analyzeContentLayout(
@@ -7446,7 +7550,7 @@ export const App = () => {
     const source: InstallSource = {
       kind: operation.sourceKind,
       sourcePath: operation.sourcePath,
-      displayName: sourceEntry ? downloadTitle(sourceEntry) : operation.targetFolder,
+      displayName: sourceEntry ? downloadTitle(sourceEntry, appLocale) : operation.targetFolder,
       fileName: sourceEntry?.fileName || fileNameFromPath(operation.sourcePath)
     };
     const placementPayload = ((): {
@@ -7507,7 +7611,7 @@ export const App = () => {
       }
     })();
 
-    setMessage('Проверьте сохранённые решения перед повторной установкой.');
+    setMessage(t('app.message.installReview'));
     setInstallDialog({
       phase: 'detecting',
       source,
@@ -7571,7 +7675,7 @@ export const App = () => {
     if (!pendingPlan || pendingPlan.operationId !== currentDialog.operationId) {
       restoreInstallDialog(currentDialog, {
         phase: 'error',
-        errorMessage: 'Installer preparation is unavailable.',
+        errorMessage: t('app.error.installerPreparationUnavailable'),
         isSubmitting: false
       });
       return null;
@@ -7654,7 +7758,7 @@ export const App = () => {
       workspaceStoreBusyLoadSequenceRef.current.downloads = null;
       setDownloadsBusyLabel(null);
     }
-    const capabilities = downloadCapabilityView(project, bridgeStatus);
+    const capabilities = downloadCapabilityView(project, bridgeStatus, appLocale);
     if (!project || !bridgeStatus?.ready) {
       return false;
     }
@@ -7671,7 +7775,7 @@ export const App = () => {
     dispatchDownloadsWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.downloads = loadSequence;
-      setDownloadsBusyLabel('Loading downloads');
+      setDownloadsBusyLabel(t('app.busy.loadingDownloads'));
       setMessage(null);
     }
 
@@ -7740,7 +7844,7 @@ export const App = () => {
       return;
     }
 
-    const currentName = normalizeInstallModName(modItemTitle(item));
+    const currentName = normalizeInstallModName(modItemTitle(item, appLocale));
     setItemRenameDialog({
       currentName,
       isSubmitting: false,
@@ -7794,8 +7898,8 @@ export const App = () => {
     const newName = normalizeInstallModName(request.name);
     const validationMessage =
       newName.length > request.maxNameLength
-        ? `The name must be ${request.maxNameLength} characters or fewer.`
-        : validateInstallModName(newName);
+        ? t('app.message.nameTooLong', { count: request.maxNameLength })
+        : validateInstallModName(newName, appLocale);
     const copy = itemRenameDialogCopy(bridgeStatus?.language, request.kind);
     if (validationMessage || newName === request.currentName) {
       setItemRenameDialog((current) =>
@@ -7942,7 +8046,7 @@ export const App = () => {
 
     showDownloadDropCue('importing');
     await runDownloadMutation(
-      paths.length === 1 ? 'Importing dropped archive' : `Importing ${paths.length} dropped archives`,
+      t('app.message.importingDropped', { count: paths.length }),
       async (operationId) => {
         let lastImported: FluxoraDownloadEntry | null = null;
         for (const sourcePath of paths) {
@@ -7955,11 +8059,7 @@ export const App = () => {
 
         if (lastImported) {
           dispatchDownloadsWorkspace({ type: 'selected', id: lastImported.id });
-          setMessage(
-            paths.length === 1
-              ? `Imported ${downloadTitle(lastImported)}`
-              : `Imported ${paths.length} archives`
-          );
+          setMessage(t('app.message.importedArchives', { count: paths.length }));
         }
       }
     );
@@ -8039,14 +8139,14 @@ export const App = () => {
     }
 
     const archivePath = picked.path;
-    await runDownloadMutation('Importing archive', async (operationId) => {
+    await runDownloadMutation(t('app.busy.importingArchive'), async (operationId) => {
       const imported = await window.fluxora.downloads.importFile(
         selectedProject.projectDirectory,
         archivePath,
         { operationId }
       );
       dispatchDownloadsWorkspace({ type: 'selected', id: imported.id });
-      setMessage(`Imported ${downloadTitle(imported)}`);
+      setMessage(t('app.message.importedArchive', { name: downloadTitle(imported, appLocale) }));
     });
   };
 
@@ -8078,14 +8178,14 @@ export const App = () => {
     }
 
     if (!entry.canInstall) {
-      setMessage('This download is not ready to install yet.');
+      setMessage(t('app.message.downloadNotInstallable'));
       return;
     }
 
     const source: InstallSource = {
       kind: 'download',
       sourcePath: downloadPath(entry),
-      displayName: downloadTitle(entry),
+      displayName: downloadTitle(entry, appLocale),
       fileName: entry.fileName || fileNameFromPath(downloadPath(entry))
     };
     await startInstallFlow(source, placement);
@@ -8113,13 +8213,13 @@ export const App = () => {
       return;
     }
 
-    const deletedDownloadTitle = downloadTitle(targets[0] ?? entry);
+    const deletedDownloadTitle = downloadTitle(targets[0] ?? entry, appLocale);
     setDeletionConfirmation({
       kind: 'download',
       itemName: deletedDownloadTitle,
       itemCount: targets.length,
       description:
-        'Архив будет удалён из глобальной библиотеки Downloads для всех сборок этой игры. Уже установленные моды останутся на месте.',
+        t('app.message.downloadDeleteDescription'),
       onConfirm: () => deleteDownloads(targets)
     });
   };
@@ -8130,18 +8230,18 @@ export const App = () => {
     }
 
     const project = selectedProject;
-    const deletedDownloadTitle = downloadTitle(entry);
+    const deletedDownloadTitle = downloadTitle(entry, appLocale);
 
     const operationId = createRendererOperationId('downloads_delete');
     beginOperationOverlay({
       operationId,
       kind: 'download-delete',
-      title: 'Удаляем файл',
-      statusText: 'Удаляем файл из загрузок',
+      title: t('app.operation.deleteFile'),
+      statusText: t('app.operation.deleteFileStatus'),
       currentItem: deletedDownloadTitle,
       percent: 8
     });
-    setDownloadsBusyLabel('Deleting download');
+    setDownloadsBusyLabel(t('app.busy.deletingDownload'));
     setMessage(null);
 
     try {
@@ -8152,7 +8252,7 @@ export const App = () => {
         current && current.operationId === operationId
           ? {
               ...current,
-              statusText: 'Обновляем список загрузок',
+              statusText: t('app.operation.refreshingDownloads'),
               percent: Math.max(current.percent ?? 0, 84)
             }
           : current
@@ -8181,16 +8281,21 @@ export const App = () => {
 
     const project = selectedProject;
     const operationId = createRendererOperationId('downloads_delete_bulk');
-    const targetLabel = deletionSubjectLabel('download', '', targets.length);
+    const targetLabel = deletionSubjectLabel(
+      'download',
+      '',
+      targets.length,
+      bridgeStatus?.language
+    );
     beginOperationOverlay({
       operationId,
       kind: 'download-delete',
-      title: 'Удаляем файлы',
-      statusText: 'Удаляем файлы из загрузок',
+      title: t('app.operation.deleteFiles'),
+      statusText: t('app.operation.deleteFilesStatus'),
       currentItem: targetLabel,
       percent: 8
     });
-    setDownloadsBusyLabel('Deleting downloads');
+    setDownloadsBusyLabel(t('app.busy.deletingDownloads'));
     setMessage(null);
 
     try {
@@ -8201,8 +8306,11 @@ export const App = () => {
           current && current.operationId === operationId
             ? {
                 ...current,
-                currentItem: downloadTitle(entry),
-                statusText: `Удаляем файл ${index + 1} из ${targets.length}`,
+                currentItem: downloadTitle(entry, appLocale),
+                statusText: t('app.operation.deleteFileProgress', {
+                  current: index + 1,
+                  total: targets.length
+                }),
                 percent: Math.max(current.percent ?? 0, currentPercent)
               }
             : current
@@ -8216,7 +8324,7 @@ export const App = () => {
         current && current.operationId === operationId
           ? {
               ...current,
-              statusText: 'Обновляем список загрузок',
+              statusText: t('app.operation.refreshingDownloads'),
               currentItem: targetLabel,
               percent: Math.max(current.percent ?? 0, 84)
             }
@@ -8238,7 +8346,7 @@ export const App = () => {
       return;
     }
 
-    await runDownloadMutation('Cancelling download', (operationId) =>
+    await runDownloadMutation(t('app.busy.cancellingDownload'), (operationId) =>
       window.fluxora.downloads.cancel(selectedProject.projectDirectory, downloadPath(entry), {
         operationId
       })
@@ -8250,7 +8358,7 @@ export const App = () => {
       return;
     }
 
-    await runDownloadMutation('Resuming download', (operationId) =>
+    await runDownloadMutation(t('app.busy.resumingDownload'), (operationId) =>
       window.fluxora.downloads.resume(selectedProject.projectDirectory, downloadPath(entry), {
         operationId
       })
@@ -8305,7 +8413,7 @@ export const App = () => {
     const path = downloadPath(entry);
     const result = await window.fluxora.shell.showItemInFolder(path);
     if (!result.ok) {
-      setMessage(result.message ?? 'Download location could not be opened.');
+      setMessage(result.message ?? t('app.message.downloadLocationOpenFailed'));
     }
   };
 
@@ -8320,7 +8428,7 @@ export const App = () => {
     const showBusy = options.showBusy ?? true;
     const showMessage = options.showMessage ?? true;
     if (showBusy) {
-      setDownloadsBusyLabel('Registering NXM');
+      setDownloadsBusyLabel(t('app.busy.registeringNxm'));
     }
     if (showMessage) {
       setMessage(null);
@@ -8381,7 +8489,9 @@ export const App = () => {
       if (imported.length > 0) {
         dispatchDownloadsWorkspace({ type: 'items-upserted', items: imported });
       }
-      setMessage(imported.length === 0 ? 'No inbound NXM links found.' : `Imported ${imported.length} NXM link(s).`);
+      setMessage(imported.length === 0
+        ? t('app.message.noInboundNxm')
+        : t('app.message.importedNxm', { count: imported.length }));
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -8443,7 +8553,7 @@ export const App = () => {
         { operationId: currentDialog.operationId }
       );
       if (!fomodInstaller.isFomod) {
-        throw new Error('FOMOD installer is no longer available.');
+        throw new Error(t('app.error.fomodUnavailable'));
       }
 
       const validManualDecisions = sanitizeFomodManualDecisions(
@@ -8451,7 +8561,7 @@ export const App = () => {
         manualDecisions
       );
       const selectedFomodOptionIds = initialFomodSelection(fomodInstaller);
-      const nextEvaluation = evaluateFomodWizard(fomodInstaller, selectedFomodOptionIds);
+      const nextEvaluation = evaluateFomodWizard(fomodInstaller, selectedFomodOptionIds, appLocale);
       const optionIds = new Set(
         fomodInstaller.steps.flatMap((step) =>
           step.groups.flatMap((group) => group.options.map((option) => option.id))
@@ -8496,7 +8606,7 @@ export const App = () => {
 
     if (installDialog.fomodInstaller.autoSelection?.installBlocked) {
       setInstallDialogPatch({
-        validationMessage: 'Требования FOMOD к игре или инструментам не выполнены.'
+        validationMessage: t('app.message.fomodRequirementsNotMet')
       });
       return;
     }
@@ -8560,7 +8670,7 @@ export const App = () => {
             animate: false
           });
         }
-        setMessage('Этот источник уже устанавливается; показана текущая операция.');
+        setMessage(t('app.message.installAlreadyRunning'));
         return;
       }
     }
@@ -8571,7 +8681,7 @@ export const App = () => {
 
     try {
       const initialModName = normalizeInstallModName(installDialog.modName);
-      const nameValidation = validateInstallModName(initialModName);
+      const nameValidation = validateInstallModName(initialModName, appLocale);
       if (nameValidation) {
         setInstallDialogPatchForOperation(installDialog.operationId, {
           phase: 'options',
@@ -8613,7 +8723,7 @@ export const App = () => {
       };
 
       const modName = normalizeInstallModName(submissionDialog.modName);
-      const resolvedNameValidation = validateInstallModName(modName);
+      const resolvedNameValidation = validateInstallModName(modName, appLocale);
       if (resolvedNameValidation) {
         restoreInstallDialog(submissionDialog, {
           phase: 'options',
@@ -8633,7 +8743,7 @@ export const App = () => {
         restoreInstallDialog(submissionDialog, {
           phase: 'details',
           validationMessage: submissionDialog.validationMessage ||
-            'The archive is blocked by placement rules. Fix the marked items before installing.',
+            t('app.error.archivePlacementBlocked'),
           isSubmitting: false
         });
         return;
@@ -8641,7 +8751,7 @@ export const App = () => {
 
       const installPlan = submissionDialog.installPlan;
       if (!installPlan) {
-        throw new Error('Installer identity plan is unavailable.');
+        throw new Error(t('app.error.installerPlanUnavailable'));
       }
       const matchedTarget = matchedInstallTargetForCurrentName(submissionDialog);
       const existingModNameForPrompt = matchedTarget?.displayName ?? null;
@@ -8657,7 +8767,7 @@ export const App = () => {
 
       const useMatchedTarget = typeof selectedConflictDecision === 'number';
       if (useMatchedTarget && !matchedTarget) {
-        throw new Error('The matched mod changed. Reopen the install conflict.');
+        throw new Error(t('app.error.matchedModChanged'));
       }
       const existingModMode: FluxoraExistingModInstallMode =
         typeof selectedConflictDecision === 'number'
@@ -8747,7 +8857,7 @@ export const App = () => {
         submissionDialog.operationId
       );
       if (!workspaceDeltaBaseline) {
-        throw new Error('Could not establish the native workspace revision before installation.');
+        throw new Error(t('app.error.workspaceRevisionUnavailable'));
       }
       const acceptedOperation = await window.fluxora.installs.submit(
         {
@@ -8782,7 +8892,7 @@ export const App = () => {
         pendingInstallOrchestrator.progressStore.setOperation(acceptedOperation);
       }
       installAccepted = true;
-      setMessage(`Queued ${modName} for installation`);
+      setMessage(t('app.message.queuedInstall', { name: modName }));
     } catch (error) {
       if (pendingInstallStarted) {
         pendingInstallOrchestrator.rollback(submissionDialog.operationId);
@@ -8810,7 +8920,7 @@ export const App = () => {
             { operationId: submissionDialog.operationId }
           );
           if (!fomodInstaller.isFomod) {
-            throw new Error('FOMOD installer is no longer available.');
+            throw new Error(t('app.error.fomodUnavailable'));
           }
           const manualFomodDecisions = sanitizeFomodManualDecisions(
             fomodInstaller,
@@ -8835,13 +8945,13 @@ export const App = () => {
                 ? submissionDialog.activeFomodOptionId
                 : null,
             validationMessage:
-              'Профиль изменился. Автоподбор обновлён; проверьте выбор и нажмите «Установить» ещё раз.',
+              t('app.message.profileChangedValidation'),
             errorMessage: null,
             isSubmitting: false,
             isRecalculatingFomod: false
           };
           restoreInstallDialog(submissionDialog);
-          setMessage('Профиль изменился — FOMOD пересчитан без установки файлов.');
+          setMessage(t('app.message.profileChanged'));
           return;
         } catch (refreshError) {
           error = refreshError;
@@ -8941,6 +9051,10 @@ export const App = () => {
         setAppInfo(nextAppInfo);
         setSecurityState(nextSecurityState);
         setBridgeStatus(nextBridgeStatus);
+        dispatchAppLanguage({
+          type: 'native-loaded',
+          language: nextBridgeStatus.language ?? 'en-us'
+        });
         setThemeMode(normalizeThemeMode(nextBridgeStatus.theme));
 
         if (nextBridgeStatus.ready) {
@@ -8971,6 +9085,7 @@ export const App = () => {
 
         setCatalogState('error');
         setMessage(errorMessage(error));
+        dispatchAppLanguage({ type: 'native-load-failed' });
       }
     );
 
@@ -9089,7 +9204,7 @@ export const App = () => {
       requestNativeAiRunCancel(run.operationId);
     });
     activeAiRunsRef.current.clear();
-    const restoredSession = loadAiSession(window.localStorage, aiSessionScope);
+    const restoredSession = loadAiSession(window.localStorage, aiSessionScope, appLocale);
     dispatchAiChat({
       type: 'restore-session',
       session: restoredSession
@@ -9520,12 +9635,12 @@ export const App = () => {
       const modsDirectory = project.paths?.modsDirectory;
       const profilesDirectory = project.paths?.profilesDirectory;
       if (!modsDirectory || !profilesDirectory) {
-        return Promise.reject(new Error('Build content folders are unavailable.'));
+        return Promise.reject(new Error(t('app.error.buildContentFoldersUnavailable')));
       }
 
       const key = buildContentWatchKeyForProject(project, profileName);
       if (key === null) {
-        return Promise.reject(new Error('Build content folders are unavailable.'));
+        return Promise.reject(new Error(t('app.error.buildContentFoldersUnavailable')));
       }
       if (buildContentWatchKeyRef.current !== key) {
         // Exact workspace reuse is valid only while watcher coverage is
@@ -9555,7 +9670,7 @@ export const App = () => {
         )
         .then((result) => {
           if (!result.accepted) {
-            throw new Error('Build content watcher setup was superseded.');
+            throw new Error(t('app.error.buildContentWatcherSuperseded'));
           }
         });
       buildContentWatchKeyRef.current = key;
@@ -9902,7 +10017,7 @@ export const App = () => {
             watchPromise === null
           ) {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
@@ -9910,7 +10025,7 @@ export const App = () => {
             await watchPromise;
           } catch {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
@@ -9927,7 +10042,7 @@ export const App = () => {
             buildContentWatchKeyRef.current !== eventWatchKey
           ) {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
@@ -9942,15 +10057,15 @@ export const App = () => {
             buildContentWatchKeyRef.current !== eventWatchKey
           ) {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
           if (eventScopeFailed) {
-            throw new Error('Build content invalidation remains pending for the active project.');
+            throw new Error(t('app.error.buildContentInvalidationActive'));
           }
           if (invalidatedRevision < reconciliationRevision) {
-            throw new Error('Build content invalidation has not reached the active project revision.');
+            throw new Error(t('app.error.buildContentRevisionPending'));
           }
           // Native reconciliation computes one revisioned mod/plugin delta
           // after cache invalidation, so the renderer never decodes or commits
@@ -9972,7 +10087,7 @@ export const App = () => {
             buildContentWatchKeyRef.current !== eventWatchKey
           ) {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
@@ -9999,7 +10114,7 @@ export const App = () => {
             buildContentWatchKeyRef.current !== eventWatchKey
           ) {
             if (failedScopes.length > 0) {
-              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+              throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
             }
             return;
           }
@@ -10010,7 +10125,7 @@ export const App = () => {
           };
           currentEventReconciled = true;
           if (failedScopes.length > 0) {
-            throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            throw new Error(t('app.error.buildContentInvalidationPending', { count: failedScopes.length }));
           }
       };
       if (installCommitOperationsRef.current.size > 0) {
@@ -10115,10 +10230,7 @@ export const App = () => {
     return window.fluxora.nxm.onInboundLinksCaptured((event) => {
       const project = selectedWorkspaceScopeRef.current.project;
       const readiness = inboundNxmReadinessRef.current;
-      const queuedText =
-        event.count === 1
-          ? 'NXM link captured. Open a build to import it.'
-          : `${event.count} NXM links captured. Open a build to import them.`;
+      const queuedText = t('app.message.nxmQueued', { count: event.count });
       if (!project || !readiness.bridgeReady || !readiness.downloadBridgeAvailable) {
         pendingInboundNxmEventRef.current = event;
         setMessage(queuedText);
@@ -10213,7 +10325,7 @@ export const App = () => {
 
     return window.fluxora.buildSettings.onPathsSaved((project) => {
       setProjects((current) => upsertProject(current, project));
-      setMessage(`Build paths saved for ${project.name}.`);
+      setMessage(t('app.message.buildPathsSavedFor', { name: project.name }));
     });
   }, [isSecondaryWindow]);
 
@@ -10410,13 +10522,13 @@ export const App = () => {
       // the previous workspace has been restored in openProjectByConfig().
       setLoadedWorkspaceProjectId(null);
       setOpeningBuildSplash(null);
-      setMessage('Открытие сборки отменено.');
+      setMessage(t('app.message.openBuildCancelled'));
     }
 
     if (isTransferRunning && route !== 'home') {
       setIsTransferPageOpen(true);
       setActiveRoute('home');
-      setMessage('Перенос MO2 уже идет. Дождитесь завершения или отмените его на странице переноса.');
+      setMessage(t('app.message.transferRunning'));
       return;
     }
 
@@ -10453,7 +10565,7 @@ export const App = () => {
     try {
       const orderSaved = await waitForPendingOrderSaves();
       if (!orderSaved) {
-        setMessage('Order is still not saved. Fix the error before closing Fluxora.');
+        setMessage(t('app.message.orderNotSaved'));
         return;
       }
 
@@ -10521,7 +10633,7 @@ export const App = () => {
       current && current.operationId === operationId
         ? {
             ...current,
-            statusText: 'Operation failed',
+            statusText: t('common.operationFailed'),
             isRunning: false,
             canClose: true,
             cancelRequested: false,
@@ -10609,7 +10721,7 @@ export const App = () => {
         profiles === null ||
         executables === null
       ) {
-        throw new Error('The build workspace could not be loaded completely.');
+        throw new Error(t('app.error.workspaceLoadIncomplete'));
       }
     } finally {
       if (coordinatedWorkspaceLoadRef.current?.sequence === loadSequence) {
@@ -10698,7 +10810,7 @@ export const App = () => {
 
     setOpeningBuildSplash({
       operationId,
-      buildName: pendingProject?.name ?? 'Сборка',
+      buildName: pendingProject?.name ?? t('app.ui.build'),
       progress: 4
     });
     setMessage(null);
@@ -10754,7 +10866,7 @@ export const App = () => {
       setProjectOpenCommitSequence((current) => current + 1);
       setOpeningBuildProgress(operationId, 100, opened.name);
       openingBuildPreviousViewRef.current = null;
-      setMessage(`Opened ${opened.name}`);
+      setMessage(t('app.message.openedBuild', { name: opened.name }));
     } catch (error) {
       shouldRestorePreviousView = true;
       if (!openingBuildCancelRequestsRef.current.has(operationId)) {
@@ -10782,7 +10894,7 @@ export const App = () => {
     openingBuildCancelRequestsRef.current.add(operationId);
     setOpeningBuildSplash(null);
     showOpeningBuildPreviousView();
-    setMessage('Открытие сборки отменено.');
+    setMessage(t('app.message.openBuildCancelled'));
   };
 
   useEffect(() => {
@@ -10897,7 +11009,7 @@ export const App = () => {
         current && projectMatchesSelection(request.project, current) ? renamed.id : current
       );
       setBuildRenameDialog(null);
-      setMessage(`Renamed to ${renamed.name}`);
+      setMessage(t('app.message.renamedTo', { name: renamed.name }));
     } catch (error) {
       const validationMessage = errorMessage(error);
       setBuildRenameDialog((current) =>
@@ -10921,8 +11033,8 @@ export const App = () => {
     beginOperationOverlay({
       operationId,
       kind: 'build-delete',
-      title: 'Deleting build',
-      statusText: 'Preparing deletion',
+      title: t('app.operation.deleteBuild'),
+      statusText: t('app.operation.preparingDeletion'),
       currentItem: project.name,
       percent: 0
     });
@@ -10950,7 +11062,7 @@ export const App = () => {
   const openProjectDirectory = async (project: FluxoraProject) => {
     const result = await window.fluxora.shell.openPath(project.projectDirectory);
     if (!result.ok) {
-      setMessage(result.message ?? 'Project directory could not be opened.');
+      setMessage(result.message ?? t('app.message.projectDirectoryOpenFailed'));
     }
   };
 
@@ -10978,7 +11090,9 @@ export const App = () => {
 
     const result = await window.fluxora.shell.openPath(entry.sourcePath);
     if (!result.ok) {
-      setMessage(result.message ?? `${effectiveVirtualPathLabel(entry)} could not be opened.`);
+      setMessage(result.message ?? t('app.message.namedPathOpenFailed', {
+        name: effectiveVirtualPathLabel(entry)
+      }));
     }
   };
 
@@ -11069,7 +11183,7 @@ export const App = () => {
 
   const browseBuildGameExecutable = async () => {
     const result = await window.fluxora.dialogs.pickExecutable(
-      'Select game executable',
+      t('app.dialog.selectGameExecutable'),
       buildPathDraft.gameExecutablePath || buildPathDraft.gameDirectory
     );
     if (!result.canceled && result.path) {
@@ -11099,14 +11213,14 @@ export const App = () => {
   const openBuildDownloadsDirectory = async () => {
     const path = buildPathDraft.downloadsDirectory.trim();
     if (!path) {
-      setMessage('Global downloads directory is unavailable.');
+      setMessage(t('app.message.downloadsDirectoryMissing'));
       return;
     }
 
     try {
       const result = await window.fluxora.shell.openPath(path);
       if (!result.ok) {
-        setMessage(result.message ?? 'Global downloads directory could not be opened.');
+        setMessage(result.message ?? t('app.message.downloadsDirectoryOpenFailed'));
       }
     } catch (error) {
       setMessage(errorMessage(error));
@@ -11120,7 +11234,8 @@ export const App = () => {
 
     const validationMessage = validateBuildPathDraft(
       buildPathDraft,
-      bridgeStatus?.capabilities?.platform ?? appInfo?.platform ?? 'unknown'
+      bridgeStatus?.capabilities?.platform ?? appInfo?.platform ?? 'unknown',
+      appLocale
     );
     if (validationMessage) {
       setBuildPathsError(validationMessage);
@@ -11129,7 +11244,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('build_paths_save');
-    setBuildPathsBusyLabel('Saving build paths');
+    setBuildPathsBusyLabel(t('app.busy.savingBuildPaths'));
     setBuildPathsError(null);
     setMessage(null);
 
@@ -11161,7 +11276,7 @@ export const App = () => {
       setBuildPathDraft(draftFromBuildPathSettings(nextProject, saved, savedExecutables));
       setBuildPathExecutables(savedExecutables);
       buildPathDraftDirtyRef.current = false;
-      setMessage('Build paths saved.');
+      setMessage(t('app.message.buildPathsSaved'));
       if (isBuildSettingsWindow) {
         await window.fluxora.buildSettings.notifyPathsSaved(nextProject);
         await window.fluxora.windowControls.close();
@@ -11200,7 +11315,7 @@ export const App = () => {
 
     const saveResult = await window.fluxora.dialogs.saveFluxPack(
       defaultFluxPackPath(selectedProject),
-      'Сохранить FluxPack'
+      t('app.dialog.saveFluxPack')
     );
     if (saveResult.canceled || !saveResult.path) {
       return;
@@ -11224,8 +11339,8 @@ export const App = () => {
     beginOperationOverlay({
       operationId,
       kind: 'fluxpack-export',
-      title: 'Упаковываем сборку',
-      statusText: 'Изучаем сборку',
+      title: t('app.operation.packageBuild'),
+      statusText: t('app.operation.inspectingBuild'),
       currentItem: selectedProject.name,
       percent: 0
     });
@@ -11244,8 +11359,10 @@ export const App = () => {
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
       activateRightPane('build');
-      setMessage(`Сборка упакована: ${summary.outputPath}`);
-      finishOperationOverlay(operationId, `Сборка ${summary.buildName || selectedProject.name} упакована`);
+      setMessage(t('app.message.buildPackagedPath', { path: summary.outputPath }));
+      finishOperationOverlay(operationId, t('app.message.buildPackaged', {
+        name: summary.buildName || selectedProject.name
+      }));
     } catch (error) {
       const nextMessage = errorMessage(error);
       setMessage(nextMessage);
@@ -11260,7 +11377,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('fluxpack_inspect');
-    setBusyLabel('Inspecting FluxPack');
+    setBusyLabel(t('app.busy.inspectingFluxPack'));
     setMessage(null);
 
     try {
@@ -11268,7 +11385,7 @@ export const App = () => {
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
       activateRightPane('build');
-      setMessage(`FluxPack ready: ${summary.buildName}`);
+      setMessage(t('app.message.fluxPackReady', { name: summary.buildName }));
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -11292,8 +11409,8 @@ export const App = () => {
     beginOperationOverlay({
       operationId,
       kind: 'fluxpack-install',
-      title: isDeltaUpdate ? 'Обновляем сборку' : 'Устанавливаем сборку',
-      statusText: isDeltaUpdate ? 'Сопоставляем Delta' : 'Подготавливаем установку',
+      title: isDeltaUpdate ? t('app.operation.updateBuild') : t('app.operation.installBuild'),
+      statusText: isDeltaUpdate ? t('app.operation.matchingDelta') : t('app.operation.preparingInstall'),
       currentItem: targetProject?.name || summary.buildName || fluxPackPath,
       percent: 0
     });
@@ -11333,26 +11450,44 @@ export const App = () => {
       }
 
       if (workspaceLoadError) {
-        setMessage(
-          `${result.updatedExistingProject ? 'Сборка обновлена' : 'FluxPack установлен'}, но рабочее пространство не загрузилось: ${errorMessage(workspaceLoadError)}`
-        );
+        const resultLabel = result.updatedExistingProject
+          ? t('app.message.buildUpdated')
+          : t('app.message.fluxPackInstalled');
+        const resultVerb = result.updatedExistingProject
+          ? t('app.message.updated')
+          : t('app.message.installed');
+        setMessage(t('app.message.fluxPackWorkspaceFailed', {
+          result: resultLabel,
+          error: errorMessage(workspaceLoadError)
+        }));
         finishOperationOverlay(
           operationId,
-          `${result.updatedExistingProject ? 'Обновлена' : 'Установлена'} сборка ${result.buildName || opened.name}`
+          t('app.message.namedBuildResult', {
+            result: resultVerb,
+            name: result.buildName || opened.name
+          })
         );
         await loadCatalog();
         return;
       }
 
       setLoadedWorkspaceProjectId(opened.id);
-      setMessage(
-        result.updatedExistingProject
-          ? `Сборка обновлена: ${result.buildName || opened.name}. Переиспользовано: ${result.reusedSourceCount} мод., ${result.reusedDownloadCount} архив., ${result.reusedFileCount} файл.`
-          : `FluxPack установлен: ${result.buildName || opened.name}`
-      );
+      setMessage(result.updatedExistingProject
+        ? t('app.message.buildUpdateSummary', {
+            name: result.buildName || opened.name,
+            sources: result.reusedSourceCount,
+            downloads: result.reusedDownloadCount,
+            files: result.reusedFileCount
+          })
+        : t('app.message.fluxPackInstalledNamed', { name: result.buildName || opened.name }));
       finishOperationOverlay(
         operationId,
-        `${result.updatedExistingProject ? 'Обновлена' : 'Установлена'} сборка ${result.buildName || opened.name}`
+        t('app.message.namedBuildResult', {
+          result: result.updatedExistingProject
+            ? t('app.message.updated')
+            : t('app.message.installed'),
+          name: result.buildName || opened.name
+        })
       );
       await loadCatalog();
     } catch (error) {
@@ -11374,7 +11509,7 @@ export const App = () => {
     let installRootDirectory = installTarget.installRootDirectory;
     if (installTarget.requiresRootSelection) {
       const rootResult = await window.fluxora.dialogs.pickFolder(
-        'Выберите папку для сборки',
+        t('app.dialog.chooseBuildFolder'),
         installRootDirectory || undefined
       );
       if (rootResult.canceled || !rootResult.path) {
@@ -11393,7 +11528,7 @@ export const App = () => {
         : {})
     };
     const planOperationId = createRendererOperationId('fluxpack_plan_install');
-    setBusyLabel('Проверяем локальные файлы');
+    setBusyLabel(t('app.busy.checkingLocalFiles'));
     setMessage(null);
 
     try {
@@ -11410,9 +11545,7 @@ export const App = () => {
         (source) => source.acquisitionMode === 'unavailable'
       );
       if (unavailableSources.length > 0) {
-        setMessage(
-          `Нельзя продолжить установку: для ${unavailableSources.length} мод. пока нет поддерживаемого источника.`
-        );
+        setMessage(t('app.message.unsupportedSources', { count: unavailableSources.length }));
         return;
       }
 
@@ -11442,7 +11575,7 @@ export const App = () => {
     }
 
     const inspectOperationId = createRendererOperationId('fluxpack_inspect_install');
-    setBusyLabel('Проверяем FluxPack');
+    setBusyLabel(t('app.busy.inspectingFluxPack'));
     setMessage(null);
     try {
       const summary = await window.fluxora.fluxPack.inspect(pickResult.path, {
@@ -11470,7 +11603,7 @@ export const App = () => {
 
   const openFluxPackManualDownload = async (source: FluxoraFluxPackSourceInstallPlan) => {
     if (!source.manualDownloadUrl) {
-      setMessage(`Для ${source.displayName} не удалось определить страницу загрузки.`);
+      setMessage(t('app.message.downloadPageUnavailable', { name: source.displayName }));
       return;
     }
 
@@ -11515,7 +11648,7 @@ export const App = () => {
       return path ? [{ sourceId: source.sourceId, path }] : [];
     });
     if (manualSourceArchives.length !== pending.sources.length) {
-      setMessage('Сначала выберите загруженный архив для каждого мода.');
+      setMessage(t('app.message.manualArchivesRequired'));
       return;
     }
 
@@ -11529,8 +11662,8 @@ export const App = () => {
       current && current.operationId === sourceOperationId
         ? {
             ...current,
-            statusText: 'Cancelling build creation',
-            currentItem: 'Cleaning up created files',
+            statusText: t('app.operation.cancellingCreation'),
+            currentItem: t('app.operation.cleaningCreatedFiles'),
             percent: null,
             isRunning: true,
             canClose: false,
@@ -11561,31 +11694,31 @@ export const App = () => {
         changeRoute('home');
       }
       createCancelRequestsRef.current.delete(sourceOperationId);
-      setMessage(`Creation cancelled. Removed ${project.name}.`);
+      setMessage(t('app.message.creationCancelledRemoved', { name: project.name }));
       setOperationOverlay((current) =>
         current && current.operationId === sourceOperationId
           ? {
               ...current,
-              statusText: 'Build creation cancelled',
-              currentItem: 'Created files were cleaned up',
+              statusText: t('app.operation.creationCancelled'),
+              currentItem: t('app.operation.createdFilesCleaned'),
               percent: 0,
               isRunning: false,
               canClose: true,
               cancelRequested: false,
               createdProject: null,
-              resultText: 'Creation cancelled and files cleaned up',
+              resultText: t('app.operation.creationCancelledCleaned'),
               errorText: null
             }
           : current
       );
     } catch (error) {
-      const nextMessage = `Cleanup failed: ${errorMessage(error)}`;
+      const nextMessage = t('app.message.cleanupFailed', { error: errorMessage(error) });
       setMessage(nextMessage);
       setOperationOverlay((current) =>
         current && current.operationId === sourceOperationId
           ? {
               ...current,
-              statusText: 'Cleanup failed',
+              statusText: t('app.operation.cleanupFailed'),
               currentItem: project.projectDirectory,
               percent: null,
               isRunning: false,
@@ -11619,13 +11752,13 @@ export const App = () => {
         current && current.operationId === operationOverlay.operationId
           ? {
               ...current,
-              statusText: 'Cancelling build creation',
-              currentItem: 'Waiting for the core to stop safely',
+              statusText: t('app.operation.cancellingCreation'),
+              currentItem: t('app.operation.waitingCore'),
               cancelRequested: true
             }
           : current
       );
-      setMessage('Build creation will be cleaned up as soon as the current core step returns.');
+      setMessage(t('app.message.creationCleanupPending'));
 
       if (!operationOverlay.isRunning || !currentOperationSupportsCancellation) {
         return;
@@ -11641,8 +11774,8 @@ export const App = () => {
       });
       setMessage(
         result.accepted
-          ? 'Operation cancellation requested.'
-          : 'The current native core cannot cancel this operation.'
+          ? t('app.message.operationCancelRequested')
+          : t('app.message.operationCancelUnsupported')
       );
     } catch (error) {
       setMessage(errorMessage(error));
@@ -11659,8 +11792,8 @@ export const App = () => {
     beginOperationOverlay({
       operationId,
       kind: 'build-create',
-      title: 'Creating build',
-      statusText: 'Creating project structure',
+      title: t('app.operation.creatingBuild'),
+      statusText: t('app.operation.creatingProjectStructure'),
       currentItem: draft.projectName.trim(),
       percent: null
     });
@@ -11699,7 +11832,9 @@ export const App = () => {
       }
 
       if (workspaceLoadError) {
-        setMessage(`Build created, but its workspace could not be loaded: ${errorMessage(workspaceLoadError)}`);
+        setMessage(t('app.message.creationWorkspaceFailed', {
+          error: errorMessage(workspaceLoadError)
+        }));
         closeOperationOverlay(operationId);
         return;
       }
@@ -11709,8 +11844,8 @@ export const App = () => {
     } catch (error) {
       if (createCancelRequestsRef.current.has(operationId)) {
         createCancelRequestsRef.current.delete(operationId);
-        setMessage('Build creation cancelled.');
-        finishOperationOverlay(operationId, 'Creation cancelled and files cleaned up', 0);
+        setMessage(t('app.message.creationCancelled'));
+        finishOperationOverlay(operationId, t('app.operation.creationCancelledCleaned'), 0);
         return;
       }
 
@@ -11724,6 +11859,9 @@ export const App = () => {
 
   const setLanguage = async (language: string) => {
     const operationId = createRendererOperationId('language_set');
+    const previousLanguage = appLanguage.language ?? bridgeStatus?.language ?? 'en-us';
+    dispatchAppLanguage({ type: 'save-requested', language });
+    setBridgeStatus((current) => current ? { ...current, language, operationId } : current);
     setLanguageBusy(language);
     setMessage(null);
     void window.fluxora.ui.log({
@@ -11735,14 +11873,18 @@ export const App = () => {
 
     try {
       const result = await window.fluxora.settings.setLanguage(language, { operationId });
-      const nextStatus = await window.fluxora.bridge.getStatus({ operationId });
-      setBridgeStatus({
-        ...nextStatus,
-        language: result.language,
-        operationId
-      });
-      setMessage(`Language saved: ${result.language}`);
+      dispatchAppLanguage({ type: 'language-confirmed', language: result.language });
+      setBridgeStatus((current) => current
+        ? { ...current, language: result.language, operationId: result.operationId }
+        : current);
+      setMessage(translateForLanguage(result.language, 'app.message.languageSaved', {
+        language: result.language
+      }));
     } catch (error) {
+      dispatchAppLanguage({ type: 'save-failed' });
+      setBridgeStatus((current) => current
+        ? { ...current, language: previousLanguage, operationId }
+        : current);
       setMessage(errorMessage(error));
     } finally {
       setLanguageBusy(null);
@@ -11840,7 +11982,9 @@ export const App = () => {
       }
       connectionCoordinator.acceptSnapshot(mergeConnectionStatus(connectionSnapshot, status));
       setMessage(status.message || (
-        status.state === 'ready' ? `${status.label} connected.` : `${status.label} disconnected.`
+        status.state === 'ready'
+          ? t('app.message.providerConnected', { provider: status.label })
+          : t('app.message.providerDisconnected', { provider: status.label })
       ));
       if (action !== 'cancel') {
         setApiLimitsBusy(true);
@@ -12079,7 +12223,7 @@ export const App = () => {
   ]);
 
   const browseTransferSource = async () => {
-    const path = await pickTransferFolder('Выберите папку сборки Mod Organizer 2', transferSourceDirectory);
+    const path = await pickTransferFolder(t('transfer.source.choose'), transferSourceDirectory);
     if (path) {
       const preferred = selectPreferredTransferDrive(
         transferDestinationDrives,
@@ -12113,7 +12257,7 @@ export const App = () => {
     const sourceDirectory = rawSourceDirectory.trim();
     const destinationRootDirectory = rawDestinationRootDirectory.trim();
     if (!sourceDirectory || !destinationRootDirectory) {
-      setTransferError('Выберите папку сборки и отдельный диск или папку назначения.');
+      setTransferError(t('app.message.transferDirectoriesRequired'));
       return null;
     }
 
@@ -12124,7 +12268,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('transfer_analyze_mo2');
-    setSettingsBusyLabel('Проверяем перенос');
+    setSettingsBusyLabel(t('app.busy.checkingTransfer'));
     setTransferError(null);
     setTransferResult(null);
     setTransferStep(nextStep);
@@ -12142,7 +12286,7 @@ export const App = () => {
           destinationRootDirectory
         );
         setTransferAnalysis(normalizedAnalysis);
-        setMessage(normalizedAnalysis.statusMessage || 'Проверка переноса завершена.');
+        setMessage(normalizedAnalysis.statusMessage || t('app.message.transferAnalysisComplete'));
         return normalizedAnalysis;
       } catch (error) {
         const nextMessage = errorMessage(error);
@@ -12201,7 +12345,7 @@ export const App = () => {
 
   const startMo2TransferFromHandoff = async (handoff: FluxoraMo2TransferHandoff) => {
     if (transferRunningOperationId) {
-      setMessage('MO2 import is already running in Fluxora.');
+      setMessage(t('app.message.mo2ImportRunning'));
       return;
     }
 
@@ -12255,7 +12399,7 @@ export const App = () => {
       setTransferError(
         normalizedAnalysis.warningMessage ||
           normalizedAnalysis.statusMessage ||
-          'Перенос пока недоступен.'
+          t('app.message.transferUnavailable')
       );
       return;
     }
@@ -12295,7 +12439,7 @@ export const App = () => {
     setTransferProgress({
       operationId,
       phase: 'preparing',
-      currentStep: 'Подготовка переноса',
+      currentStep: t('transfer.progress.preparing'),
       currentItem: normalizedAnalysis.projectName,
       overallPercent: 0,
       copyPercent: 0,
@@ -12305,7 +12449,7 @@ export const App = () => {
     });
     setTransferError(null);
     setTransferResult(null);
-    setSettingsBusyLabel('Переносим сборку');
+    setSettingsBusyLabel(t('app.busy.transferringBuild'));
     setTransferStep('review');
 
     try {
@@ -12317,7 +12461,7 @@ export const App = () => {
         current
           ? {
               ...current,
-              currentStep: 'Готово',
+              currentStep: t('transfer.progress.done'),
               currentItem: imported.name,
               overallPercent: 100,
               copyPercent: 100,
@@ -12328,13 +12472,13 @@ export const App = () => {
       setTransferResult(imported);
       setProjects((current) => upsertProject(current, imported));
       setSelectedProjectId(imported.id);
-      setMessage(`Перенос завершен: ${imported.name}`);
+      setMessage(t('app.message.transferComplete', { name: imported.name }));
       await loadCatalog({
         mergeProject: imported,
         preferredProjectId: imported.id,
         keepMergedProjectOnError: true
       });
-      setMessage(`Перенос завершен: ${imported.name}`);
+      setMessage(t('app.message.transferComplete', { name: imported.name }));
       setIsTransferPageOpen(false);
       changeRoute('home');
     } catch (error) {
@@ -12345,15 +12489,15 @@ export const App = () => {
         cancellationMessage.includes('cancelled') ||
         cancellationMessage.includes('отмен')
       ) {
-        const message = 'Перенос отменен. Временные файлы очищены.';
+        const message = t('app.message.transferCancelledCleaned');
         setTransferError(message);
         setTransferProgress((current) =>
           current
             ? {
                 ...current,
                 phase: 'cancelled',
-                currentStep: 'Перенос отменен',
-                currentItem: 'Временные файлы очищены',
+                currentStep: t('transfer.progress.cancelled'),
+                currentItem: t('transfer.progress.tempCleaned'),
                 overallPercent: 0
               }
             : current
@@ -12383,8 +12527,8 @@ export const App = () => {
       const result = await window.fluxora.operations.cancel(runningOperationId, { operationId });
       setMessage(
         result.accepted
-          ? 'Запрос отмены переноса отправлен.'
-          : 'Текущая native-сборка не поддерживает отмену этого переноса.'
+          ? t('app.message.transferCancelRequested')
+          : t('app.message.transferCancelUnsupported')
       );
       if (result.accepted) {
         setTransferError(null);
@@ -12393,15 +12537,15 @@ export const App = () => {
             ? {
                 ...current,
                 phase: 'canceling',
-                currentStep: 'Отменяем и очищаем',
-                currentItem: current.currentItem || 'Временная папка переноса'
+                currentStep: t('transfer.progress.cancelling'),
+                currentItem: current.currentItem || t('transfer.progress.tempFolder')
               }
             : current
         );
       }
       if (!result.accepted) {
         setTransferCancelRequested(false);
-        setTransferError('Отмена недоступна в текущем bridge, перенос будет заблокирован до безопасного завершения.');
+        setTransferError(t('app.message.transferCancelBridgeUnsupported'));
       }
     } catch (error) {
       const nextMessage = errorMessage(error);
@@ -12426,7 +12570,7 @@ export const App = () => {
       <div
         className="mod-row-menu project-row-menu project-row-menu--overlay"
         role="menu"
-        aria-label={`${project.name} build actions`}
+        aria-label={t('app.ui.namedBuildActions', { name: project.name })}
         data-project-menu-surface="true"
         style={{
           left: projectMenuPosition.left,
@@ -12445,7 +12589,7 @@ export const App = () => {
           }}
         >
           <Pencil size={15} aria-hidden="true" />
-          <span>Rename</span>
+          <span>{t('app.ui.rename')}</span>
         </button>
         <button
           disabled={projectActionDisabled}
@@ -12457,7 +12601,7 @@ export const App = () => {
           }}
         >
           <FolderOpen size={15} aria-hidden="true" />
-          <span>Open folder</span>
+          <span>{t('app.ui.openFolder')}</span>
         </button>
         <button
           className="project-row-menu__danger"
@@ -12470,7 +12614,7 @@ export const App = () => {
           }}
         >
           <Trash2 size={15} aria-hidden="true" />
-          <span>Delete</span>
+          <span>{t('app.ui.delete')}</span>
         </button>
       </div>,
       document.body
@@ -12524,7 +12668,11 @@ export const App = () => {
         projectMenuId={projectMenuId}
         projects={projects}
         projectStats={(project, isSelected) =>
-          buildProjectLibraryStats(project, isSelected ? selectedProjectRuntimeSummary : undefined)
+          buildProjectLibraryStats(
+            project,
+            isSelected ? selectedProjectRuntimeSummary : undefined,
+            bridgeStatus?.language
+          )
         }
         renderProjectRowMenu={renderProjectRowMenu}
         searchText={searchText}
@@ -12547,7 +12695,7 @@ export const App = () => {
         <div
           className="mod-row-menu mod-row-menu--context"
           role="menu"
-          aria-label={`${modItemTitle(item)} actions`}
+          aria-label={t('app.ui.namedActions', { name: modItemTitle(item, appLocale) })}
           data-row-context-menu-surface="true"
           style={{
             left: modMenuPosition.left,
@@ -12566,7 +12714,7 @@ export const App = () => {
             }}
           >
             <MenuIcon source={menuTrashIcon} />
-            <span>Очистить папку перезаписи</span>
+            <span>{t('app.ui.clearOverwrite')}</span>
           </button>
           {!hasMultipleSelectedModRows ? (
             <button
@@ -12578,7 +12726,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuFolderOpenIcon} />
-              <span>Открыть в проводнике</span>
+              <span>{t('app.ui.openExplorer')}</span>
             </button>
           ) : null}
         </div>,
@@ -12602,7 +12750,7 @@ export const App = () => {
       <div
         className="mod-row-menu mod-row-menu--context"
         role="menu"
-        aria-label={`${modItemTitle(item)} actions`}
+        aria-label={t('app.ui.namedActions', { name: modItemTitle(item, appLocale) })}
         data-row-context-menu-surface="true"
         style={{
           left: modMenuPosition.left,
@@ -12622,7 +12770,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={item.isEnabled ? menuToggleLeftIcon : menuToggleRightIcon} />
-              <span>{item.isEnabled ? 'Disable' : 'Enable'}</span>
+              <span>{item.isEnabled ? t('app.ui.disable') : t('app.ui.enable')}</span>
             </button>
             <button
               type="button"
@@ -12634,7 +12782,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuCircleCheckIcon} />
-              <span>Включить все моды</span>
+              <span>{t('app.ui.enableAllMods')}</span>
             </button>
             <button
               type="button"
@@ -12646,7 +12794,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuCircleXIcon} />
-              <span>Выключить все моды</span>
+              <span>{t('app.ui.disableAllMods')}</span>
             </button>
           </>
         ) : null}
@@ -12664,7 +12812,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={isCollapsed ? menuChevronDownIcon : menuChevronUpIcon} />
-              <span>{isCollapsed ? 'Expand separator' : 'Collapse separator'}</span>
+              <span>{isCollapsed ? t('app.ui.expandSeparator') : t('app.ui.collapseSeparator')}</span>
             </button>
             <button
               type="button"
@@ -12676,7 +12824,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuChevronUpIcon} />
-              <span>Свернуть все</span>
+              <span>{t('app.ui.collapseAll')}</span>
             </button>
             <button
               type="button"
@@ -12688,7 +12836,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuChevronDownIcon} />
-              <span>Развернуть все</span>
+              <span>{t('app.ui.expandAll')}</span>
             </button>
           </>
         ) : null}
@@ -12704,7 +12852,7 @@ export const App = () => {
                 }}
               >
                 <MenuIcon source={menuOpenExternalIcon} />
-                <span>Открыть источник</span>
+                <span>{t('app.ui.openSource')}</span>
               </button>
             ) : null}
             <button
@@ -12716,7 +12864,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuFolderOpenIcon} />
-              <span>Open folder</span>
+              <span>{t('app.ui.openFolder')}</span>
             </button>
             <button
               type="button"
@@ -12745,7 +12893,7 @@ export const App = () => {
             aria-keyshortcuts="Delete"
           >
             <MenuIcon source={menuTrashIcon} />
-            <span>Delete separator</span>
+            <span>{t('app.ui.deleteSeparator')}</span>
           </button>
         ) : (
           <button
@@ -12759,9 +12907,9 @@ export const App = () => {
             }}
           >
             <MenuIcon source={menuTrashIcon} />
-            <span>Удалить</span>
+            <span>{t('app.ui.delete')}</span>
             <span className="mod-row-menu__shortcut" aria-hidden="true">
-              Del
+              {t('common.key.deleteShort')}
             </span>
           </button>
         )}
@@ -12796,7 +12944,7 @@ export const App = () => {
       <div
         className="mod-row-menu mod-row-menu--context"
         role="menu"
-        aria-label="Действия со сборкой"
+        aria-label={t('app.ui.buildActions')}
         data-row-context-menu-surface="true"
         style={{
           left: modsToolbarMenuPosition.left,
@@ -12808,27 +12956,27 @@ export const App = () => {
         <button
           type="button"
           role="menuitem"
-          title="Создать разделитель внизу списка модов"
+          title={t('app.ui.separatorBottom')}
           disabled={modCreationDisabled}
           onClick={() => openModCreationDialog('separator')}
         >
           <MenuIcon source={menuLayersIcon} />
-          <span>Создать разделитель</span>
+          <span>{t('app.ui.createSeparator')}</span>
         </button>
         <button
           type="button"
           role="menuitem"
-          title="Создать пустой мод"
+          title={t('app.ui.createEmptyMod')}
           disabled={modCreationDisabled}
           onClick={() => openModCreationDialog('empty-mod')}
         >
           <MenuIcon source={menuPlusIcon} />
-          <span>Создать пустой мод</span>
+          <span>{t('app.ui.createEmptyMod')}</span>
         </button>
         <button
           type="button"
           role="menuitem"
-          title={buildHeaderCapabilities.refreshReason || 'Проверить обновления модов'}
+          title={buildHeaderCapabilities.refreshReason || t('app.ui.checkModUpdates')}
           disabled={checkUpdatesDisabled}
           onClick={() => {
             setModsToolbarMenuPosition(null);
@@ -12836,12 +12984,12 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuCircleCheckIcon} />
-          <span>Проверить обновления</span>
+          <span>{t('app.ui.checkUpdates')}</span>
         </button>
         <button
           type="button"
           role="menuitem"
-          title={buildHeaderCapabilities.packageReason || 'Экспортировать сборку в FluxPack'}
+          title={buildHeaderCapabilities.packageReason || t('app.ui.exportBuildFluxPack')}
           disabled={packageBuildDisabled}
           onClick={() => {
             setModsToolbarMenuPosition(null);
@@ -12849,12 +12997,12 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuPackagePlusIcon} />
-          <span>Упаковать</span>
+          <span>{t('app.ui.package')}</span>
         </button>
         <button
           type="button"
           role="menuitem"
-          title="Установить сборку из файла FluxPack"
+          title={t('app.ui.installFluxPack')}
           disabled={installFluxPackDisabled}
           onClick={() => {
             setModsToolbarMenuPosition(null);
@@ -12862,7 +13010,7 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuHardDriveDownloadIcon} />
-          <span>Установить</span>
+          <span>{t('app.ui.install')}</span>
         </button>
       </div>,
       document.body
@@ -12876,21 +13024,21 @@ export const App = () => {
     <div
       className="mod-list mod-list--table mod-list--loading"
       role="table"
-      aria-label="Loading mods"
+      aria-label={t('app.ui.loadingMods')}
     >
       <span className="sr-only" role="status">
-        Loading mods
+        {t('app.ui.loadingMods')}
       </span>
       <div className="mod-list__head" role="row">
         <span className="mod-list__head-priority" role="columnheader">
-          Приоритет
+          {t('app.ui.priority')}
         </span>
         <span className="mod-list__head-name" role="columnheader">
-          Название
+          {t('app.ui.name')}
         </span>
-        <span role="columnheader">Версия</span>
-        <span role="columnheader">Latest</span>
-        <span role="columnheader">Статус</span>
+        <span role="columnheader">{t('app.ui.version')}</span>
+        <span role="columnheader">{t('app.ui.latest')}</span>
+        <span role="columnheader">{t('app.ui.status')}</span>
       </div>
       <div className="mod-list__body mod-list__body--loading" role="rowgroup">
         {modLoadingSkeletonRows.map((index) => (
@@ -12932,8 +13080,8 @@ export const App = () => {
       return (
         <EmptyState
           icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title="Mods unavailable"
-          description={modsWorkspace.errorMessage ?? 'The native core could not load mods.'}
+          title={t('app.ui.modsUnavailable')}
+          description={modsWorkspace.errorMessage ?? t('app.ui.modsLoadFailed')}
           tone="error"
         />
       );
@@ -12943,28 +13091,30 @@ export const App = () => {
       return (
         <EmptyState
           icon={<Box size={18} aria-hidden="true" />}
-          title={modsWorkspace.items.length === 0 ? 'No installed mods' : 'No matching mods'}
+          title={modsWorkspace.items.length === 0
+            ? t('app.ui.noInstalledMods')
+            : t('app.ui.noMatchingMods')}
           description={
             modsWorkspace.items.length === 0
-              ? 'Create an empty mod or install an archive.'
-              : 'Clear the search query to return to the full order.'
+              ? t('app.ui.noModsDescription')
+              : t('app.ui.noMatchingModsDescription')
           }
         />
       );
     }
 
     return (
-      <div className="mod-list mod-list--table" role="table" aria-label="Mod order">
+      <div className="mod-list mod-list--table" role="table" aria-label={t('app.ui.modOrder')}>
         <div className="mod-list__head" role="row">
           <span className="mod-list__head-priority" role="columnheader">
-            Приоритет
+            {t('app.ui.priority')}
           </span>
           <span className="mod-list__head-name" role="columnheader">
-            Название
+            {t('app.ui.name')}
           </span>
-          <span role="columnheader">Версия</span>
-          <span role="columnheader">Latest</span>
-          <span role="columnheader">Статус</span>
+          <span role="columnheader">{t('app.ui.version')}</span>
+          <span role="columnheader">{t('app.ui.latest')}</span>
+          <span role="columnheader">{t('app.ui.status')}</span>
         </div>
         <ModsListSurface
           items={displayedModItems}
@@ -12985,9 +13135,13 @@ export const App = () => {
             const isPendingInstall = Boolean(pendingInstallSession);
             const isNested = rowView?.isNested ?? false;
             const isCollapsed = rowView?.isCollapsed ?? false;
-            const status = rowView?.status ?? modTableStatusView(item);
+            const status = rowView?.status ?? modTableStatusView(item, appLocale);
             const updateFreshness =
-              rowView?.updateFreshness ?? modUpdateFreshnessView(item, currentModUpdateResult);
+              rowView?.updateFreshness ?? modUpdateFreshnessView(
+                item,
+                currentModUpdateResult,
+                bridgeStatus?.language
+              );
             const visibleConflictHighlight =
               rowView?.visibleConflictHighlight ?? 'none';
             const visibleConflictMarkerStates =
@@ -13041,7 +13195,13 @@ export const App = () => {
                 data-menu-open={isMenuOpen}
                 data-state={postInstallRevealOrderId === item.orderId ? 'post-install-reveal' : undefined}
                 key={item.orderId}
-                aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}${visibleConflictMarkerStates.length > 0 ? ` ${modConflictMarkerTitle(visibleConflictMarkerStates)}` : ''}`}
+                aria-label={`${modItemTitle(item, appLocale)} ${isOverwrite
+                  ? t('mod.status.overwriteFolder')
+                  : item.isSeparator
+                    ? t('mod.overwrite.separator')
+                    : t('app.ui.mod')}${visibleConflictMarkerStates.length > 0
+                      ? ` ${visibleConflictMarkerStates.map((state) => t(modConflictMarkerKeys[state])).join(' · ')}`
+                      : ''}`}
                 aria-expanded={item.isSeparator && separatorModCount > 0 ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
@@ -13100,7 +13260,7 @@ export const App = () => {
               >
                 {isDropTarget && dropPlacement !== 'inside' ? (
                   <span className="row-drop-target-chip" aria-hidden="true">
-                    {isInstallDropTarget ? 'Установить сюда' : 'Сюда'}
+                    {isInstallDropTarget ? t('app.ui.installHere') : t('app.ui.moveHere')}
                   </span>
                 ) : null}
                 {isOverwrite ? (
@@ -13110,15 +13270,15 @@ export const App = () => {
                         <FolderOpen size={16} />
                       </span>
                       <div className="mod-overwrite-title">
-                        <strong>{modItemTitle(item)}</strong>
-                        <span>{item.id || 'overwrite'}</span>
+                        <strong>{modItemTitle(item, appLocale)}</strong>
+                        <span>{item.id || t('app.ui.overwrite')}</span>
                       </div>
                       <span className="mod-overwrite-state-cell" data-status="local">
                         <StatusDot
-                          label="Overwrite output folder"
+                          label={t('app.ui.overwriteOutputFolder')}
                           size={20}
                           state="none"
-                          title="Generated files are written here after mods"
+                          title={t('app.ui.generatedFiles')}
                         />
                       </span>
                     </div>
@@ -13132,8 +13292,10 @@ export const App = () => {
                         <button
                           className="separator-toggle-button mod-separator-toggle-button"
                           type="button"
-                          title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
-                          aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${modItemTitle(item)}`}
+                          title={isCollapsed ? t('app.ui.expandSeparator') : t('app.ui.collapseSeparator')}
+                          aria-label={`${isCollapsed
+                            ? t('app.ui.expandSeparator')
+                            : t('app.ui.collapseSeparator')} ${modItemTitle(item, appLocale)}`}
                           aria-expanded={!isCollapsed}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -13151,11 +13313,11 @@ export const App = () => {
                           )}
                         </button>
                       ) : null}
-                      <strong className="mod-separator-title">{modItemTitle(item)}</strong>
+                      <strong className="mod-separator-title">{modItemTitle(item, appLocale)}</strong>
                     </div>
                     <span className="mod-list-row__status mod-separator-status" role="cell">
                       <span className="mod-separator-count">
-                        {separatorModCount} {separatorModCount === 1 ? 'mod' : 'mods'}
+                        {t('app.ui.modCount', { count: separatorModCount })}
                       </span>
                       <ModConflictMarkers
                         className="mod-separator-conflicts"
@@ -13172,7 +13334,7 @@ export const App = () => {
                     <div className="mod-list-row__identity" role="cell">
                       <label
                         className="mod-enable-checkbox"
-                        title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
+                        title={item.isEnabled ? t('app.ui.disableMod') : t('app.ui.enableMod')}
                         onClick={(event) => event.stopPropagation()}
                       >
                         <input
@@ -13180,19 +13342,25 @@ export const App = () => {
                           type="checkbox"
                           checked={item.isEnabled}
                           disabled={modsActionsBusy || isPendingInstall}
-                          aria-label={item.isEnabled ? `Disable ${modItemTitle(item)}` : `Enable ${modItemTitle(item)}`}
-                          title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
+                          aria-label={`${item.isEnabled
+                            ? t('app.ui.disableMod')
+                            : t('app.ui.enableMod')} ${modItemTitle(item, appLocale)}`}
+                          title={item.isEnabled ? t('app.ui.disableMod') : t('app.ui.enableMod')}
                           onChange={(event) => void setModEnabled(item, event.currentTarget.checked)}
                         />
                         <span aria-hidden="true" className="flx-checkbox__box" />
                       </label>
                       <div className="mod-list-row__title">
-                        <strong>{modItemTitle(item)}</strong>
-                        <span>{item.sourceIsNexus ? 'Nexus Mods' : item.isLocal ? 'Local' : 'Managed'}</span>
+                        <strong>{modItemTitle(item, appLocale)}</strong>
+                        <span>{item.sourceIsNexus
+                          ? t('app.ui.nexusMods')
+                          : item.isLocal
+                            ? t('app.ui.local')
+                            : t('app.ui.managed')}</span>
                       </div>
                     </div>
                     <span className="mod-list-row__version" role="cell">
-                      {modVersionText(item)}
+                      {modVersionText(item, appLocale)}
                     </span>
                     <span
                       className="mod-list-row__latest"
@@ -13201,7 +13369,7 @@ export const App = () => {
                       title={updateFreshness.title || undefined}
                     >
                       <span className="mod-list-row__latest-value">
-                        {modLatestVersionText(item)}
+                        {modLatestVersionText(item, appLocale)}
                       </span>
                       {updateFreshness.label ? (
                         <span
@@ -13278,7 +13446,7 @@ export const App = () => {
           <button
             className="icon-button"
             type="button"
-            title={entry.isDirectory ? 'Toggle folder' : 'File'}
+            title={entry.isDirectory ? t('app.ui.toggleFolder') : t('app.ui.file')}
             disabled={!entry.isDirectory || !entry.hasChildren}
             onClick={() => void toggleFileTreeDirectory(entry)}
           >
@@ -13297,7 +13465,9 @@ export const App = () => {
               className="file-tree-file-link file-tree-file-link--folder"
               type="button"
               onClick={() => void toggleFileTreeDirectory(entry)}
-              title={isExpanded ? `Close ${entry.name}` : `Open ${entry.name}`}
+              title={isExpanded
+                ? t('app.ui.closeNamed', { name: entry.name })
+                : t('app.ui.openNamed', { name: entry.name })}
             >
               {entry.name}
             </button>
@@ -13309,7 +13479,7 @@ export const App = () => {
               data-preview-kind={previewKind.kind}
               type="button"
               onClick={() => void openFilePreviewForFile(entry)}
-              title={`Open ${entry.name}`}
+              title={t('app.ui.openNamed', { name: entry.name })}
             >
               {entry.name}
             </button>
@@ -13318,7 +13488,7 @@ export const App = () => {
               className="file-tree-file-link"
               type="button"
               onClick={() => void openTextEditorForFile(entry)}
-              title={`Open ${entry.name}`}
+              title={t('app.ui.openNamed', { name: entry.name })}
             >
               {entry.name}
             </button>
@@ -13329,8 +13499,8 @@ export const App = () => {
               <button
                 className="icon-button file-tree-row__action"
                 type="button"
-                title={`Edit ${entry.name}`}
-                aria-label={`Edit ${entry.name}`}
+                title={t('app.ui.editNamed', { name: entry.name })}
+                aria-label={t('app.ui.editNamed', { name: entry.name })}
                 onClick={() => void openTextEditorForFile(entry)}
               >
                 <Pencil size={14} aria-hidden="true" />
@@ -13339,8 +13509,8 @@ export const App = () => {
               <button
                 className="icon-button file-tree-row__action"
                 type="button"
-                title={`Open ${entry.name}`}
-                aria-label={`Open ${entry.name}`}
+                title={t('app.action.openNamed', { name: entry.name })}
+                aria-label={t('app.action.openNamed', { name: entry.name })}
                 onClick={() => void openFilePreviewForFile(entry)}
               >
                 <ExternalLink size={14} aria-hidden="true" />
@@ -13359,67 +13529,71 @@ export const App = () => {
   };
 
   const renderModsInspector = () => (
-    <aside className="inspector mods-inspector" aria-label="Selected mod details">
+    <aside className="inspector mods-inspector" aria-label={t('app.ui.selectedModDetails')}>
       <div className="surface-header surface-header--compact">
         <div>
-          <p className="eyebrow">Selected mod</p>
-          <h2>{selectedModItem ? modItemTitle(selectedModItem) : 'None'}</h2>
+          <p className="eyebrow">{t('app.ui.selectedMod')}</p>
+          <h2>{selectedModItem ? modItemTitle(selectedModItem, appLocale) : t('app.ui.none')}</h2>
         </div>
       </div>
       <dl className="fact-list">
         <div>
-          <dt>Installed</dt>
+          <dt>{t('app.ui.installed')}</dt>
           <dd>{installedMods.length}</dd>
         </div>
         <div>
-          <dt>Visible</dt>
+          <dt>{t('app.ui.visible')}</dt>
           <dd>{filteredModItems.length}</dd>
         </div>
         <div>
-          <dt>Status</dt>
-          <dd>{modStatusText(selectedModItem)}</dd>
+          <dt>{t('app.ui.status')}</dt>
+          <dd>{modStatusText(selectedModItem, appLocale)}</dd>
         </div>
         <div>
-          <dt>Version</dt>
-          <dd>{selectedModItem?.isMod ? selectedModItem.version || 'local' : isModOverwriteItem(selectedModItem) ? 'overwrite' : 'separator'}</dd>
+          <dt>{t('app.ui.version')}</dt>
+          <dd>{selectedModItem?.isMod
+            ? selectedModItem.version || t('app.ui.local')
+            : isModOverwriteItem(selectedModItem)
+              ? t('app.source.overwrite')
+              : t('mod.overwrite.separator')}</dd>
         </div>
         <div>
-          <dt>Files</dt>
+          <dt>{t('app.ui.files')}</dt>
           <dd>{selectedModItem?.isMod ? selectedModItem.fileCount : 0}</dd>
         </div>
         <div>
-          <dt>Conflicts</dt>
+          <dt>{t('app.ui.conflicts')}</dt>
           <dd>
             {selectedModItem?.isMod
-              ? selectedModItem.conflictingFileCount || selectedModItem.conflictStatus || 'none'
-              : 'none'}
+              ? selectedModItem.conflictingFileCount || selectedModItem.conflictStatus || t('app.ui.noConflicts')
+              : t('app.ui.noConflicts')}
           </dd>
         </div>
       </dl>
       <div className="file-tree-panel">
         <div className="file-tree-panel__header">
           <FolderTree size={16} aria-hidden="true" />
-          <strong>File tree</strong>
+          <strong>{t('app.ui.fileTree')}</strong>
           {selectedModItem?.isMod ? (
             <button
               className="icon-button"
               type="button"
-              title="Reload file tree"
+              title={t('app.ui.reloadFileTree')}
               onClick={() => void loadModFileTree('', selectedModItem)}
             >
               <RefreshCw size={15} aria-hidden="true" />
             </button>
           ) : null}
         </div>
-        <div className="file-tree" role="tree" aria-label="Selected mod file tree">
+        <div className="file-tree" role="tree" aria-label={t('app.ui.selectedModFileTree')}>
           {!selectedModItem?.isMod ? (
-            <span className="file-tree-empty">Select an installed mod.</span>
+            <span className="file-tree-empty">{t('app.ui.selectInstalledMod')}</span>
           ) : fileTreeState === 'loading' ? (
-            <span className="file-tree-empty">Loading tree</span>
+            <span className="file-tree-empty">{t('app.ui.loadingTree')}</span>
           ) : fileTreeState === 'error' ? (
-            <span className="file-tree-empty">File tree unavailable.</span>
+            <span className="file-tree-empty">{t('app.ui.fileTreeUnavailable')}</span>
           ) : (fileTreeCache[''] ?? []).length === 0 ? (
-            <span className="file-tree-empty">No files indexed yet.</span>
+            <span className="file-tree-empty">{t('app.ui.noIndexedFiles')}</span>
           ) : (
             renderFileTreeEntries()
           )}
@@ -13458,8 +13632,10 @@ export const App = () => {
           ? modDetailsSummary
           : null;
     const modReady = modItem !== null;
-    const modTitle = modItem ? modItemTitle(modItem) : modDetailsInitialName || 'Mod';
-    const overwrite = modItem ? modOverwriteView(modItem) : null;
+    const modTitle = modItem
+      ? modItemTitle(modItem, appLocale)
+      : modDetailsInitialName || t('app.ui.mod');
+    const overwrite = modItem ? modOverwriteView(modItem, appLocale) : null;
     const fileCount = initialModDetailsBootstrap?.content
       ? initialModDetailsBootstrap.content.directories.reduce(
           (total, directory) =>
@@ -13473,36 +13649,36 @@ export const App = () => {
       modDetailsConflictPage?.totalOverwrites ?? (modItem ? modItem.overwritingFileCount : 0);
     const overwrittenCount =
       modDetailsConflictPage?.totalOverwritten ?? (modItem ? modItem.overwrittenFileCount : 0);
-    const projectTitle = selectedProject?.name ?? initialModDetailsBootstrap?.projectName ?? 'Build';
+    const projectTitle = selectedProject?.name ?? initialModDetailsBootstrap?.projectName ?? t('app.ui.build');
 
     return (
-      <section className="mod-details-window" aria-label="Mod details">
+      <section className="mod-details-window" aria-label={t('app.ui.modDetails')}>
         <header className="mod-details-header">
           <div className="mod-details-title">
             <span>{projectTitle}</span>
             <h2>{modTitle}</h2>
           </div>
-          <dl className="mod-details-facts" aria-label="Mod summary">
+          <dl className="mod-details-facts" aria-label={t('app.ui.modSummary')}>
             <div>
-              <dt>Files</dt>
+              <dt>{t('app.ui.files')}</dt>
               <dd>{modReady ? fileCount : '...'}</dd>
             </div>
             <div>
-              <dt>Overwrites</dt>
+              <dt>{t('app.ui.overwrites')}</dt>
               <dd>{modReady ? overwritesCount : '...'}</dd>
             </div>
             <div>
-              <dt>Overwritten</dt>
+              <dt>{t('app.ui.overwritten')}</dt>
               <dd>{modReady ? overwrittenCount : '...'}</dd>
             </div>
             <div>
-              <dt>Status</dt>
-              <dd>{overwrite?.label || modStatusText(modItem)}</dd>
+              <dt>{t('app.ui.status')}</dt>
+              <dd>{overwrite?.label || modStatusText(modItem, appLocale)}</dd>
             </div>
           </dl>
         </header>
 
-        <div className="mod-details-tabs" role="tablist" aria-label="Mod details sections">
+        <div className="mod-details-tabs" role="tablist" aria-label={t('app.ui.modDetailsSections')}>
           {modDetailsTabs.map((tab) => (
             <button
               aria-selected={modDetailsTab === tab.id}
@@ -13521,49 +13697,49 @@ export const App = () => {
         <section
           className="mod-details-panel"
           role="tabpanel"
-          aria-label={modDetailsTab === 'files' ? 'Файлы' : 'Конфликты'}
+          aria-label={modDetailsTab === 'files' ? t('app.tab.files') : t('app.tab.conflicts')}
         >
           {modDetailsTab === 'files' ? (
-            <div className="file-tree mod-details-file-tree" role="tree" aria-label="Mod file tree">
+            <div className="file-tree mod-details-file-tree" role="tree" aria-label={t('app.ui.modFileTree')}>
               {!modReady ? (
-                <span className="file-tree-empty">Mod unavailable.</span>
+                <span className="file-tree-empty">{t('app.ui.modUnavailable')}</span>
               ) : fileTreeState === 'error' ? (
-                <span className="file-tree-empty">File tree unavailable.</span>
+                <span className="file-tree-empty">{t('app.ui.fileTreeUnavailable')}</span>
               ) : fileTreeState === 'loading' && (fileTreeCache[''] ?? []).length === 0 ? null : (
                 fileTreeCache[''] ?? []
               ).length === 0 ? (
-                <span className="file-tree-empty">No files indexed yet.</span>
+                <span className="file-tree-empty">{t('app.ui.noIndexedFiles')}</span>
               ) : (
                 renderFileTreeEntries()
               )}
             </div>
           ) : (
             <div className="mod-details-conflicts">
-              <section aria-label="Перезаписывает">
+              <section aria-label={t('app.ui.overwrites')}>
                 <header>
-                  <strong>Перезаписывает:</strong>
+                  <strong>{t('app.ui.overwritesColon')}</strong>
                   <span>{overwritesCount}</span>
                 </header>
                 {modDetailsConflictScanState === 'error' ? (
-                  <span className="mod-details-empty">Conflicts unavailable.</span>
+                  <span className="mod-details-empty">{t('app.ui.conflictsUnavailable')}</span>
                 ) : modDetailsConflictScanState === 'loading' && !modDetailsConflictPage ? null : (
                   renderModDetailsConflictList(
                     modDetailsConflictEntries.overwrites,
-                    'No overwritten files loaded.'
+                    t('app.ui.noOverwrittenFiles')
                   )
                 )}
               </section>
-              <section aria-label="Перезаписывается">
+              <section aria-label={t('app.ui.overwrittenBy')}>
                 <header>
-                  <strong>Перезаписывается:</strong>
+                  <strong>{t('app.ui.overwrittenByColon')}</strong>
                   <span>{overwrittenCount}</span>
                 </header>
                 {modDetailsConflictScanState === 'error' ? (
-                  <span className="mod-details-empty">Conflicts unavailable.</span>
+                  <span className="mod-details-empty">{t('app.ui.conflictsUnavailable')}</span>
                 ) : modDetailsConflictScanState === 'loading' && !modDetailsConflictPage ? null : (
                   renderModDetailsConflictList(
                     modDetailsConflictEntries.overwritten,
-                    'No overwriting files loaded.'
+                    t('app.ui.noOverwritingFiles')
                   )
                 )}
               </section>
@@ -13579,23 +13755,23 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
     }
 
     return (
-      <section className="mods-layout" aria-label="Build mods workspace">
+      <section className="mods-layout" aria-label={t('app.ui.buildModsWorkspace')}>
         <section
           className="work-surface mods-surface"
           data-download-install-active={Boolean(draggedDownloadInstallId)}
         >
           <div className="surface-header">
             <div>
-              <p className="eyebrow">Mods</p>
+              <p className="eyebrow">{t('app.ui.mods')}</p>
               <h2>{selectedProject.name}</h2>
             </div>
           </div>
@@ -13642,7 +13818,7 @@ export const App = () => {
       <div
         className="mod-row-menu mod-row-menu--context"
         role="menu"
-        aria-label={`${pluginItemTitle(item)} actions`}
+        aria-label={t('app.ui.namedActions', { name: pluginItemTitle(item, appLocale) })}
         data-row-context-menu-surface="true"
         style={{
           left: pluginMenuPosition.left,
@@ -13678,7 +13854,7 @@ export const App = () => {
                 }}
               >
                 <MenuIcon source={menuFolderOpenIcon} />
-                <span>Открыть в проводнике</span>
+                <span>{t('app.ui.openExplorer')}</span>
               </button>
             ) : null}
             <button
@@ -13696,9 +13872,7 @@ export const App = () => {
             >
               <CheckCircle2 size={14} aria-hidden="true" />
               <span>
-                {selectedPluginItems.length === 1
-                  ? 'Включить выбранный плагин'
-                  : 'Включить выбранные плагины'}
+                {t('app.ui.enableSelectedPlugin', { count: selectedPluginItems.length })}
               </span>
             </button>
             <button
@@ -13711,7 +13885,7 @@ export const App = () => {
               }}
             >
               <CheckCircle2 size={14} aria-hidden="true" />
-              <span>Включить все плагины</span>
+              <span>{t('app.ui.enableAllPlugins')}</span>
             </button>
             <button
               type="button"
@@ -13723,7 +13897,7 @@ export const App = () => {
               }}
             >
               <XCircle size={14} aria-hidden="true" />
-              <span>Выключить все плагины</span>
+              <span>{t('app.ui.disableAllPlugins')}</span>
             </button>
           </>
         ) : null}
@@ -13741,7 +13915,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={isCollapsed ? menuChevronDownIcon : menuChevronUpIcon} />
-              <span>{isCollapsed ? 'Expand separator' : 'Collapse separator'}</span>
+              <span>{isCollapsed ? t('app.ui.expandSeparator') : t('app.ui.collapseSeparator')}</span>
             </button>
             <button
               type="button"
@@ -13753,7 +13927,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuChevronUpIcon} />
-              <span>Свернуть все</span>
+              <span>{t('app.ui.collapseAll')}</span>
             </button>
             <button
               type="button"
@@ -13765,7 +13939,7 @@ export const App = () => {
               }}
             >
               <MenuIcon source={menuChevronDownIcon} />
-              <span>Развернуть все</span>
+              <span>{t('app.ui.expandAll')}</span>
             </button>
           </>
         ) : null}
@@ -13781,7 +13955,7 @@ export const App = () => {
             aria-keyshortcuts="Delete"
           >
             <MenuIcon source={menuTrashIcon} />
-            <span>Delete separator</span>
+            <span>{t('app.ui.deleteSeparator')}</span>
           </button>
         ) : null}
       </div>,
@@ -13793,16 +13967,16 @@ export const App = () => {
     <div
       className="mod-table plugin-table plugin-table--loading"
       role="table"
-      aria-label="Loading plugins"
+      aria-label={t('app.ui.loadingPlugins')}
     >
       <span className="sr-only" role="status">
-        Loading plugins
+        {t('app.ui.loadingPlugins')}
       </span>
       <div className="mod-row plugin-row mod-row--head" role="row">
-        <span role="columnheader">Order</span>
-        <span role="columnheader">Plugin</span>
-        <span role="columnheader">Source</span>
-        <span role="columnheader">Статус</span>
+        <span role="columnheader">{t('app.ui.order')}</span>
+        <span role="columnheader">{t('app.ui.plugin')}</span>
+        <span role="columnheader">{t('app.ui.source')}</span>
+        <span role="columnheader">{t('app.ui.status')}</span>
       </div>
       <div className="mod-table__body mod-table__body--loading">
         {pluginLoadingSkeletonRows.map((index) => (
@@ -13845,8 +14019,8 @@ export const App = () => {
       return (
         <EmptyState
           icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title="Plugins unavailable"
-          description={pluginsWorkspace.errorMessage ?? 'The native core could not load plugins.'}
+          title={t('app.ui.pluginsUnavailable')}
+          description={pluginsWorkspace.errorMessage ?? t('app.ui.pluginsLoadFailed')}
           tone="error"
         />
       );
@@ -13856,23 +14030,25 @@ export const App = () => {
       return (
         <EmptyState
           icon={<MoreHorizontal size={18} aria-hidden="true" />}
-          title={pluginsWorkspace.items.length === 0 ? 'No detected plugins' : 'No matching plugins'}
+          title={pluginsWorkspace.items.length === 0
+            ? t('app.ui.noDetectedPlugins')
+            : t('app.ui.noMatchingPlugins')}
           description={
             pluginsWorkspace.items.length === 0
-              ? 'Install or enable a mod with plugin files to populate the load order.'
-              : 'Clear the search query to return to the full load order.'
+              ? t('app.ui.noPluginsDescription')
+              : t('app.ui.noMatchingPluginsDescription')
           }
         />
       );
     }
 
     return (
-      <div className="mod-table plugin-table" role="table" aria-label="Plugin load order">
+      <div className="mod-table plugin-table" role="table" aria-label={t('app.ui.pluginLoadOrder')}>
         <div className="mod-row plugin-row mod-row--head" role="row">
-          <span role="columnheader">Order</span>
-          <span role="columnheader">Plugin</span>
-          <span role="columnheader">Source</span>
-          <span role="columnheader">Статус</span>
+          <span role="columnheader">{t('app.ui.order')}</span>
+          <span role="columnheader">{t('app.ui.plugin')}</span>
+          <span role="columnheader">{t('app.ui.source')}</span>
+          <span role="columnheader">{t('app.ui.status')}</span>
         </div>
         <PluginsListSurface
           items={filteredPluginItems}
@@ -13905,11 +14081,13 @@ export const App = () => {
             const hasMissingMasters =
               showPluginMissingMastersStatus && missingMasterSummary.totalCount > 0;
             const missingMasterLabel = item.isSeparator
-              ? `Отсутствуют мастер-файлы в разделителе ${pluginItemTitle(item)}: ${missingMasterSummary.visibleMasters.join(', ')}${
-                  missingMasterSummary.hiddenCount > 0
-                    ? `, и ещё ${missingMasterSummary.hiddenCount}`
+              ? t('app.ui.pluginMissingMasters', {
+                  name: pluginItemTitle(item, appLocale),
+                  masters: missingMasterSummary.visibleMasters.join(', '),
+                  more: missingMasterSummary.hiddenCount > 0
+                    ? t('app.ui.moreMasters', { count: missingMasterSummary.hiddenCount })
                     : ''
-                }`
+                })
               : undefined;
             const rowPresentationKey = [
               pluginOrderItemPresentationKey(item),
@@ -13945,8 +14123,10 @@ export const App = () => {
                 data-reorder-disabled={!canDragPluginRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
-                aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}${
-                  hasMissingMasters ? ' missing masters' : ''
+                aria-label={`${pluginItemTitle(item, appLocale)} ${item.isSeparator
+                  ? t('mod.overwrite.separator')
+                  : t('app.ui.plugin')}${
+                  hasMissingMasters ? ` ${t('app.ui.missingMastersSuffix')}` : ''
                 }${blockedDropReason ? ` ${blockedDropReason}` : ''}`}
                 aria-expanded={item.isSeparator && separatorPluginCount > 0 ? !isCollapsed : undefined}
                 aria-selected={isSelected}
@@ -13994,7 +14174,7 @@ export const App = () => {
                     role={blockedDropReason ? 'status' : undefined}
                     title={blockedDropReason ?? undefined}
                   >
-                    {blockedDropReason ? 'Нельзя' : 'Сюда'}
+                    {blockedDropReason ? t('app.ui.cannotMove') : t('app.ui.moveHere')}
                   </span>
                 ) : null}
                 <span className="plugin-hex-index" role="cell">
@@ -14002,8 +14182,10 @@ export const App = () => {
                     <button
                       className="separator-toggle-button"
                       type="button"
-                      title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
-                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${pluginItemTitle(item)}`}
+                      title={isCollapsed ? t('app.ui.expandSeparator') : t('app.ui.collapseSeparator')}
+                      aria-label={`${isCollapsed
+                        ? t('app.ui.expandSeparator')
+                        : t('app.ui.collapseSeparator')} ${pluginItemTitle(item, appLocale)}`}
                       aria-expanded={!isCollapsed}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -14031,7 +14213,7 @@ export const App = () => {
                   {item.isPlugin ? (
                     <label
                       className="mod-enable-checkbox plugin-enable-checkbox"
-                      title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
+                      title={item.isEnabled ? t('app.ui.disablePlugin') : t('app.ui.enablePlugin')}
                       onClick={(event) => event.stopPropagation()}
                     >
                         <input
@@ -14041,27 +14223,25 @@ export const App = () => {
                           disabled={item.isLocked || pluginsActionsBusy}
                           aria-label={
                             item.isEnabled
-                              ? `Disable ${pluginItemTitle(item)}`
-                            : `Enable ${pluginItemTitle(item)}`
+                              ? t('app.ui.disableNamed', { name: pluginItemTitle(item, appLocale) })
+                              : t('app.ui.enableNamed', { name: pluginItemTitle(item, appLocale) })
                         }
-                        title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
+                        title={item.isEnabled ? t('app.ui.disablePlugin') : t('app.ui.enablePlugin')}
                           onChange={(event) => void setPluginEnabled(item, event.currentTarget.checked)}
                         />
                       <span aria-hidden="true" className="flx-checkbox__box" />
                     </label>
                   ) : null}
                   <div className="plugin-row__title">
-                    <strong>{pluginItemTitle(item)}</strong>
+                    <strong>{pluginItemTitle(item, appLocale)}</strong>
                     <span>
                       {item.isSeparator
-                        ? `${separatorPluginCount} ${
-                            separatorPluginCount === 1 ? 'plugin' : 'plugins'
-                          }`
-                        : pluginSourceLabel(item)}
+                        ? t('app.ui.pluginsCount', { count: separatorPluginCount })
+                        : pluginSourceLabel(item, appLocale)}
                     </span>
                   </div>
                 </div>
-                <span role="cell">{item.isSeparator ? '' : item.sourceMod || 'game data'}</span>
+                <span role="cell">{item.isSeparator ? '' : item.sourceMod || t('app.ui.gameData')}</span>
                 <span className="plugin-status-cell" role="cell">
                   {hasMissingMasters ? (
                     <MissingMastersStatus
@@ -14083,53 +14263,57 @@ export const App = () => {
   };
 
   const renderPluginsInspector = () => (
-    <aside className="inspector plugins-inspector" aria-label="Selected plugin details">
+    <aside className="inspector plugins-inspector" aria-label={t('app.ui.selectedPluginDetails')}>
       <div className="surface-header surface-header--compact">
         <div>
-          <p className="eyebrow">Selected plugin</p>
-          <h2>{selectedPluginItem ? pluginItemTitle(selectedPluginItem) : 'None'}</h2>
+          <p className="eyebrow">{t('app.ui.selectedPlugin')}</p>
+          <h2>{selectedPluginItem ? pluginItemTitle(selectedPluginItem, appLocale) : t('app.ui.none')}</h2>
         </div>
       </div>
       <dl className="fact-list">
         <div>
-          <dt>Entries</dt>
+          <dt>{t('app.ui.entries')}</dt>
           <dd>{pluginsWorkspace.items.length}</dd>
         </div>
         <div>
-          <dt>Visible</dt>
+          <dt>{t('app.ui.visible')}</dt>
           <dd>{filteredPluginItems.length}</dd>
         </div>
         <div>
-          <dt>Status</dt>
-          <dd>{pluginStatusText(selectedPluginItem)}</dd>
+          <dt>{t('app.ui.status')}</dt>
+          <dd>{pluginStatusText(selectedPluginItem, appLocale)}</dd>
         </div>
         <div>
-          <dt>Type</dt>
-          <dd>{pluginTypeLabel(selectedPluginItem)}</dd>
+          <dt>{t('app.ui.type')}</dt>
+          <dd>{pluginTypeLabel(selectedPluginItem, appLocale)}</dd>
         </div>
         <div>
-          <dt>Source mod</dt>
-          <dd>{selectedPluginItem?.isPlugin ? selectedPluginItem.sourceMod || 'game data' : 'none'}</dd>
+          <dt>{t('app.ui.sourceMod')}</dt>
+          <dd>{selectedPluginItem?.isPlugin
+            ? selectedPluginItem.sourceMod || t('app.ui.gameData')
+            : t('app.ui.noConflicts')}</dd>
         </div>
         <div>
-          <dt>Missing masters</dt>
+          <dt>{t('app.ui.missingMasters')}</dt>
           <dd>
             {selectedPluginItem?.isPlugin && selectedPluginItem.missingMasters.length > 0
               ? selectedPluginItem.missingMasters.join(', ')
-              : 'none'}
+              : t('app.ui.noConflicts')}
           </dd>
         </div>
         <div>
-          <dt>Lock</dt>
-          <dd>{selectedPluginItem?.isLocked ? selectedPluginItem.lockReason || 'locked' : 'none'}</dd>
+          <dt>{t('app.ui.lock')}</dt>
+          <dd>{selectedPluginItem?.isLocked
+            ? selectedPluginItem.lockReason || t('app.ui.locked')
+            : t('app.ui.noConflicts')}</dd>
         </div>
       </dl>
       <div className="plugin-capability-panel">
-        <strong>Capability</strong>
+        <strong>{t('app.ui.capability')}</strong>
         <span>
           {pluginCapabilities.loadOrderSupported
-            ? 'Plugin load-order editing is available for this build.'
-            : pluginCapabilities.reason || 'Load order editing is not available.'}
+            ? t('app.ui.pluginEditingAvailable')
+            : pluginCapabilities.reason || t('app.ui.pluginEditingUnavailable')}
         </span>
       </div>
     </aside>
@@ -14140,9 +14324,9 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
@@ -14150,20 +14334,20 @@ export const App = () => {
 
     if (!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported) {
       return (
-        <section className="center-empty" aria-label="Plugins capability state">
+        <section className="center-empty" aria-label={t('app.ui.pluginsCapability')}>
           <MoreHorizontal size={22} aria-hidden="true" />
-          <h2>Plugins unavailable</h2>
+          <h2>{t('app.ui.pluginsUnavailable')}</h2>
           <span>{pluginCapabilities.reason}</span>
         </section>
       );
     }
 
     return (
-      <section className="mods-layout plugins-layout" aria-label="Build plugins workspace">
+      <section className="mods-layout plugins-layout" aria-label={t('app.ui.buildPluginsWorkspace')}>
         <section className="work-surface mods-surface">
           <div className="surface-header">
             <div>
-              <p className="eyebrow">Plugins</p>
+              <p className="eyebrow">{t('app.tab.plugins')}</p>
               <h2>{selectedProject.name}</h2>
             </div>
           </div>
@@ -14197,7 +14381,7 @@ export const App = () => {
       <div
         className="mod-row-menu mod-row-menu--context"
         role="menu"
-        aria-label={`${downloadTitle(entry)} actions`}
+        aria-label={t('app.ui.namedActions', { name: downloadTitle(entry, appLocale) })}
         data-row-context-menu-surface="true"
         style={{
           left: downloadMenuPosition.left,
@@ -14216,7 +14400,7 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuPackagePlusIcon} />
-          Install
+          {t('app.ui.install')}
         </button>
         {entry.isDownloading ? (
           <button
@@ -14229,7 +14413,7 @@ export const App = () => {
             }}
           >
             <MenuIcon source={menuCircleXIcon} />
-            Cancel
+            {t('app.ui.cancel')}
           </button>
         ) : null}
         {entry.canResume ? (
@@ -14243,7 +14427,7 @@ export const App = () => {
             }}
           >
             <MenuIcon source={menuPlayIcon} />
-            Resume
+            {t('app.ui.resume')}
           </button>
         ) : null}
         <button
@@ -14255,7 +14439,7 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuFolderOpenIcon} />
-          Show in folder
+          {t('app.ui.showInFolder')}
         </button>
         <button
           type="button"
@@ -14294,9 +14478,9 @@ export const App = () => {
           }}
         >
           <MenuIcon source={menuTrashIcon} />
-          <span>Удалить</span>
+          <span>{t('app.ui.delete')}</span>
           <span className="mod-row-menu__shortcut" aria-hidden="true">
-            Del
+            {t('common.key.deleteShort')}
           </span>
         </button>
       </div>,
@@ -14308,14 +14492,14 @@ export const App = () => {
     <div
       className="mod-table download-table download-table--skeleton"
       role="table"
-      aria-label="Downloads"
+      aria-label={t('app.ui.downloads')}
       aria-busy="true"
     >
       <div className="mod-row download-row mod-row--head" role="row">
-        <span role="columnheader">File</span>
-        <span role="columnheader">Status</span>
-        <span role="columnheader">Size</span>
-        <span role="columnheader">Source</span>
+        <span role="columnheader">{t('app.ui.file')}</span>
+        <span role="columnheader">{t('app.ui.status')}</span>
+        <span role="columnheader">{t('app.ui.size')}</span>
+        <span role="columnheader">{t('app.ui.source')}</span>
       </div>
       <div className="mod-table__body" role="rowgroup">
         {downloadSkeletonRows.map((row) => (
@@ -14362,9 +14546,9 @@ export const App = () => {
   const renderDownloadDropSurface = (content: ReactElement) => {
     const statusText =
       downloadDropCue === 'importing'
-        ? 'Adding archive to Downloads'
+        ? t('app.ui.addingArchiveStatus')
         : downloadDropCue === 'hover'
-          ? 'Drop archive to add it to Downloads'
+          ? t('app.ui.dropArchiveStatus')
           : '';
 
     return (
@@ -14383,8 +14567,10 @@ export const App = () => {
             <div className="download-drop-cue__content">
               <UploadCloud size={22} aria-hidden="true" />
               <div>
-                <strong>{downloadDropCue === 'importing' ? 'Adding archive' : 'Drop archive'}</strong>
-                <span>Downloads</span>
+                <strong>{downloadDropCue === 'importing'
+                  ? t('app.ui.addingArchive')
+                  : t('app.ui.dropArchive')}</strong>
+                <span>{t('app.ui.downloads')}</span>
               </div>
             </div>
           </div>
@@ -14405,8 +14591,8 @@ export const App = () => {
       return (
         <EmptyState
           icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title="Downloads unavailable"
-          description={downloadsWorkspace.errorMessage ?? 'The native core could not load downloads.'}
+          title={t('app.ui.downloadsUnavailable')}
+          description={downloadsWorkspace.errorMessage ?? t('app.ui.downloadsLoadFailed')}
           tone="error"
         />
       );
@@ -14416,23 +14602,25 @@ export const App = () => {
       return (
         <EmptyState
           icon={<Download size={18} aria-hidden="true" />}
-          title={downloadsWorkspace.items.length === 0 ? 'No downloads yet' : 'No matching downloads'}
+          title={downloadsWorkspace.items.length === 0
+            ? t('app.ui.noDownloads')
+            : t('app.ui.noMatchingDownloads')}
           description={
             downloadsWorkspace.items.length === 0
-              ? 'Import an archive or capture NXM links to populate this queue.'
-              : 'Clear the search query to return to the full download queue.'
+              ? t('app.ui.noDownloadsDescription')
+              : t('app.ui.noMatchingDownloadsDescription')
           }
         />
       );
     }
 
     return (
-      <div className="mod-table download-table" role="table" aria-label="Downloads">
+      <div className="mod-table download-table" role="table" aria-label={t('app.ui.downloads')}>
         <div className="mod-row download-row mod-row--head" role="row">
-          <span role="columnheader">File</span>
-          <span role="columnheader">Status</span>
-          <span role="columnheader">Size</span>
-          <span role="columnheader">Source</span>
+          <span role="columnheader">{t('app.ui.file')}</span>
+          <span role="columnheader">{t('app.ui.status')}</span>
+          <span role="columnheader">{t('app.ui.size')}</span>
+          <span role="columnheader">{t('app.ui.source')}</span>
         </div>
         <AdaptiveVirtualList
           className="mod-table__body"
@@ -14446,7 +14634,7 @@ export const App = () => {
           renderItem={(entry) => {
             const isSelected = downloadsWorkspace.selectedIds.has(entry.id);
             const isMenuOpen = entry.id === downloadMenuId;
-            const status = downloadStatusView(entry);
+            const status = downloadStatusView(entry, appLocale);
 
             return (
               <div
@@ -14512,7 +14700,7 @@ export const App = () => {
                 }}
               >
                 <div className="mod-row__main" role="cell">
-                  <strong title={downloadRawTitle(entry)}>{downloadTitle(entry)}</strong>
+                  <strong title={downloadRawTitle(entry, appLocale)}>{downloadTitle(entry, appLocale)}</strong>
                 </div>
                 <div className="download-progress" role="cell" data-status={status.tone}>
                   {status.showProgress ? (
@@ -14523,7 +14711,7 @@ export const App = () => {
                   <small title={status.text}>{status.text}</small>
                 </div>
                 <span role="cell">{entry.sizeText || '-'}</span>
-                <span role="cell">{entry.source || 'local'}</span>
+                <span role="cell">{entry.source || t('app.ui.local')}</span>
                 {isMenuOpen ? renderDownloadRowMenu(entry) : null}
               </div>
             );
@@ -14535,9 +14723,9 @@ export const App = () => {
 
   const renderEffectiveFileTreeRow = ({ entry, level }: EffectiveFileTreeRow) => {
     const isExpanded = Boolean(expandedEffectiveFileTree[entry.relativePath]);
-    const sourceLabel = effectiveFileTreeSourceLabel(entry);
+    const sourceLabel = effectiveFileTreeSourceLabel(entry, appLocale);
     const canOpen = Boolean(entry.sourcePath);
-    const rowName = entry.name || 'Game Root';
+    const rowName = entry.name || t('app.ui.gameRoot');
 
     return (
       <div
@@ -14562,8 +14750,8 @@ export const App = () => {
         <button
           className="icon-button right-pane-data-row__toggle"
           type="button"
-          title={isExpanded ? 'Collapse' : 'Expand'}
-          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${rowName}`}
+          title={isExpanded ? t('app.ui.collapse') : t('app.ui.expand')}
+          aria-label={`${isExpanded ? t('app.ui.collapse') : t('app.ui.expand')} ${rowName}`}
           disabled={!entry.isDirectory || !entry.hasChildren}
           onClick={() => void toggleEffectiveFileTreeDirectory(entry)}
         >
@@ -14578,10 +14766,10 @@ export const App = () => {
         ) : (
           <File size={15} aria-hidden="true" />
         )}
-        <span className="right-pane-data-row__label" title={effectiveVirtualPathLabel(entry)}>
+        <span className="right-pane-data-row__label" title={effectiveVirtualPathLabel(entry, appLocale)}>
           {rowName}
         </span>
-        <code title={entry.virtualPath}>{effectiveVirtualPathLabel(entry)}</code>
+        <code title={entry.virtualPath}>{effectiveVirtualPathLabel(entry, appLocale)}</code>
         <span className="right-pane-data-row__source" title={sourceLabel}>
           {sourceLabel}
         </span>
@@ -14590,8 +14778,8 @@ export const App = () => {
             <button
               className="icon-button"
               type="button"
-              title={`Open ${effectiveVirtualPathLabel(entry)}`}
-              aria-label={`Open ${effectiveVirtualPathLabel(entry)}`}
+              title={t('app.action.openNamed', { name: effectiveVirtualPathLabel(entry, appLocale) })}
+              aria-label={t('app.action.openNamed', { name: effectiveVirtualPathLabel(entry, appLocale) })}
               onClick={() => void openEffectiveFileTreeEntry(entry)}
             >
               <ExternalLink size={14} aria-hidden="true" />
@@ -14607,7 +14795,7 @@ export const App = () => {
   const renderEffectiveFileTreeSkeletonRows = () => (
     <>
       <span className="sr-only" role="status">
-        Loading data
+        {t('app.ui.loadingData')}
       </span>
       {effectiveFileTreeSkeletonRows.map((index) => (
         <div
@@ -14652,12 +14840,12 @@ export const App = () => {
         key="data"
         className="right-pane-content right-pane-content--data"
         role="tabpanel"
-        aria-label="Данные"
+        aria-label={t('app.tab.data')}
       >
         <div
           className="right-pane-data-tree file-tree"
           role="tree"
-          aria-label="Effective game root"
+          aria-label={t('app.ui.effectiveGameRoot')}
           aria-busy={showInitialSkeleton || effectiveFileTreeState === 'refreshing'}
           data-state={effectiveFileTreeState}
           onScroll={(event) => setEffectiveFileTreeScrollTop(event.currentTarget.scrollTop)}
@@ -14666,7 +14854,7 @@ export const App = () => {
             renderEffectiveFileTreeSkeletonRows()
           ) : showUnavailable ? (
             <div className="file-tree-empty file-tree-empty--actionable">
-              <span>{effectiveFileTreeError || 'Данные недоступны.'}</span>
+              <span>{effectiveFileTreeError || t('app.ui.dataUnavailable')}</span>
               <button
                 className="secondary-button"
                 type="button"
@@ -14677,11 +14865,11 @@ export const App = () => {
                   })
                 }
               >
-                Повторить
+                {t('app.ui.retry')}
               </button>
             </div>
           ) : showEmpty ? (
-            <span className="file-tree-empty">Нет файлов в дереве.</span>
+            <span className="file-tree-empty">{t('app.ui.noTreeFiles')}</span>
           ) : (
             <>
               {visibleEffectiveFileTreeWindow.topSpacer > 0 ? (
@@ -14700,14 +14888,14 @@ export const App = () => {
 
   const renderBuildRightPane = () => {
     const selectedExecutablePath =
-      selectedExecutableItem?.executablePath || selectedProject?.gamePath || 'not configured';
+      selectedExecutableItem?.executablePath || selectedProject?.gamePath || t('app.ui.notConfigured');
     const buildRows = [
-      ['Project', selectedProject?.projectDirectory ?? 'not configured'],
-      ['Game directory', selectedProject?.paths?.gameDirectory ?? 'not configured'],
-      ['Mods', selectedProject?.paths?.modsDirectory ?? 'not configured'],
-      ['Profiles', selectedProject?.paths?.profilesDirectory ?? 'not configured'],
-      ['Downloads', selectedProject?.paths?.downloadsDirectory ?? 'not configured'],
-      ['Overwrite', selectedProject?.paths?.overwriteDirectory ?? 'not configured']
+      [t('app.ui.project'), selectedProject?.projectDirectory ?? t('app.ui.notConfigured')],
+      [t('app.ui.gameDirectory'), selectedProject?.paths?.gameDirectory ?? t('app.ui.notConfigured')],
+      [t('app.ui.mods'), selectedProject?.paths?.modsDirectory ?? t('app.ui.notConfigured')],
+      [t('app.ui.profiles'), selectedProject?.paths?.profilesDirectory ?? t('app.ui.notConfigured')],
+      [t('app.ui.downloads'), selectedProject?.paths?.downloadsDirectory ?? t('app.ui.notConfigured')],
+      [t('app.ui.overwrite'), selectedProject?.paths?.overwriteDirectory ?? t('app.ui.notConfigured')]
     ] as const;
 
     return (
@@ -14715,19 +14903,19 @@ export const App = () => {
         key="build"
         className="right-pane-content right-pane-content--build"
         role="tabpanel"
-        aria-label="Сборка"
+        aria-label={t('app.ui.build')}
       >
         <section className="right-pane-section">
           <header>
             <FolderTree size={16} aria-hidden="true" />
             <div>
-              <strong>Build paths</strong>
-              <span>Core-owned locations, shown read-only here.</span>
+              <strong>{t('app.ui.buildPaths')}</strong>
+              <span>{t('app.ui.coreOwnedLocations')}</span>
             </div>
             <button
               className="icon-button"
               type="button"
-              title={buildHeaderCapabilities.settingsReason || 'Open build settings'}
+              title={buildHeaderCapabilities.settingsReason || t('app.ui.openBuildSettings')}
               disabled={!buildHeaderCapabilities.settingsAvailable || Boolean(buildPathsBusyLabel)}
               onClick={() => void openBuildPathSettings()}
             >
@@ -14744,7 +14932,7 @@ export const App = () => {
           </dl>
           {buildPathsError ? (
             <div className="settings-note" data-status="error" role="alert">
-              <strong>Build paths need attention</strong>
+              <strong>{t('app.ui.buildPathsAttention')}</strong>
               <span>{buildPathsError}</span>
             </div>
           ) : null}
@@ -14754,13 +14942,13 @@ export const App = () => {
           <header>
             <Play size={16} aria-hidden="true" />
             <div>
-              <strong>Executable config</strong>
+              <strong>{t('app.ui.executableConfig')}</strong>
               <span>{selectedProjectProfileName}</span>
             </div>
             <button
               className="icon-button"
               type="button"
-              title={executableCapabilities.launchReason || 'Launch executable'}
+              title={executableCapabilities.launchReason || t('app.ui.launchExecutable')}
               disabled={
                 !selectedExecutableItem ||
                 !executableCapabilities.launchAvailable ||
@@ -14773,20 +14961,22 @@ export const App = () => {
           </header>
           <dl className="right-pane-path-list">
             <div>
-              <dt>Name</dt>
-              <dd>{selectedExecutableItem?.displayName || 'not configured'}</dd>
+              <dt>{t('app.ui.name')}</dt>
+              <dd>{selectedExecutableItem?.displayName || t('app.ui.notConfigured')}</dd>
             </div>
             <div>
-              <dt>Path</dt>
+              <dt>{t('app.ui.path')}</dt>
               <dd title={selectedExecutablePath}>{selectedExecutablePath}</dd>
             </div>
             <div>
-              <dt>Arguments</dt>
-              <dd>{selectedExecutableItem?.arguments || 'none'}</dd>
+              <dt>{t('app.ui.arguments')}</dt>
+              <dd>{selectedExecutableItem?.arguments || t('app.ui.noConflicts')}</dd>
             </div>
             <div>
-              <dt>Launch</dt>
-              <dd>{executableCapabilities.launchAvailable ? 'available' : executableCapabilities.launchReason}</dd>
+              <dt>{t('app.ui.launch')}</dt>
+              <dd>{executableCapabilities.launchAvailable
+                ? t('app.ui.available')
+                : executableCapabilities.launchReason}</dd>
             </div>
           </dl>
         </section>
@@ -14795,20 +14985,20 @@ export const App = () => {
           <header>
             <File size={16} aria-hidden="true" />
             <div>
-              <strong>FluxPack</strong>
-              <span>{fluxPackSummary ? fluxPackSummary.outputPath : 'No package summary yet.'}</span>
+              <strong>{t('app.ui.fluxPackBrand')}</strong>
+              <span>{fluxPackSummary ? fluxPackSummary.outputPath : t('app.ui.noPackageYet')}</span>
             </div>
           </header>
-          <div className="right-pane-actionbar" aria-label="FluxPack actions">
+          <div className="right-pane-actionbar" aria-label={t('app.ui.fluxPackActions')}>
             <button
               className="tool-button"
               type="button"
-              title={buildHeaderCapabilities.packageReason || 'Export FluxPack'}
+              title={buildHeaderCapabilities.packageReason || t('app.ui.exportFluxPack')}
               disabled={!buildHeaderCapabilities.packageAvailable || Boolean(operationOverlay?.isRunning)}
               onClick={() => void packageFluxPack()}
             >
               <UploadCloud size={16} aria-hidden="true" />
-              Package
+              {t('app.ui.package')}
             </button>
             <button
               className="tool-button"
@@ -14817,7 +15007,7 @@ export const App = () => {
               onClick={() => void inspectFluxPack()}
             >
               <File size={16} aria-hidden="true" />
-              Inspect
+              {t('app.ui.inspect')}
             </button>
             <button
               className="tool-button"
@@ -14826,7 +15016,7 @@ export const App = () => {
               onClick={() => void installFluxPack()}
             >
               <Download size={16} aria-hidden="true" />
-              Install
+              {t('app.ui.install')}
             </button>
           </div>
           {fluxPackSummary ? (
@@ -14834,8 +15024,8 @@ export const App = () => {
           ) : (
             <div className="empty-state empty-state--compact">
               <File size={18} aria-hidden="true" />
-              <strong>No FluxPack summary</strong>
-              <span>Export, inspect or install a package to show the latest summary.</span>
+              <strong>{t('app.ui.noFluxPackSummary')}</strong>
+              <span>{t('app.ui.fluxPackSummaryDescription')}</span>
             </div>
           )}
         </section>
@@ -14848,7 +15038,7 @@ export const App = () => {
       key="plugins"
       className="right-pane-content right-pane-content--plugins"
       role="tabpanel"
-      aria-label="Плагины"
+      aria-label={t('app.tab.plugins')}
     >
       <div className="plugins-pane-toolbar">
         <label className="pane-search">
@@ -14862,8 +15052,8 @@ export const App = () => {
                 searchText: event.target.value
               });
             }}
-            placeholder="Search plugins"
-            aria-label="Search plugins"
+            placeholder={t('app.ui.searchPlugins')}
+            aria-label={t('app.ui.searchPlugins')}
             disabled={!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported}
           />
         </label>
@@ -14871,7 +15061,7 @@ export const App = () => {
           <button
             className="plugins-info-trigger"
             type="button"
-            aria-label="Skyrim plugin slot information"
+            aria-label={t('app.ui.pluginSlotInfo')}
             aria-describedby="skyrim-plugin-info-popover"
           >
             <AssetIcon source={infoCircleIcon} />
@@ -14881,15 +15071,15 @@ export const App = () => {
               role="tooltip"
             >
               <span className="plugins-info-popover__row">
-                <span>Кол-во плагинов (включенных)</span>
+                <span>{t('app.ui.enabledPluginCount')}</span>
                 <strong>{enabledPluginSlotCounts.enabled}</strong>
               </span>
               <span className="plugins-info-popover__row">
-                <span>Кол-во лёгких плагинов</span>
+                <span>{t('app.ui.lightPluginCount')}</span>
                 <strong>{enabledPluginSlotCounts.light} / 4096</strong>
               </span>
               <span className="plugins-info-popover__row">
-                <span>Кол-во тяжёлых плагинов</span>
+                <span>{t('app.ui.fullPluginCount')}</span>
                 <strong>{enabledPluginSlotCounts.heavy} / 256</strong>
               </span>
             </span>
@@ -14911,7 +15101,7 @@ export const App = () => {
       {!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported ? (
         <div className="empty-state">
           <MoreHorizontal size={18} aria-hidden="true" />
-          <strong>Plugins unavailable</strong>
+          <strong>{t('app.ui.pluginsUnavailable')}</strong>
           <span>{pluginCapabilities.reason}</span>
         </div>
       ) : (
@@ -14925,7 +15115,7 @@ export const App = () => {
       key="downloads"
       className="right-pane-content right-pane-content--downloads"
       role="tabpanel"
-      aria-label="Загрузки"
+      aria-label={t('app.tab.downloads')}
     >
       <label className="pane-search">
         <Search size={15} aria-hidden="true" />
@@ -14938,8 +15128,8 @@ export const App = () => {
               searchText: event.target.value
             });
           }}
-          placeholder="Search downloads"
-          aria-label="Search downloads"
+          placeholder={t('app.ui.searchDownloads')}
+          aria-label={t('app.ui.searchDownloads')}
           disabled={!downloadCapabilities.bridgeAvailable}
         />
       </label>
@@ -14952,7 +15142,7 @@ export const App = () => {
       {!downloadCapabilities.bridgeAvailable ? (
         <div className="empty-state">
           <Download size={18} aria-hidden="true" />
-          <strong>Downloads unavailable</strong>
+          <strong>{t('app.ui.downloadsUnavailable')}</strong>
           <span>{downloadCapabilities.reason}</span>
         </div>
       ) : (
@@ -15070,6 +15260,7 @@ export const App = () => {
         itemCount={deletionConfirmation.itemCount}
         itemName={deletionConfirmation.itemName}
         kind={deletionConfirmation.kind}
+        language={bridgeStatus?.language}
         onCancel={closeDeletionConfirmation}
         onConfirm={() => void confirmDeletion()}
       />
@@ -15122,9 +15313,9 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
@@ -15132,27 +15323,27 @@ export const App = () => {
 
     if (!downloadCapabilities.bridgeAvailable) {
       return (
-        <section className="center-empty" aria-label="Downloads capability state">
+        <section className="center-empty" aria-label={t('app.ui.downloadsCapability')}>
           <Download size={22} aria-hidden="true" />
-          <h2>Downloads unavailable</h2>
+          <h2>{t('app.ui.downloadsUnavailable')}</h2>
           <span>{downloadCapabilities.reason}</span>
         </section>
       );
     }
 
     return (
-      <section className="mods-layout downloads-layout" aria-label="Build downloads workspace">
+      <section className="mods-layout downloads-layout" aria-label={t('app.ui.buildDownloadsWorkspace')}>
         <section className="work-surface mods-surface">
           <div className="surface-header">
             <div>
-              <p className="eyebrow">Downloads</p>
+              <p className="eyebrow">{t('app.ui.downloads')}</p>
               <h2>{selectedProject.name}</h2>
             </div>
-            <div className="mods-toolbar" aria-label="Download commands">
+            <div className="mods-toolbar" aria-label={t('app.ui.downloadCommands')}>
               <button
                 className="icon-button"
                 type="button"
-                title="Refresh downloads"
+                title={t('app.ui.refreshDownloads')}
                 disabled={downloadsActionsBusy}
                 onClick={() =>
                   void loadDownloadsWorkspace(selectedProject, {
@@ -15169,7 +15360,7 @@ export const App = () => {
                 onClick={() => void importDownloadArchive()}
               >
                 <File size={16} aria-hidden="true" />
-                Import
+                {t('app.ui.import')}
               </button>
               <button
                 className="tool-button"
@@ -15178,7 +15369,7 @@ export const App = () => {
                 onClick={() => void installArchiveFromDialog()}
               >
                 <Download size={16} aria-hidden="true" />
-                Install archive
+                {t('app.ui.installArchive')}
               </button>
               <button
                 className="tool-button"
@@ -15187,7 +15378,7 @@ export const App = () => {
                 onClick={() => void importInboundDownloads()}
               >
                 <ExternalLink size={16} aria-hidden="true" />
-                {isImportingNxmManually ? 'Importing NXM…' : 'NXM queue'}
+                {isImportingNxmManually ? t('app.ui.importingNxm') : t('app.ui.nxmQueue')}
               </button>
               <button
                 className="tool-button"
@@ -15196,7 +15387,7 @@ export const App = () => {
                 onClick={() => void registerNxmProtocol()}
               >
                 <ShieldCheck size={16} aria-hidden="true" />
-                Register NXM
+                {t('app.ui.registerNxm')}
               </button>
             </div>
           </div>
@@ -15218,14 +15409,14 @@ export const App = () => {
         <div
           className="mod-table profile-table profile-table--loading"
           role="table"
-          aria-label="Profiles"
+          aria-label={t('app.ui.profiles')}
           aria-busy="true"
         >
           <div className="mod-row profile-row mod-row--head" role="row">
-            <span role="columnheader">Profile</span>
-            <span role="columnheader">Role</span>
-            <span role="columnheader">State</span>
-            <span role="columnheader">Actions</span>
+            <span role="columnheader">{t('app.ui.profile')}</span>
+            <span role="columnheader">{t('app.ui.role')}</span>
+            <span role="columnheader">{t('app.ui.state')}</span>
+            <span role="columnheader">{t('app.ui.actions')}</span>
           </div>
           <div className="mod-table__body" role="rowgroup">
             {modLoadingSkeletonRows.slice(0, 4).map((index) => (
@@ -15259,8 +15450,8 @@ export const App = () => {
       return (
         <EmptyState
           icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title="Profiles unavailable"
-          description={profilesWorkspace.errorMessage ?? 'The native core could not load profiles.'}
+          title={t('app.ui.profilesUnavailable')}
+          description={profilesWorkspace.errorMessage ?? t('app.ui.profilesLoadFailed')}
           tone="error"
         />
       );
@@ -15270,23 +15461,25 @@ export const App = () => {
       return (
         <EmptyState
           icon={<FolderOpen size={18} aria-hidden="true" />}
-          title={profilesWorkspace.items.length === 0 ? 'No profiles yet' : 'No matching profiles'}
+          title={profilesWorkspace.items.length === 0
+            ? t('app.ui.noProfiles')
+            : t('app.ui.noMatchingProfiles')}
           description={
             profilesWorkspace.items.length === 0
-              ? 'Create a profile to isolate mod and plugin order.'
-              : 'Clear the search query to return to the profile list.'
+              ? t('app.ui.noProfilesDescription')
+              : t('app.ui.noMatchingProfilesDescription')
           }
         />
       );
     }
 
     return (
-      <div className="mod-table profile-table" role="table" aria-label="Profiles">
+      <div className="mod-table profile-table" role="table" aria-label={t('app.ui.profiles')}>
         <div className="mod-row profile-row mod-row--head" role="row">
-          <span role="columnheader">Profile</span>
-          <span role="columnheader">Role</span>
-          <span role="columnheader">State</span>
-          <span role="columnheader">Actions</span>
+          <span role="columnheader">{t('app.ui.profile')}</span>
+          <span role="columnheader">{t('app.ui.role')}</span>
+          <span role="columnheader">{t('app.ui.state')}</span>
+          <span role="columnheader">{t('app.ui.actions')}</span>
         </div>
         <div className="mod-table__body">
           {filteredProfileItems.map((profileName) => {
@@ -15306,17 +15499,17 @@ export const App = () => {
               >
                 <div className="mod-row__main" role="cell">
                   <strong>{profileName}</strong>
-                  <span>{isSelected ? 'Current workspace profile' : 'Available profile'}</span>
+                  <span>{isSelected ? t('app.ui.currentProfile') : t('app.ui.availableProfile')}</span>
                 </div>
-                <span role="cell">{isDefault ? 'Default' : 'Custom'}</span>
+                <span role="cell">{isDefault ? t('app.ui.default') : t('app.ui.custom')}</span>
                 <span role="cell" data-status={isSelected ? 'ready' : 'checking'}>
-                  {isSelected ? 'Selected' : 'Ready'}
+                  {isSelected ? t('app.ui.selected') : t('app.ui.ready')}
                 </span>
                 <div className="row-actions mod-actions" role="cell">
                   <button
                     className="icon-button"
                     type="button"
-                    title="Select profile"
+                    title={t('app.ui.selectProfile')}
                     disabled={isSelected || Boolean(profilesBusyLabel)}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -15330,7 +15523,7 @@ export const App = () => {
                   <button
                     className="icon-button"
                     type="button"
-                    title="Clone selected profile"
+                    title={t('app.ui.cloneProfile')}
                     disabled={!isSelected || Boolean(profilesBusyLabel)}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -15342,7 +15535,7 @@ export const App = () => {
                   <button
                     className="icon-button"
                     type="button"
-                    title="Rename selected profile"
+                    title={t('app.ui.renameProfile')}
                     disabled={!isSelected || isDefault || Boolean(profilesBusyLabel)}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -15356,8 +15549,8 @@ export const App = () => {
                     type="button"
                     title={
                       profileDeleteArmedName === profileName
-                        ? 'Confirm profile deletion'
-                        : 'Delete selected profile'
+                        ? t('app.ui.confirmProfileDeletion')
+                        : t('app.ui.deleteProfile')
                     }
                     disabled={!isSelected || isDefault || Boolean(profilesBusyLabel)}
                     onClick={(event) => {
@@ -15377,16 +15570,16 @@ export const App = () => {
   };
 
   const renderProfilesInspector = () => (
-    <aside className="inspector profiles-inspector" aria-label="Selected profile details">
+    <aside className="inspector profiles-inspector" aria-label={t('app.ui.selectedProfileDetails')}>
       <div className="surface-header surface-header--compact">
         <div>
-          <p className="eyebrow">Selected profile</p>
+          <p className="eyebrow">{t('app.ui.selectedProfile')}</p>
           <h2>{selectedProjectProfileName}</h2>
         </div>
       </div>
       <div className="profile-editor">
         <label className="field">
-          <span>Profile name</span>
+          <span>{t('app.ui.profileName')}</span>
           <input
             value={profileDraftName}
             disabled={Boolean(profilesBusyLabel)}
@@ -15396,7 +15589,7 @@ export const App = () => {
             }}
           />
         </label>
-        <div className="profile-editor__actions" aria-label="Profile edit commands">
+        <div className="profile-editor__actions" aria-label={t('app.ui.profileEditCommands')}>
           <button
             className="tool-button"
             type="button"
@@ -15404,7 +15597,7 @@ export const App = () => {
             onClick={() => void createProfile()}
           >
             <Plus size={16} aria-hidden="true" />
-            Create
+            {t('app.ui.create')}
           </button>
           <button
             className="tool-button"
@@ -15413,7 +15606,7 @@ export const App = () => {
             onClick={() => void cloneProfile()}
           >
             <Copy size={16} aria-hidden="true" />
-            Clone
+            {t('app.ui.clone')}
           </button>
           <button
             className="tool-button"
@@ -15425,7 +15618,7 @@ export const App = () => {
             onClick={() => void renameProfile()}
           >
             <Pencil size={16} aria-hidden="true" />
-            Rename
+            {t('app.ui.rename')}
           </button>
           <button
             className="tool-button"
@@ -15437,39 +15630,41 @@ export const App = () => {
             onClick={() => void deleteProfile()}
           >
             <Trash2 size={16} aria-hidden="true" />
-            {profileDeleteArmedName === selectedProjectProfileName ? 'Confirm' : 'Delete'}
+            {profileDeleteArmedName === selectedProjectProfileName
+              ? t('app.ui.confirm')
+              : t('app.ui.delete')}
           </button>
         </div>
       </div>
       <dl className="fact-list">
         <div>
-          <dt>Profiles</dt>
+          <dt>{t('app.ui.profiles')}</dt>
           <dd>{profilesWorkspace.items.length}</dd>
         </div>
         <div>
-          <dt>Visible</dt>
+          <dt>{t('app.ui.visible')}</dt>
           <dd>{filteredProfileItems.length}</dd>
         </div>
         <div>
-          <dt>Default</dt>
+          <dt>{t('app.ui.default')}</dt>
           <dd>{selectedProjectDefaultProfileName}</dd>
         </div>
         <div>
-          <dt>Protection</dt>
+          <dt>{t('app.ui.protection')}</dt>
           <dd>
             {isDefaultProfileName(selectedProjectProfileName, selectedProjectDefaultProfileName)
-              ? 'rename/delete locked'
-              : 'editable'}
+              ? t('app.ui.profileLocked')
+              : t('app.ui.editable')}
           </dd>
         </div>
         <div>
-          <dt>Mods/plugins</dt>
-          <dd>profile-scoped</dd>
+          <dt>{t('app.ui.modsPlugins')}</dt>
+          <dd>{t('app.ui.profileScoped')}</dd>
         </div>
       </dl>
       <div className="plugin-capability-panel">
-        <strong>Profiles directory</strong>
-        <span>{selectedProject?.paths?.profilesDirectory ?? 'Not reported by this build.'}</span>
+        <strong>{t('app.ui.profilesDirectory')}</strong>
+        <span>{selectedProject?.paths?.profilesDirectory ?? t('app.ui.notReported')}</span>
       </div>
     </aside>
   );
@@ -15479,9 +15674,9 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
@@ -15489,27 +15684,27 @@ export const App = () => {
 
     if (!profilesCapabilities.bridgeAvailable) {
       return (
-        <section className="center-empty" aria-label="Profiles capability state">
+        <section className="center-empty" aria-label={t('app.ui.profilesCapability')}>
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>Profiles unavailable</h2>
+          <h2>{t('app.ui.profilesUnavailable')}</h2>
           <span>{profilesCapabilities.reason}</span>
         </section>
       );
     }
 
     return (
-      <section className="mods-layout profiles-layout" aria-label="Build profiles workspace">
+      <section className="mods-layout profiles-layout" aria-label={t('app.ui.buildProfilesWorkspace')}>
         <section className="work-surface mods-surface">
           <div className="surface-header">
             <div>
-              <p className="eyebrow">Profiles</p>
+              <p className="eyebrow">{t('app.ui.profiles')}</p>
               <h2>{selectedProject.name}</h2>
             </div>
-            <div className="mods-toolbar" aria-label="Profile commands">
+            <div className="mods-toolbar" aria-label={t('app.ui.profileCommands')}>
               <button
                 className="icon-button"
                 type="button"
-                title="Refresh profiles"
+                title={t('app.ui.refreshProfiles')}
                 disabled={Boolean(profilesBusyLabel)}
                 onClick={() => void loadProfilesWorkspace(selectedProject)}
               >
@@ -15522,7 +15717,7 @@ export const App = () => {
                 onClick={() => void createProfile()}
               >
                 <Plus size={16} aria-hidden="true" />
-                Profile
+                {t('app.ui.profile')}
               </button>
               <button
                 className="tool-button"
@@ -15531,7 +15726,7 @@ export const App = () => {
                 onClick={() => void openProfilesDirectory()}
               >
                 <FolderOpen size={16} aria-hidden="true" />
-                Folder
+                {t('app.ui.folder')}
               </button>
             </div>
           </div>
@@ -15554,15 +15749,15 @@ export const App = () => {
         <div
           className="mod-table executable-table executable-table--loading"
           role="table"
-          aria-label="Executables"
+          aria-label={t('app.ui.executables')}
           aria-busy="true"
         >
           <div className="mod-row executable-row mod-row--head" role="row">
-            <span role="columnheader">Executable</span>
-            <span role="columnheader">Path</span>
-            <span role="columnheader">Arguments</span>
-            <span role="columnheader">Working directory</span>
-            <span role="columnheader">Actions</span>
+            <span role="columnheader">{t('app.ui.executable')}</span>
+            <span role="columnheader">{t('app.ui.path')}</span>
+            <span role="columnheader">{t('app.ui.arguments')}</span>
+            <span role="columnheader">{t('app.ui.workingDirectory')}</span>
+            <span role="columnheader">{t('app.ui.actions')}</span>
           </div>
           <div className="mod-table__body" role="rowgroup">
             {modLoadingSkeletonRows.slice(0, 4).map((index) => (
@@ -15597,9 +15792,9 @@ export const App = () => {
       return (
         <EmptyState
           icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title="Executables unavailable"
+          title={t('app.ui.executablesUnavailable')}
           description={
-            executablesWorkspace.errorMessage ?? 'The native core could not load executables.'
+            executablesWorkspace.errorMessage ?? t('app.ui.executablesLoadFailed')
           }
           tone="error"
         />
@@ -15611,32 +15806,35 @@ export const App = () => {
         <EmptyState
           icon={<Play size={18} aria-hidden="true" />}
           title={
-            executablesWorkspace.items.length === 0 ? 'No executables yet' : 'No matching executables'
+            executablesWorkspace.items.length === 0
+              ? t('app.ui.noExecutables')
+              : t('app.ui.noMatchingExecutables')
           }
           description={
             executablesWorkspace.items.length === 0
-              ? 'Add the game executable or a tool to launch it from Fluxora.'
-              : 'Clear the search query to return to the executable list.'
+              ? t('app.ui.noExecutablesDescription')
+              : t('app.ui.noMatchingExecutablesDescription')
           }
         />
       );
     }
 
     return (
-      <div className="mod-table executable-table" role="table" aria-label="Executables">
+      <div className="mod-table executable-table" role="table" aria-label={t('app.ui.executables')}>
         <div className="mod-row executable-row mod-row--head" role="row">
-          <span role="columnheader">Executable</span>
-          <span role="columnheader">Path</span>
-          <span role="columnheader">Arguments</span>
-          <span role="columnheader">Working directory</span>
-          <span role="columnheader">Actions</span>
+          <span role="columnheader">{t('app.ui.executable')}</span>
+          <span role="columnheader">{t('app.ui.path')}</span>
+          <span role="columnheader">{t('app.ui.arguments')}</span>
+          <span role="columnheader">{t('app.ui.workingDirectory')}</span>
+          <span role="columnheader">{t('app.ui.actions')}</span>
         </div>
         <div className="mod-table__body">
           {filteredExecutableItems.map((entry) => {
             const isSelected = entry.id === executablesWorkspace.selectedId;
             const managedDisplay = managedExecutableDisplay(
               entry.managedToolKind,
-              selectedProject?.name ?? 'Build'
+              selectedProject?.name ?? t('app.ui.build'),
+              appLocale
             );
             return (
               <div
@@ -15650,7 +15848,7 @@ export const App = () => {
                 }}
               >
                 <div className="mod-row__main" role="cell">
-                  <strong>{executableTitle(entry)}</strong>
+                  <strong>{executableTitle(entry, appLocale)}</strong>
                   <span>{entry.id}</span>
                   {managedDisplay ? (
                     <>
@@ -15661,12 +15859,14 @@ export const App = () => {
                 </div>
                 <span role="cell">{shortPath(entry.executablePath)}</span>
                 <span role="cell">{entry.arguments || '-'}</span>
-                <span role="cell">{entry.workingDirectory ? shortPath(entry.workingDirectory) : 'executable folder'}</span>
+                <span role="cell">{entry.workingDirectory
+                  ? shortPath(entry.workingDirectory)
+                  : t('app.ui.executableFolder')}</span>
                 <div className="row-actions mod-actions" role="cell">
                   <button
                     className="icon-button"
                     type="button"
-                    title="Launch executable"
+                    title={t('app.ui.launchExecutable')}
                     disabled={
                       !isSelected ||
                       Boolean(executablesBusyLabel) ||
@@ -15684,8 +15884,8 @@ export const App = () => {
                     type="button"
                     title={
                       executableDeleteArmedId === entry.id
-                        ? 'Confirm executable deletion'
-                        : 'Delete executable'
+                        ? t('app.ui.confirmExecutableDeletion')
+                        : t('app.ui.deleteExecutable')
                     }
                     disabled={!isSelected || Boolean(executablesBusyLabel)}
                     onClick={(event) => {
@@ -15707,14 +15907,15 @@ export const App = () => {
   const renderExecutablesInspector = () => {
     const managedDisplay = managedExecutableDisplay(
       selectedExecutableItem?.managedToolKind,
-      selectedProject?.name ?? 'Build'
+      selectedProject?.name ?? t('app.ui.build'),
+      appLocale
     );
     return (
-      <aside className="inspector executables-inspector" aria-label="Selected executable details">
+      <aside className="inspector executables-inspector" aria-label={t('app.ui.selectedExecutableDetails')}>
       <div className="surface-header surface-header--compact">
         <div>
-          <p className="eyebrow">Executable editor</p>
-          <h2>{executableTitle(selectedExecutableItem)}</h2>
+          <p className="eyebrow">{t('app.ui.executableEditor')}</p>
+          <h2>{executableTitle(selectedExecutableItem, appLocale)}</h2>
         </div>
       </div>
       {!executableDraft ? (
@@ -15722,13 +15923,13 @@ export const App = () => {
           className="empty-state--compact"
           compact
           icon={<Play size={18} aria-hidden="true" />}
-          title="Select an executable"
-          description="Add or select a row to edit launch details."
+          title={t('app.ui.selectExecutable')}
+          description={t('app.ui.selectExecutableDescription')}
         />
       ) : (
         <div className="executable-editor">
           <label className="field">
-            <span>Display name</span>
+            <span>{t('app.ui.displayName')}</span>
             <input
               value={executableDraft.displayName}
               onChange={(event) =>
@@ -15739,7 +15940,7 @@ export const App = () => {
             />
           </label>
           <label className="field">
-            <span>Executable path</span>
+            <span>{t('app.ui.executablePath')}</span>
             <div className="path-picker">
               <input
                 value={executableDraft.executablePath}
@@ -15755,12 +15956,12 @@ export const App = () => {
                 onClick={() => void browseExecutableForDraft()}
               >
                 <FolderOpen size={16} aria-hidden="true" />
-                Browse
+                {t('app.ui.browse')}
               </button>
             </div>
           </label>
           <label className="field">
-            <span>Arguments</span>
+            <span>{t('app.ui.arguments')}</span>
             <input
               value={executableDraft.arguments}
               onChange={(event) =>
@@ -15771,7 +15972,7 @@ export const App = () => {
             />
           </label>
           <label className="field">
-            <span>Working directory</span>
+            <span>{t('app.ui.workingDirectory')}</span>
             <div className="path-picker">
               <input
                 value={executableDraft.workingDirectory}
@@ -15780,7 +15981,7 @@ export const App = () => {
                     current ? { ...current, workingDirectory: event.target.value } : current
                   )
                 }
-                placeholder="Executable folder"
+                placeholder={t('app.ui.executableFolder')}
               />
               <button
                 className="tool-button"
@@ -15788,7 +15989,7 @@ export const App = () => {
                 onClick={() => void browseExecutableWorkingDirectory()}
               >
                 <FolderOpen size={16} aria-hidden="true" />
-                Browse
+                {t('app.ui.browse')}
               </button>
             </div>
           </label>
@@ -15800,7 +16001,7 @@ export const App = () => {
               onClick={() => void resolveExecutableIcon()}
             >
               <CircleDot size={16} aria-hidden="true" />
-              Icon
+              {t('app.ui.icon')}
             </button>
             <button
               className="primary-button"
@@ -15809,31 +16010,33 @@ export const App = () => {
               onClick={() => void saveExecutableDraft()}
             >
               <CheckCircle2 size={16} aria-hidden="true" />
-              Save
+              {t('app.ui.save')}
             </button>
           </div>
           <dl className="fact-list">
             <div>
-              <dt>Icon</dt>
-              <dd>{executableDraft.iconPath ? shortPath(executableDraft.iconPath) : 'not resolved'}</dd>
+              <dt>{t('app.ui.icon')}</dt>
+              <dd>{executableDraft.iconPath
+                ? shortPath(executableDraft.iconPath)
+                : t('app.ui.notResolved')}</dd>
             </div>
             <div>
-              <dt>Profile</dt>
+              <dt>{t('app.ui.profile')}</dt>
               <dd>{selectedProjectProfileName}</dd>
             </div>
             <div>
-              <dt>Launch</dt>
+              <dt>{t('app.ui.launch')}</dt>
               <dd>
                 {managedDisplay
                   ? managedDisplay.badgeLabel
                   : executableCapabilities.launchAvailable
-                    ? 'available'
-                    : 'limited'}
+                    ? t('app.ui.available')
+                    : t('app.ui.limited')}
               </dd>
             </div>
             {managedDisplay ? (
               <div>
-                <dt>Output</dt>
+                <dt>{t('app.ui.output')}</dt>
                 <dd>
                   {executableLaunchResult?.outputMod?.displayName ??
                     managedDisplay.outputModName}
@@ -15845,20 +16048,20 @@ export const App = () => {
       )}
       {!executableCapabilities.launchAvailable ? (
         <div className="plugin-capability-panel">
-          <strong>Launch capability</strong>
+          <strong>{t('app.ui.launchCapability')}</strong>
           <span>{executableCapabilities.launchReason}</span>
         </div>
       ) : null}
       {executableLaunchResult ? (
         <div className="plugin-capability-panel">
-          <strong>Last launch</strong>
+          <strong>{t('app.ui.lastLaunch')}</strong>
           <span>
             {executableLaunchResult.processId
-              ? `Process ${executableLaunchResult.processId}`
+              ? t('app.ui.processId', { id: executableLaunchResult.processId })
               : executableLaunchResult.launchTrackingKind}
           </span>
           {executableLaunchResult.outputMod ? (
-            <span>Output: {executableLaunchResult.outputMod.displayName}</span>
+            <span>{t('app.ui.outputNamed', { name: executableLaunchResult.outputMod.displayName })}</span>
           ) : null}
         </div>
       ) : null}
@@ -15871,9 +16074,9 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
@@ -15881,27 +16084,27 @@ export const App = () => {
 
     if (!executableCapabilities.bridgeAvailable) {
       return (
-        <section className="center-empty" aria-label="Executables capability state">
+        <section className="center-empty" aria-label={t('app.ui.executablesCapability')}>
           <Play size={22} aria-hidden="true" />
-          <h2>Executables unavailable</h2>
+          <h2>{t('app.ui.executablesUnavailable')}</h2>
           <span>{executableCapabilities.reason}</span>
         </section>
       );
     }
 
     return (
-      <section className="mods-layout executables-layout" aria-label="Build executables workspace">
+      <section className="mods-layout executables-layout" aria-label={t('app.ui.buildExecutablesWorkspace')}>
         <section className="work-surface mods-surface">
           <div className="surface-header">
             <div>
-              <p className="eyebrow">Executables</p>
+              <p className="eyebrow">{t('app.ui.executables')}</p>
               <h2>{selectedProject.name}</h2>
             </div>
-            <div className="mods-toolbar" aria-label="Executable commands">
+            <div className="mods-toolbar" aria-label={t('app.ui.executableCommands')}>
               <button
                 className="icon-button"
                 type="button"
-                title="Refresh executables"
+                title={t('app.ui.refreshExecutables')}
                 disabled={Boolean(executablesBusyLabel)}
                 onClick={() => void loadExecutablesWorkspace(selectedProject)}
               >
@@ -15914,7 +16117,7 @@ export const App = () => {
                 onClick={() => void addExecutable()}
               >
                 <Plus size={16} aria-hidden="true" />
-                Executable
+                {t('app.ui.executable')}
               </button>
               <button
                 className="primary-button"
@@ -15927,7 +16130,7 @@ export const App = () => {
                 onClick={() => void launchExecutable()}
               >
                 <Play size={16} aria-hidden="true" />
-                Launch
+                {t('app.ui.launch')}
               </button>
             </div>
           </div>
@@ -15949,7 +16152,7 @@ export const App = () => {
       busyLabel={buildPathsBusyLabel}
       draft={buildPathDraft}
       error={buildPathsError}
-      projectName={selectedProject?.name ?? 'Paths'}
+      projectName={selectedProject?.name ?? t('app.ui.paths')}
       onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
       onBrowseGameExecutable={() => void browseBuildGameExecutable()}
       onOpenDownloadsDirectory={() => void openBuildDownloadsDirectory()}
@@ -15963,7 +16166,7 @@ export const App = () => {
       busyLabel={buildPathsBusyLabel}
       draft={buildPathDraft}
       error={buildPathsError}
-      projectName={selectedProject?.name ?? (buildSettingsInitialName || 'Build')}
+      projectName={selectedProject?.name ?? (buildSettingsInitialName || t('app.ui.build'))}
       onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
       onBrowseGameExecutable={() => void browseBuildGameExecutable()}
       onOpenDownloadsDirectory={() => void openBuildDownloadsDirectory()}
@@ -15978,16 +16181,16 @@ export const App = () => {
     }
 
     return (
-      <div className="fluxpack-panel" aria-label="FluxPack summary">
+      <div className="fluxpack-panel" aria-label={t('app.ui.fluxPackSummary')}>
         <div className="fluxpack-panel__header">
           <File size={17} aria-hidden="true" />
           <div>
-            <strong>{fluxPackSummary.buildName || 'FluxPack'}</strong>
+            <strong>{fluxPackSummary.buildName || t('app.ui.fluxPackBrand')}</strong>
             <span>{fluxPackSummary.outputPath}</span>
           </div>
         </div>
         <dl className="settings-facts">
-          {fluxPackSummaryFacts(fluxPackSummary).map(([label, value]) => (
+          {fluxPackSummaryFacts(fluxPackSummary, appLocale).map(([label, value]) => (
             <div key={label}>
               <dt>{label}</dt>
               <dd>{value}</dd>
@@ -16002,16 +16205,24 @@ export const App = () => {
             <strong>
               {fluxPackInstallResult.updatedExistingProject
                 ? fluxPackInstallResult.hasWarnings
-                  ? 'Delta-обновление завершено с предупреждениями'
-                  : 'Delta-обновление завершено'
+                  ? t('app.ui.fluxpackDeltaWarnings')
+                  : t('app.ui.fluxpackDeltaComplete')
                 : fluxPackInstallResult.hasWarnings
-                  ? 'Установка завершена с предупреждениями'
-                  : 'Установка завершена'}
+                  ? t('app.ui.fluxpackInstallWarnings')
+                  : t('app.ui.fluxpackInstallComplete')}
             </strong>
             <span>
               {fluxPackInstallResult.updatedExistingProject
-                ? `Переиспользовано: ${fluxPackInstallResult.reusedSourceCount} мод., ${fluxPackInstallResult.reusedDownloadCount} архив., ${fluxPackInstallResult.reusedFileCount} файл. Заменено файлов: ${fluxPackInstallResult.materializedFileCount}.`
-                : `Установлено источников: ${fluxPackInstallResult.installedSourceCount}. Применено конфигураций: ${fluxPackInstallResult.appliedConfigCount}.`}
+                ? t('app.ui.fluxpackDeltaFacts', {
+                    sources: fluxPackInstallResult.reusedSourceCount,
+                    downloads: fluxPackInstallResult.reusedDownloadCount,
+                    files: fluxPackInstallResult.reusedFileCount,
+                    materialized: fluxPackInstallResult.materializedFileCount
+                  })
+                : t('app.ui.fluxpackInstallFacts', {
+                    sources: fluxPackInstallResult.installedSourceCount,
+                    configs: fluxPackInstallResult.appliedConfigCount
+                  })}
             </span>
           </div>
         ) : null}
@@ -16024,7 +16235,7 @@ export const App = () => {
       return null;
     }
 
-    const outputName = `${selectedProject.name} · Grass Cache`;
+    const outputName = t('app.ui.grassOutput', { name: selectedProject.name });
     return (
       <div
         className="grass-cache-confirmation"
@@ -16042,9 +16253,9 @@ export const App = () => {
           role="dialog"
         >
           <div className="grass-cache-dialog__copy">
-            <span>NGIO</span>
-            <h2 id="grass-cache-confirmation-title">Генерация кэша травы</h2>
-            <p>Сейчас начнётся генерация кэша травы для No Grass In Objects.</p>
+            <span>{t('app.ui.ngioBrand')}</span>
+            <h2 id="grass-cache-confirmation-title">{t('app.operation.grassTitle')}</h2>
+            <p>{t('app.dialog.grassDescription')}</p>
             <strong>{outputName}</strong>
           </div>
           <div className="grass-cache-dialog__actions">
@@ -16053,10 +16264,10 @@ export const App = () => {
               size="sm"
               variant="secondary"
             >
-              Отмена
+              {t('app.ui.cancel')}
             </Button>
             <Button onClick={() => void generateNgioGrassCache()} size="sm">
-              Начать
+              {t('app.dialog.start')}
             </Button>
           </div>
         </section>
@@ -16091,9 +16302,9 @@ export const App = () => {
   const renderOpeningBuildSplash = () => (
     <LoadingSplash
       buildName={openingBuildSplash?.buildName}
-      cancelLabel="Отмена"
-      cancelTitle="Отменить открытие сборки"
-      detail="Opening build progress"
+      cancelLabel={t('app.ui.cancel')}
+      cancelTitle={t('app.ui.openingCancelTitle')}
+      detail={t('app.ui.openingProgress')}
       messages={openingBuildMessages}
       onCancel={() => cancelOpeningBuild()}
       open={Boolean(openingBuildSplash)}
@@ -16104,14 +16315,14 @@ export const App = () => {
 
   const renderOverwriteClearSplash = () => (
     <LoadingSplash
-      aria-label="Очистка override"
+      aria-label={t('app.ui.overrideClear')}
       buildName={overwriteClearSplash?.buildName}
-      detail="Прогресс очистки override"
+      detail={t('app.ui.overrideProgress')}
       messages={overwriteClearMessages}
       open={Boolean(overwriteClearSplash)}
       progress={overwriteClearSplash?.progress ?? 0}
       subtitle={overwriteClearSplash?.buildName}
-      title="Очистка override"
+      title={t('app.ui.overrideClear')}
     />
   );
 
@@ -16164,7 +16375,7 @@ export const App = () => {
       await window.fluxora.ai.resetMicrophonePermission({ operationId });
       setSettingsBusyLabel(null);
     } catch {
-      setSettingsBusyLabel('Microphone access could not be fully reset. Retry.');
+      setSettingsBusyLabel(t('app.message.microphoneResetFailed'));
     } finally {
       setMicrophonePermissionBusy(false);
     }
@@ -16208,16 +16419,16 @@ export const App = () => {
       return (
         <section className="center-empty">
           <FolderOpen size={22} aria-hidden="true" />
-          <h2>No build selected</h2>
+          <h2>{t('app.ui.noBuild')}</h2>
           <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            Go home
+            {t('app.ui.goHome')}
           </button>
         </section>
       );
     }
 
     return (
-      <section className="build-page" aria-label="Selected build">
+      <section className="build-page" aria-label={t('app.ui.selectedBuild')}>
         <BuildDetailHeader
           buildCapabilities={buildHeaderCapabilities}
           executables={executablesWorkspace.items}
@@ -16249,17 +16460,21 @@ export const App = () => {
           settingsBusyLabel={buildPathsBusyLabel}
         />
 
-        <section className="build-workbench" aria-label="Mod Organizer style workspace">
+        <section className="build-workbench" aria-label={t('app.ui.modOrganizerWorkspace')}>
           <section
             className="build-pane build-pane--mods"
-            aria-label="Mods"
+            aria-label={t('app.ui.mods')}
             data-download-install-active={Boolean(draggedDownloadInstallId)}
           >
             <header className="build-pane__header build-pane__header--mods">
               <div>
-                <h3>Моды</h3>
+                <h3>{t('app.ui.mods')}</h3>
                 <span>
-                  {enabledModCount} of {totalModCount} enabled · {filteredModItems.length} visible
+                  {t('app.ui.modCountSummary', {
+                    enabled: enabledModCount,
+                    total: totalModCount,
+                    visible: filteredModItems.length
+                  })}
                 </span>
               </div>
             </header>
@@ -16275,8 +16490,8 @@ export const App = () => {
                       searchText: event.target.value
                     });
                   }}
-                  placeholder="Search mods"
-                  aria-label="Search mods"
+                  placeholder={t('app.ui.searchMods')}
+                  aria-label={t('app.ui.searchMods')}
                 />
               </label>
               <button
@@ -16285,8 +16500,8 @@ export const App = () => {
                 data-row-context-menu-trigger="true"
                 aria-haspopup="menu"
                 aria-expanded={Boolean(modsToolbarMenuPosition)}
-                aria-label="Действия со сборкой"
-                title="Действия со сборкой"
+                aria-label={t('app.ui.buildActions')}
+                title={t('app.ui.buildActions')}
                 onClick={(event) => {
                   event.stopPropagation();
                   if (modsToolbarMenuPosition) {
@@ -16317,13 +16532,13 @@ export const App = () => {
 
           <section
             className={`build-pane build-pane--right build-pane--${activeRightPane}`}
-            aria-label="Right pane"
+            aria-label={t('app.ui.rightPane')}
           >
             <header className="build-pane__header build-pane__header--tabs">
               <div
                 className="right-pane-tabs"
                 role="tablist"
-                aria-label="Right pane tabs"
+                aria-label={t('app.ui.rightPaneTabs')}
               >
                 {rightPaneTabs.map(({ id, label, icon: Icon }) => (
                   <button
@@ -16354,7 +16569,7 @@ export const App = () => {
     <section className="center-empty">
       <Layers size={22} aria-hidden="true" />
       <h2>{activeLabel}</h2>
-      <span>{selectedProject?.name ?? 'Open a build first'}</span>
+      <span>{selectedProject?.name ?? t('app.ui.openBuildFirst')}</span>
     </section>
   );
 
@@ -16367,7 +16582,7 @@ export const App = () => {
     });
   };
 
-  const aiChatProviderDiagnostic = aiProviderDiagnostic(aiHostStatus);
+  const aiChatProviderDiagnostic = aiProviderDiagnostic(aiHostStatus, bridgeStatus?.language);
 
   const refreshAiQuotaStatus = () => {
     const operationId = createRendererOperationId('ai_quota_refresh');
@@ -16378,7 +16593,7 @@ export const App = () => {
     const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
     dispatchAiChat({
       type: 'cancel-run',
-      message: createAiMessage('assistant', 'Остановлено', new Date(), run.id, {
+      message: createAiMessage('assistant', t('app.message.aiStopped'), new Date(), run.id, {
         agentStatus: 'stopped'
       }),
       event
@@ -16386,7 +16601,7 @@ export const App = () => {
   };
 
   const finishAiRunAsBlocked = (run: Pick<AiRun, 'id' | 'operationId'>, error: unknown) => {
-    const messageText = `AI host blocked the response before it started: ${errorMessage(error)}`;
+    const messageText = t('app.message.aiBlocked', { error: errorMessage(error) });
     const event = createAiStreamEvent(run, 'run-finished', { status: 'blocked' });
     dispatchAiChat({
       type: 'append-assistant-message',
@@ -16520,6 +16735,8 @@ export const App = () => {
         window.fluxora.ai,
         {
           ...runSettings,
+          cancelledText: t('app.message.aiStopped'),
+          errorText: t('ai.diagnostic.unavailable.message'),
           preparedRequest: chatRequest
         },
         {
@@ -16615,7 +16832,7 @@ export const App = () => {
   const openAiSource = (url: string) => {
     const sourceUrl = safeAiSourceUrl(url);
     if (!sourceUrl) {
-      setMessage('AI source link was blocked by the security policy.');
+      setMessage(t('app.message.aiSourceBlocked'));
       return;
     }
 
@@ -16628,7 +16845,7 @@ export const App = () => {
           return encodedSourceId;
         }
       })();
-      setMessage(`AI context source: ${sourceId}. Trace and fingerprints are attached to the answer.`);
+      setMessage(t('app.message.aiContextSource', { id: sourceId }));
       return;
     }
 
@@ -16641,16 +16858,16 @@ export const App = () => {
     _changeSet: FluxoraAiFileChangeSet
   ) => {
     if (!selectedProject) {
-      setMessage('Open the build before opening this managed override in the editor.');
+      setMessage(t('app.message.openBuildForOverrideEditor'));
       return;
     }
     const location = resolveAiManagedFileLocation(selectedProject, change);
     if (!location) {
-      setMessage('Managed override location is unavailable.');
+      setMessage(t('app.message.overrideLocationMissing'));
       return;
     }
     const fileName = change.relativePath.replaceAll('\\', '/').split('/').filter(Boolean).pop()
-      ?? 'Editor';
+      ?? t('app.ui.editor');
     void window.fluxora.windowControls.openTextEditor(
       selectedProject.configPath,
       selectedProject.projectDirectory,
@@ -16665,17 +16882,17 @@ export const App = () => {
     _changeSet: FluxoraAiFileChangeSet
   ) => {
     if (!selectedProject) {
-      setMessage('Open the build before revealing this managed override.');
+      setMessage(t('app.message.openBuildForOverrideReveal'));
       return;
     }
     const location = resolveAiManagedFileLocation(selectedProject, change);
     if (!location) {
-      setMessage('Managed override location is unavailable.');
+      setMessage(t('app.message.overrideLocationMissing'));
       return;
     }
     void window.fluxora.shell.showItemInFolder(location.absolutePath).then((result) => {
       if (!result.ok) {
-        setMessage(result.message ?? 'Managed override location could not be opened.');
+        setMessage(result.message ?? t('app.message.overrideOpenFailed'));
       }
     }).catch((error) => setMessage(errorMessage(error)));
   };
@@ -16708,10 +16925,10 @@ export const App = () => {
         states
       });
       setMessage(result.state === 'conflict'
-        ? 'Undo needs review. Current files were left unchanged.'
+        ? t('app.message.undoReview')
         : result.preservedNewerChanges
-          ? 'Undo complete. Newer non-overlapping changes were preserved.'
-          : 'AI file run undone.');
+          ? t('app.message.undoComplete')
+          : t('app.message.aiRunUndone'));
     } catch (error) {
       setMessage(errorMessage(error));
     }
@@ -16732,7 +16949,7 @@ export const App = () => {
         compensationToken,
         rollbackState: 'rolled-back'
       });
-      setMessage('AI change rolled back and verified by Fluxora.');
+      setMessage(t('app.message.aiRollbackComplete'));
     } catch (error) {
       dispatchAiChat({
         type: 'update-capability-rollback',
@@ -16770,6 +16987,10 @@ export const App = () => {
     />
   );
 
+  if (!appLanguage.ready) {
+    return <main className="desktop-shell" aria-busy="true" />;
+  }
+
   if (import.meta.env.DEV && window.location.hash === '#design-system') {
     return (
       <main className="desktop-shell">
@@ -16781,59 +17002,68 @@ export const App = () => {
 
   if (isSettingsWindow) {
     return (
-      <main className="desktop-shell desktop-shell--settings-window">
-        {renderTitlebar(false)}
-        <section className="settings-window">
-          {renderSettingsWorkspace()}
-        </section>
-      </main>
+      <LocalizationProvider language={appLanguage.language}>
+        <main className="desktop-shell desktop-shell--settings-window">
+          {renderTitlebar(false)}
+          <section className="settings-window">
+            {renderSettingsWorkspace()}
+          </section>
+        </main>
+      </LocalizationProvider>
     );
   }
 
   if (isBuildSettingsWindow) {
     return (
-      <main className="desktop-shell desktop-shell--settings-window">
-        {renderTitlebar(false)}
-        <section className="settings-window">
-          {renderBuildSettingsWorkspace()}
-        </section>
-      </main>
+      <LocalizationProvider language={appLanguage.language}>
+        <main className="desktop-shell desktop-shell--settings-window">
+          {renderTitlebar(false)}
+          <section className="settings-window">
+            {renderBuildSettingsWorkspace()}
+          </section>
+        </main>
+      </LocalizationProvider>
     );
   }
 
   if (isModDetailsWindow) {
     return (
-      <main className="desktop-shell desktop-shell--settings-window desktop-shell--mod-details-window">
-        {renderTitlebar(false)}
-        {renderModDetailsWindow()}
-      </main>
+      <LocalizationProvider language={appLanguage.language}>
+        <main className="desktop-shell desktop-shell--settings-window desktop-shell--mod-details-window">
+          {renderTitlebar(false)}
+          {renderModDetailsWindow()}
+        </main>
+      </LocalizationProvider>
     );
   }
 
   if (isFilePreviewWindow) {
     return (
-      <main className="desktop-shell desktop-shell--settings-window desktop-shell--file-preview-window">
-        {renderTitlebar(false)}
-        <Suspense
-          fallback={
-            <section className="file-preview-window" aria-busy="true" aria-label="Loading file preview" />
-          }
-        >
-          <FilePreviewWorkspace
-            projectDirectory={filePreviewProjectDirectory || selectedProject?.projectDirectory || ''}
-            initialModPath={filePreviewModId}
-            initialRelativePath={filePreviewInitialPath}
-            initialFileName={filePreviewInitialName}
-            initialProfileName={filePreviewProfileName}
-            initialKind={filePreviewKind}
-          />
-        </Suspense>
-      </main>
+      <LocalizationProvider language={appLanguage.language}>
+        <main className="desktop-shell desktop-shell--settings-window desktop-shell--file-preview-window">
+          {renderTitlebar(false)}
+          <Suspense
+            fallback={
+              <section className="file-preview-window" aria-busy="true" aria-label={t('app.ui.loadingFilePreview')} />
+            }
+          >
+            <FilePreviewWorkspace
+              projectDirectory={filePreviewProjectDirectory || selectedProject?.projectDirectory || ''}
+              initialModPath={filePreviewModId}
+              initialRelativePath={filePreviewInitialPath}
+              initialFileName={filePreviewInitialName}
+              initialProfileName={filePreviewProfileName}
+              initialKind={filePreviewKind}
+            />
+          </Suspense>
+        </main>
+      </LocalizationProvider>
     );
   }
 
   return (
-    <main className="desktop-shell">
+    <LocalizationProvider language={appLanguage.language}>
+      <main className="desktop-shell">
       {renderTitlebar(true)}
       <ModUpdateCheckSplash state={manualModUpdateSplash} />
       {manualModUpdateNotice ? (
@@ -16983,15 +17213,18 @@ export const App = () => {
                 mergeConnectionStatus(connectionSnapshot, status)
               );
               if (status.providerId !== 'moddingflow' || status.state !== 'ready') {
-                throw new Error(status.message || 'ModdingFlow authorization did not complete.');
+                throw new Error(status.message || t('app.error.moddingFlowAuthorizationIncomplete'));
               }
               const nextStatus = await window.fluxora.ai.getStatus({ operationId });
               setAiHostStatus(nextStatus);
               if (nextStatus.quota.availability === 'connectionRequired') {
-                throw new Error('ModdingFlow did not grant managed AI access.');
+                throw new Error(t('app.error.managedAiAccessDenied'));
               }
             }}
-            onCreateAccount={() => openModdingFlowRegistration(window.fluxora.links.openExternal)}
+            onCreateAccount={() => openModdingFlowRegistration(
+              window.fluxora.links.openExternal,
+              appLocale
+            )}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
             onOpenSource={openAiSource}
@@ -17006,6 +17239,7 @@ export const App = () => {
           />
         ) : null}
       </section>
-    </main>
+      </main>
+    </LocalizationProvider>
   );
 };

@@ -136,8 +136,8 @@ test.beforeEach(async ({ page }) => {
         hasEnoughSpace: !blocked,
         willOverwrite: false,
         canImport: !blocked,
-        statusMessage: blocked ? 'Недостаточно места для переноса.' : 'Сборка готова к переносу.',
-        warningMessage: blocked ? 'На выбранном диске недостаточно свободного места.' : '',
+        statusMessage: blocked ? 'There is not enough space for transfer.' : 'The build is ready to transfer.',
+        warningMessage: blocked ? 'The selected drive does not have enough free space.' : '',
         operationId: operation?.operationId ?? 'op_transfer_analysis'
       };
     };
@@ -516,7 +516,7 @@ const emitMo2Open = async (page: Page, scenario: 'ready' | 'blocked' = 'ready') 
     (window as any).__fluxoraScenario = nextScenario;
     (window as any).__emitMo2Open();
   }, scenario);
-  await expect(page.getByRole('heading', { name: 'Папка сборки' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Build folder' })).toBeVisible();
 };
 
 const transferCalls = async (page: Page) =>
@@ -528,18 +528,18 @@ const latestTransferCall = async (page: Page, method: string) =>
 test('imports a Mod Organizer 2 build through the transfer wizard', async ({ page }) => {
   await emitMo2Open(page);
 
-  await page.getByRole('button', { name: 'Выбрать папку', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Диск установки' })).toBeVisible();
+  await page.getByRole('button', { name: 'Select folder', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Installation drive' })).toBeVisible();
   await expect(page.getByText('E:\\Fluxora Builds\\Dragonborn Ascendant')).toBeVisible();
   await expect(page.getByRole('button', { name: /Локальный диск \(E:\)/ })).toBeVisible();
 
   await page.getByRole('button', { name: /Локальный диск \(E:\)/ }).click();
-  await page.getByRole('button', { name: 'Проверить', exact: true }).click();
+  await page.getByRole('button', { name: 'Check', exact: true }).click();
 
-  await expect(page.getByRole('heading', { name: 'Проверка' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
   await expect(page.getByText('Skyrim Special Edition')).toBeVisible();
   await expect(page.getByText('E:\\Fluxora Builds\\Dragonborn Ascendant')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Перенести', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Transfer', exact: true })).toBeEnabled();
 
   const analyzeCall = await latestTransferCall(page, 'transfer.analyzeMo2');
   expect(analyzeCall?.payload).toMatchObject({
@@ -549,7 +549,7 @@ test('imports a Mod Organizer 2 build through the transfer wizard', async ({ pag
   });
   expect(analyzeCall?.payload.operation.operationId).toMatch(/^op_\d+_transfer_analyze_mo2_/);
 
-  await page.getByRole('button', { name: 'Перенести', exact: true }).click();
+  await page.getByRole('button', { name: 'Transfer', exact: true }).click();
 
   await expect(page.getByRole('button', { name: 'Select Dragonborn Ascendant' })).toBeVisible();
   await expect(page.getByRole('article', { name: 'Dragonborn Ascendant summary' })).toBeVisible();
@@ -579,14 +579,14 @@ test('imports a Mod Organizer 2 build through the transfer wizard', async ({ pag
 test('keeps a blocked MO2 analysis on review without importing', async ({ page }) => {
   await emitMo2Open(page, 'blocked');
 
-  await page.getByRole('button', { name: 'Выбрать папку', exact: true }).click();
+  await page.getByRole('button', { name: 'Select folder', exact: true }).click();
   await page.getByRole('button', { name: /Локальный диск \(E:\)/ }).click();
-  await page.getByRole('button', { name: 'Проверить', exact: true }).click();
+  await page.getByRole('button', { name: 'Check', exact: true }).click();
 
-  await expect(page.getByRole('heading', { name: 'Проверка' })).toBeVisible();
-  await expect(page.getByText('Недостаточно места для переноса.')).toBeVisible();
-  await expect(page.getByText('На выбранном диске недостаточно свободного места.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Перенести', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
+  await expect(page.getByText('There is not enough space for transfer.')).toBeVisible();
+  await expect(page.getByText('The selected drive does not have enough free space.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Transfer', exact: true })).toHaveCount(0);
 
   const methods = (await transferCalls(page)).map((call) => call.method);
   expect(methods).toContain('transfer.analyzeMo2');

@@ -232,7 +232,7 @@ test('renders preloaded mod files and conflicts without loading placeholders', a
   await expect(tree.getByText('SprintFix.dll', { exact: true })).toBeVisible();
   await expect(tree.getByText('Loading', { exact: true })).toHaveCount(0);
 
-  await page.getByRole('tab', { name: 'Конфликты' }).click();
+  await page.getByRole('tab', { name: 'Conflicts' }).click();
   await expect(page.getByText('Scanning files', { exact: true })).toHaveCount(0);
   await expect(page.getByText('SKSE/SprintFix.dll', { exact: true })).toBeVisible();
   await expect(page.getByText('Sprint Fix · Old Sprint Fix', { exact: true })).toBeVisible();

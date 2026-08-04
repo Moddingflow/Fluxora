@@ -3,6 +3,7 @@ import './monaco-environment';
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 
+import { useLocalization } from '../../../localization/react';
 import type { TextEditorTab } from './text-editor-model';
 
 export interface TextEditorCursorState {
@@ -187,6 +188,7 @@ export const MonacoEditorSurface = forwardRef<
   },
   forwardedRef
 ) {
+  const { t } = useLocalization();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelsRef = useRef(new Map<string, monaco.editor.ITextModel>());
@@ -255,7 +257,7 @@ export const MonacoEditorSurface = forwardRef<
     const editor = monaco.editor.create(hostRef.current, {
       model: null,
       theme: 'fluxora-dark',
-      ariaLabel: 'Code editor',
+      ariaLabel: t('editor.aria.codeEditor'),
       accessibilitySupport: 'auto',
       automaticLayout: true,
       bracketPairColorization: { enabled: true, independentColorPoolPerBracketType: true },
@@ -352,7 +354,7 @@ export const MonacoEditorSurface = forwardRef<
       viewStatesRef.current.clear();
       editorRef.current = null;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({

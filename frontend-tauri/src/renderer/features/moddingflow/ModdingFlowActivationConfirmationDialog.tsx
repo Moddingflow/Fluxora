@@ -10,6 +10,8 @@ import type {
   ModdingFlowActivationInstanceChoice
 } from './moddingflow-activation-confirmation-store';
 import { createModdingFlowActivationConfirmationStore } from './moddingflow-activation-confirmation-store';
+import { useLocalization } from '../../../localization/react';
+import type { TranslationKey } from '../../../localization';
 
 interface ModdingFlowActivationConfirmationDialogProps {
   snapshot: ModdingFlowActivationConfirmationSnapshot;
@@ -24,9 +26,9 @@ interface ModdingFlowActivationConfirmationDialogProps {
   onSelectProfile: (profileName: string) => void;
 }
 
-const fileSizeLabel = (sizeBytes: number | null): string => {
+const fileSizeLabel = (sizeBytes: number | null, unknownLabel: string): string => {
   if (sizeBytes === null) {
-    return 'Размер неизвестен';
+    return unknownLabel;
   }
   if (sizeBytes < 1024) {
     return `${sizeBytes} B`;
@@ -52,6 +54,7 @@ export const ModdingFlowActivationConfirmationDialog = ({
   onSelectInstance,
   onSelectProfile
 }: ModdingFlowActivationConfirmationDialogProps) => {
+  const { t } = useLocalization();
   if (snapshot.state === 'loading' || snapshot.state === 'idle') {
     return (
       <div className="moddingflow-activation-backdrop">
@@ -63,11 +66,11 @@ export const ModdingFlowActivationConfirmationDialog = ({
           aria-labelledby="moddingflow-activation-title"
         >
           <header className="moddingflow-activation-dialog__header">
-            <h2 id="moddingflow-activation-title">Загрузка из ModdingFlow</h2>
+            <h2 id="moddingflow-activation-title">{t('moddingflow.downloadTitle')}</h2>
           </header>
           <div
             className="moddingflow-activation-dialog__skeleton"
-            aria-label="Проверяем файл ModdingFlow"
+            aria-label={t('moddingflow.checkingFile')}
           >
             <span className="flx-skeleton" />
             <span className="flx-skeleton" />
@@ -75,7 +78,7 @@ export const ModdingFlowActivationConfirmationDialog = ({
           </div>
           <footer className="moddingflow-activation-dialog__actions">
             <button className="secondary-button" type="button" onClick={onDismiss}>
-              Отклонить
+              {t('moddingflow.dismiss')}
             </button>
           </footer>
         </section>
@@ -85,32 +88,32 @@ export const ModdingFlowActivationConfirmationDialog = ({
 
   if (snapshot.state !== 'available') {
     const stateCopy: Record<Exclude<typeof snapshot.state, 'idle' | 'loading' | 'available'>, {
-      title: string;
-      detail: string;
+      title: TranslationKey;
+      detail: TranslationKey;
     }> = {
       unknown: {
-        title: 'Файл не найден',
-        detail: 'ModdingFlow не распознал этот файл.'
+        title: 'moddingflow.state.unknown.title',
+        detail: 'moddingflow.state.unknown.detail'
       },
       deleted: {
-        title: 'Файл удалён',
-        detail: 'Этот файл больше не опубликован в ModdingFlow.'
+        title: 'moddingflow.state.deleted.title',
+        detail: 'moddingflow.state.deleted.detail'
       },
       ineligible: {
-        title: 'Файл недоступен для Fluxora',
-        detail: 'Этот файл нельзя передать в менеджер.'
+        title: 'moddingflow.state.ineligible.title',
+        detail: 'moddingflow.state.ineligible.detail'
       },
       disconnected: {
-        title: 'Подключите ModdingFlow',
-        detail: 'Для этого файла нужна подключённая учётная запись.'
+        title: 'moddingflow.state.disconnected.title',
+        detail: 'moddingflow.state.disconnected.detail'
       },
       unsupportedGame: {
-        title: 'Игра пока не поддерживается',
-        detail: 'Fluxora не может выбрать совместимую сборку для этой игры.'
+        title: 'moddingflow.state.unsupportedGame.title',
+        detail: 'moddingflow.state.unsupportedGame.detail'
       },
       unavailable: {
-        title: 'ModdingFlow сейчас недоступен',
-        detail: 'Попробуйте открыть ссылку позже.'
+        title: 'moddingflow.state.unavailable.title',
+        detail: 'moddingflow.state.unavailable.detail'
       }
     };
     const copy = stateCopy[snapshot.state];
@@ -123,11 +126,11 @@ export const ModdingFlowActivationConfirmationDialog = ({
           aria-labelledby="moddingflow-activation-state-title"
         >
           <header className="moddingflow-activation-dialog__header">
-            <h2 id="moddingflow-activation-state-title">{copy.title}</h2>
+            <h2 id="moddingflow-activation-state-title">{t(copy.title)}</h2>
           </header>
-          <p className="moddingflow-activation-dialog__state-copy">{copy.detail}</p>
+          <p className="moddingflow-activation-dialog__state-copy">{t(copy.detail)}</p>
           {accountConnectError ? <p role="alert">{accountConnectError}</p> : null}
-          {snapshot.errorMessage ? <p role="alert">{snapshot.errorMessage}</p> : null}
+          {snapshot.errorMessage ? <p role="alert">{t('moddingflow.error.generic')}</p> : null}
           <footer className="moddingflow-activation-dialog__actions">
             <button
               className="secondary-button"
@@ -135,7 +138,9 @@ export const ModdingFlowActivationConfirmationDialog = ({
               disabled={snapshot.busyAction !== null}
               onClick={onDismiss}
             >
-              {snapshot.busyAction === 'dismissing' ? 'Закрываем…' : 'Отклонить'}
+              {snapshot.busyAction === 'dismissing'
+                ? t('moddingflow.dismissing')
+                : t('moddingflow.dismiss')}
             </button>
             {snapshot.state === 'disconnected' && onConnectAccount ? (
               <button
@@ -144,7 +149,7 @@ export const ModdingFlowActivationConfirmationDialog = ({
                 disabled={accountConnectBusy || snapshot.busyAction !== null}
                 onClick={onConnectAccount}
               >
-                {accountConnectBusy ? 'Подключаем…' : 'Подключить ModdingFlow'}
+                {accountConnectBusy ? t('moddingflow.connecting') : t('moddingflow.connect')}
               </button>
             ) : null}
           </footer>
@@ -170,14 +175,14 @@ export const ModdingFlowActivationConfirmationDialog = ({
           aria-labelledby="moddingflow-activation-no-instance-title"
         >
           <header className="moddingflow-activation-dialog__header">
-            <h2 id="moddingflow-activation-no-instance-title">Нет совместимой сборки</h2>
+            <h2 id="moddingflow-activation-no-instance-title">{t('moddingflow.noCompatibleBuild')}</h2>
           </header>
           <p className="moddingflow-activation-dialog__state-copy">
-            Создайте или откройте сборку для {metadata.game.name}, затем повторите запрос.
+            {t('moddingflow.noCompatibleBuildDetail', { game: metadata.game.name })}
           </p>
           <footer className="moddingflow-activation-dialog__actions">
             <button className="secondary-button" type="button" onClick={onDismiss}>
-              Отклонить
+              {t('moddingflow.dismiss')}
             </button>
           </footer>
         </section>
@@ -197,24 +202,24 @@ export const ModdingFlowActivationConfirmationDialog = ({
         aria-labelledby="moddingflow-activation-title"
       >
         <header className="moddingflow-activation-dialog__header">
-          <h2 id="moddingflow-activation-title">Загрузка из ModdingFlow</h2>
+          <h2 id="moddingflow-activation-title">{t('moddingflow.downloadTitle')}</h2>
         </header>
         <dl className="moddingflow-activation-dialog__metadata">
-          <div><dt>Мод</dt><dd>{metadata.mod.name}</dd></div>
-          <div><dt>Версия</dt><dd>{metadata.version.label}</dd></div>
-          <div><dt>Игра</dt><dd>{metadata.game.name}</dd></div>
-          <div><dt>Файл</dt><dd>{metadata.file.name}</dd></div>
-          <div><dt>Размер</dt><dd>{fileSizeLabel(metadata.file.sizeBytes)}</dd></div>
+          <div><dt>{t('moddingflow.mod')}</dt><dd>{metadata.mod.name}</dd></div>
+          <div><dt>{t('moddingflow.version')}</dt><dd>{metadata.version.label}</dd></div>
+          <div><dt>{t('moddingflow.game')}</dt><dd>{metadata.game.name}</dd></div>
+          <div><dt>{t('moddingflow.file')}</dt><dd>{metadata.file.name}</dd></div>
+          <div><dt>{t('moddingflow.size')}</dt><dd>{fileSizeLabel(metadata.file.sizeBytes, t('moddingflow.sizeUnknown'))}</dd></div>
         </dl>
         <div className="moddingflow-activation-dialog__selection">
           <label>
-            <span>Сборка</span>
+            <span>{t('moddingflow.build')}</span>
             <select
               value={snapshot.selectedInstanceId}
               disabled={snapshot.busyAction !== null}
               onChange={(event) => onSelectInstance(event.currentTarget.value)}
             >
-              <option value="">Выберите сборку</option>
+              <option value="">{t('moddingflow.selectBuild')}</option>
               {compatibleInstances.map((instance) => (
                 <option key={instance.instanceId} value={instance.instanceId}>
                   {instance.instanceName}
@@ -223,13 +228,13 @@ export const ModdingFlowActivationConfirmationDialog = ({
             </select>
           </label>
           <label>
-            <span>Профиль</span>
+            <span>{t('moddingflow.profile')}</span>
             <select
               value={snapshot.selectedProfileName}
               disabled={!selectedInstance || snapshot.busyAction !== null}
               onChange={(event) => onSelectProfile(event.currentTarget.value)}
             >
-              <option value="">Выберите профиль</option>
+              <option value="">{t('moddingflow.selectProfile')}</option>
               {selectedInstance?.profiles.map((profileName) => (
                 <option key={profileName} value={profileName}>{profileName}</option>
               ))}
@@ -238,29 +243,29 @@ export const ModdingFlowActivationConfirmationDialog = ({
         </div>
         {snapshot.planPreview ? (
           <div className="moddingflow-activation-dialog__plan">
-            <h3>План загрузки</h3>
+            <h3>{t('moddingflow.plan')}</h3>
             <dl className="moddingflow-activation-dialog__metadata">
               <div>
-                <dt>Обязательные файлы</dt>
+                <dt>{t('moddingflow.requiredFiles')}</dt>
                 <dd>{snapshot.planPreview.requiredDownloadCount}</dd>
               </div>
               <div>
-                <dt>Исключённые необязательные файлы</dt>
+                <dt>{t('moddingflow.excludedOptional')}</dt>
                 <dd>{snapshot.planPreview.optionalDownloadCount}</dd>
               </div>
               <div>
-                <dt>Требуется места</dt>
-                <dd>{fileSizeLabel(snapshot.planPreview.requiredDiskSizeBytes)}</dd>
+                <dt>{t('moddingflow.spaceRequired')}</dt>
+                <dd>{fileSizeLabel(snapshot.planPreview.requiredDiskSizeBytes, t('moddingflow.sizeUnknown'))}</dd>
               </div>
             </dl>
             {snapshot.planPreview.conflictCount > 0 ? (
               <p role="alert">
-                План содержит конфликтов: {snapshot.planPreview.conflictCount}. Загрузка заблокирована.
+                {t('moddingflow.conflicts', { count: snapshot.planPreview.conflictCount })}
               </p>
             ) : null}
           </div>
         ) : null}
-        {snapshot.errorMessage ? <p role="alert">{snapshot.errorMessage}</p> : null}
+        {snapshot.errorMessage ? <p role="alert">{t('moddingflow.error.generic')}</p> : null}
         <footer className="moddingflow-activation-dialog__actions">
           <button
             className="secondary-button"
@@ -268,7 +273,7 @@ export const ModdingFlowActivationConfirmationDialog = ({
             disabled={snapshot.busyAction !== null}
             onClick={onDismiss}
           >
-            Отклонить
+            {t('moddingflow.dismiss')}
           </button>
           <button
             className="primary-button"
@@ -280,14 +285,14 @@ export const ModdingFlowActivationConfirmationDialog = ({
             onClick={snapshot.canAccept ? onAccept : onPreviewPlan}
           >
             {snapshot.busyAction === 'previewingPlan'
-              ? 'Проверяем план…'
+              ? t('moddingflow.checkingPlan')
               : snapshot.busyAction === 'accepting'
-                ? 'Подтверждаем…'
+                ? t('moddingflow.accepting')
                 : snapshot.canAccept
-                  ? 'Подтвердить загрузку'
+                  ? t('moddingflow.confirmDownload')
                   : snapshot.planPreview?.conflictCount
-                    ? 'Проверить снова'
-                    : 'Проверить план'}
+                    ? t('moddingflow.checkAgain')
+                    : t('moddingflow.checkPlan')}
           </button>
         </footer>
       </section>
@@ -315,6 +320,7 @@ export const ModdingFlowActivationConfirmationFlow = ({
   instances,
   onRemoved
 }: ModdingFlowActivationConfirmationFlowProps) => {
+  const { t } = useLocalization();
   const store = useMemo(
     () => createModdingFlowActivationConfirmationStore({
       activation,
@@ -361,7 +367,7 @@ export const ModdingFlowActivationConfirmationFlow = ({
         )
           .then((status) => {
             if (status.providerId !== 'moddingflow' || status.state !== 'ready') {
-              throw new Error('ModdingFlow authorization did not complete.');
+              throw new Error(t('app.error.moddingFlowAuthorizationIncomplete'));
             }
             return store.ensurePreview(
               createRendererOperationId('moddingflow_activation_preview_after_connect')
@@ -369,7 +375,7 @@ export const ModdingFlowActivationConfirmationFlow = ({
           })
           .catch(() => {
             setAccountConnectError(
-              'Не удалось подключить учётную запись. Повторите попытку.'
+              t('moddingflow.error.connect')
             );
           })
           .finally(() => {

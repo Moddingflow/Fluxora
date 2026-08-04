@@ -2,10 +2,15 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { FluxPackExportDialog } from '../src/renderer/features/fluxpack/FluxPackExportDialog';
+import { LocalizationProvider } from '../src/localization/react';
+
+const renderRussian = (element: React.ReactElement) => renderToStaticMarkup(
+  React.createElement(LocalizationProvider, { language: 'ru-ru' }, element)
+);
 
 describe('FluxPackExportDialog', () => {
   it('uses the Fluxora dialog controls instead of native browser UI', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderRussian(
       React.createElement(FluxPackExportDialog, {
         buildName: 'Foundation Edition',
         defaultPackageType: 'recipe',
@@ -27,7 +32,7 @@ describe('FluxPackExportDialog', () => {
     expect(markup).not.toContain('<select');
     expect(markup).not.toContain('secondary-button');
 
-    const fullMarkup = renderToStaticMarkup(
+    const fullMarkup = renderRussian(
       React.createElement(FluxPackExportDialog, {
         buildName: 'Foundation Edition',
         defaultPackageType: 'full',

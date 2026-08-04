@@ -16,6 +16,10 @@ import {
   type PluginMissingMasterSummary
 } from '../../plugin-workspace-state';
 import type { FluxoraPluginOrderItem } from '../../../shared/fluxora-api';
+import {
+  useLocalization,
+  type LocalizationContextValue
+} from '../../../localization/react';
 
 const TOOLTIP_GAP = 8;
 const VIEWPORT_MARGIN = 12;
@@ -45,13 +49,22 @@ const clamp = (value: number, min: number, max: number): number =>
 
 const tooltipLabel = (
   plugin: FluxoraPluginOrderItem,
-  summary: PluginMissingMasterSummary
+  summary: PluginMissingMasterSummary,
+  t: LocalizationContextValue['t']
 ): string => {
-  const hiddenText = summary.hiddenCount > 0 ? `, и ещё ${summary.hiddenCount}` : '';
+  const hiddenText = summary.hiddenCount > 0
+    ? `, ${t('missingMasters.more', { count: summary.hiddenCount })}`
+    : '';
   const itemTitle = plugin.isSeparator
-    ? `в разделителе ${plugin.separatorTitle || plugin.name || plugin.orderId}`
-    : `у ${plugin.name}`;
-  return `Отсутствуют мастер-файлы ${itemTitle}: ${summary.visibleMasters.join(', ')}${hiddenText}`;
+    ? t('missingMasters.separatorContext', {
+        name: plugin.separatorTitle || plugin.name || plugin.orderId
+      })
+    : t('missingMasters.pluginContext', { name: plugin.name });
+  return t('missingMasters.label', {
+    context: itemTitle,
+    masters: summary.visibleMasters.join(', '),
+    more: hiddenText
+  });
 };
 
 const choosePlacement = (
@@ -90,6 +103,7 @@ export function MissingMastersStatus({
   plugin,
   summary: summaryOverride
 }: MissingMastersStatusProps) {
+  const { t } = useLocalization();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const generatedId = useId();
@@ -191,7 +205,7 @@ export function MissingMastersStatus({
             visibility: position ? 'visible' : 'hidden'
           }}
         >
-          <strong>Отсутствующие мастер-файлы</strong>
+          <strong>{t('missingMasters.title')}</strong>
           <ul>
             {summary.visibleMasters.map((master) => (
               <li key={master}>{master}</li>
@@ -199,7 +213,7 @@ export function MissingMastersStatus({
           </ul>
           {summary.hiddenCount > 0 ? (
             <span className="plugin-missing-master-tooltip__more">
-              и ещё {summary.hiddenCount}
+              {t('missingMasters.more', { count: summary.hiddenCount })}
             </span>
           ) : null}
         </div>,
@@ -211,7 +225,7 @@ export function MissingMastersStatus({
     <>
       <button
         aria-describedby={isOpen ? tooltipId : undefined}
-        aria-label={label ?? tooltipLabel(plugin, summary)}
+        aria-label={label ?? tooltipLabel(plugin, summary, t)}
         className="plugin-missing-master-trigger"
         onBlur={() => {
           setIsOpen(false);

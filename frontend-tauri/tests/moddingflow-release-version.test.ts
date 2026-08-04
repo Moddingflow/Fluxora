@@ -32,8 +32,8 @@ describe('ModdingFlow release version wiring', () => {
     expect(backendCmake).toContain('FLUXORA_PRODUCT_VERSION');
     expect(bridgeSource).toContain('FLUXORA_PRODUCT_VERSION');
     expect(shellSource).toContain('env!("CARGO_PKG_VERSION")');
-    expect(settingsSource).toContain('<dt>Версия Fluxora</dt>');
-    expect(settingsSource).toContain("appInfo?.version ?? 'pending'");
+    expect(settingsSource).toContain("<dt>{t('settings.developer.version')}</dt>");
+    expect(settingsSource).toContain("appInfo?.version ?? t('settings.status.pending')");
     expect(transportSource).not.toContain('Fluxora/1.0 ModdingFlow');
   });
 

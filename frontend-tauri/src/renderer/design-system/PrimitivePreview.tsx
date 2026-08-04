@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
+import { useLocalization } from '../../localization/react';
 import { Icon } from './icons';
 import {
   Badge,
@@ -19,65 +20,65 @@ import {
   Tabs
 } from './primitives';
 
-const previewTabs = [
-  { count: 128, label: 'Plugins', value: 'plugins' },
-  { count: 18, label: 'Data', value: 'data' },
-  { count: 4, label: 'Downloads', value: 'downloads' }
-];
-
 export function PrimitivePreview() {
+  const { t } = useLocalization();
   const [activeTab, setActiveTab] = useState('plugins');
   const [enabled, setEnabled] = useState(true);
   const [checked, setChecked] = useState(true);
+  const previewTabs = useMemo(() => [
+    { count: 128, label: t('preview.plugins'), value: 'plugins' },
+    { count: 18, label: t('preview.data'), value: 'data' },
+    { count: 4, label: t('preview.downloads'), value: 'downloads' }
+  ], [t]);
 
   return (
-    <section className="primitive-preview" aria-label="Design system primitives preview">
+    <section className="primitive-preview" aria-label={t('preview.aria')}>
       <header className="primitive-preview__header">
         <div>
-          <SectionLabel>Design system</SectionLabel>
-          <h1>Fluxora primitives</h1>
+          <SectionLabel>{t('preview.designSystem')}</SectionLabel>
+          <h1>{t('preview.title')}</h1>
         </div>
-        <Badge tone="accent">Dev only</Badge>
+        <Badge tone="accent">{t('preview.devOnly')}</Badge>
       </header>
 
       <div className="primitive-preview__grid">
         <Card className="primitive-preview__panel">
-          <SectionLabel>Actions</SectionLabel>
+          <SectionLabel>{t('preview.actions')}</SectionLabel>
           <div className="primitive-preview__row">
-            <Button iconLeft={<Icon name="plus" size={15} />}>New build</Button>
+            <Button iconLeft={<Icon name="plus" size={15} />}>{t('preview.newBuild')}</Button>
             <Button iconLeft={<Icon name="refresh" size={15} />} variant="secondary">
-              Refresh
+              {t('preview.refresh')}
             </Button>
-            <Button variant="ghost">Details</Button>
-            <IconButton label="Open settings" variant="boxed">
+            <Button variant="ghost">{t('preview.details')}</Button>
+            <IconButton label={t('preview.openSettings')} variant="boxed">
               <Icon name="settings" size={16} />
             </IconButton>
           </div>
           <div className="primitive-preview__row">
             <Input
-              aria-label="Search preview"
+              aria-label={t('preview.search')}
               leadingIcon={<Icon name="search" size={15} />}
-              placeholder="Search builds"
+              placeholder={t('preview.searchBuilds')}
             />
             <Select
-              aria-label="Game"
+              aria-label={t('preview.game')}
               defaultValue="skyrim"
               options={[
-                { label: 'Skyrim Special Edition', value: 'skyrim' },
-                { label: 'Fallout 4', value: 'fallout' }
+                { label: t('preview.skyrim'), value: 'skyrim' },
+                { label: t('preview.fallout'), value: 'fallout' }
               ]}
             />
           </div>
         </Card>
 
         <Card className="primitive-preview__panel">
-          <SectionLabel>State</SectionLabel>
+          <SectionLabel>{t('preview.state')}</SectionLabel>
           <div className="primitive-preview__stack">
-            <Switch checked={enabled} label="Nexus integration" onCheckedChange={setEnabled} />
-            <Checkbox checked={checked} label="Enable selected mod" onCheckedChange={setChecked} />
+            <Switch checked={enabled} label={t('preview.nexus')} onCheckedChange={setEnabled} />
+            <Checkbox checked={checked} label={t('preview.enableMod')} onCheckedChange={setChecked} />
             <div className="primitive-preview__row">
-              <Badge tone="neutral">Neutral</Badge>
-              <Badge tone="accent">Active</Badge>
+              <Badge tone="neutral">{t('preview.neutral')}</Badge>
+              <Badge tone="accent">{t('preview.active')}</Badge>
               <StatusDot state="overwrites" />
               <StatusDot state="overwritten" />
               <StatusDot state="fully-overwritten" />
@@ -86,30 +87,30 @@ export function PrimitivePreview() {
         </Card>
 
         <Card className="primitive-preview__panel">
-          <SectionLabel>Navigation</SectionLabel>
+          <SectionLabel>{t('preview.navigation')}</SectionLabel>
           <div className="primitive-preview__stack">
             <Tabs onValueChange={setActiveTab} tabs={previewTabs} value={activeTab} />
             <NavItem
               active
-              hint="Active build"
+              hint={t('preview.activeBuild')}
               icon={<Icon name="layers" size={17} />}
-              label="Load order"
+              label={t('preview.loadOrder')}
             />
-            <NavItem hint="Operation scoped" icon={<Icon name="transfer" size={17} />} label="Transfer" />
+            <NavItem hint={t('preview.operationScoped')} icon={<Icon name="transfer" size={17} />} label={t('preview.transfer')} />
           </div>
         </Card>
 
         <Card className="primitive-preview__panel">
-          <SectionLabel>Feedback</SectionLabel>
+          <SectionLabel>{t('preview.feedback')}</SectionLabel>
           <div className="primitive-preview__stack">
-            <ProgressBar label="Installing archive" value={62} valueLabel="62%" />
+            <ProgressBar label={t('preview.installing')} value={62} valueLabel="62%" />
             <div className="primitive-preview__row">
               <FacetSpinner size={34} />
               <EmptyState
                 compact
-                description="Choose a build to inspect mods and plugins."
+                description={t('preview.noBuildDescription')}
                 icon={<Icon name="folder" size={20} />}
-                title="No build selected"
+                title={t('preview.noBuild')}
               />
             </div>
           </div>

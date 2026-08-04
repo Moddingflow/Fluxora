@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { BuildSettingsWorkspace } from '../src/renderer/features/build/BuildSettingsWorkspace';
 import type { BuildPathDraft } from '../src/renderer/build-workspace-state';
+import { renderLocalized } from './localization-test-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,7 +32,7 @@ const noop = () => undefined;
 
 describe('build settings window', () => {
   it('renders build paths inside the Settings left-nav shell', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       React.createElement(BuildSettingsWorkspace, {
         busyLabel: 'Loading build paths',
         draft,
@@ -44,12 +44,13 @@ describe('build settings window', () => {
         onChange: noop,
         onClose: noop,
         onSave: noop
-      })
+      }),
+      'en-US'
     );
 
     expect(markup).toContain('settings-layout--build');
     expect(markup).toContain('Build settings sections');
-    expect(markup).toContain('Пути');
+    expect(markup).toContain('Paths');
     expect(markup).toContain('settings-panel--build-paths');
     expect(markup).toContain('Project directory');
     expect(markup).toContain('Game executable');
@@ -84,7 +85,8 @@ describe('build settings window', () => {
       expect.arrayContaining([expect.objectContaining({ label: 'main', maximized: true })])
     );
     expect(app).toContain("const isBuildSettingsWindow = windowMode === 'build-settings';");
-    expect(app).toContain("return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;");
+    expect(app).toContain("return t('titlebar.buildSettings', {");
+    expect(app).toContain("buildSettingsInitialName || t('titlebar.fallbackBuild')");
     expect(app).toContain('window.fluxora.windowControls.openBuildSettings(');
     expect(app).toContain('writeBuildSettingsBootstrap({');
     expect(app).toContain('readBuildSettingsBootstrap(buildSettingsProjectId ??');

@@ -65,7 +65,7 @@ describeRealNif('real NIF regression corpus', () => {
         }
         const model = parseNifModel(buffer);
         const intentionallyEmpty = model.warnings.includes(
-          'NIF contains no renderable triangle geometry; the preview is intentionally empty.'
+          'preview.warning.noGeometry'
         );
         if (
           (model.meshes.length === 0 && !intentionallyEmpty) ||

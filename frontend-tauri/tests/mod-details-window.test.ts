@@ -23,7 +23,7 @@ describe('mod details window', () => {
     );
 
     expect(app).toContain("const isModDetailsWindow = windowMode === 'mod-details';");
-    expect(app).toContain("return modDetailsInitialName || 'Details';");
+    expect(app).toContain("return modDetailsInitialName || t('app.ui.details');");
     expect(app).not.toContain('return `Mod · ${modDetailsInitialName');
     expect(app).toContain('void openModDetailsWindow(item);');
     expect(app).toContain('event.detail === 2');
@@ -37,12 +37,12 @@ describe('mod details window', () => {
     expect(app).toContain('initialModDetailsBootstrap?.content');
     expect(app).toContain('const bootstrapItem = initialModDetailsBootstrap?.item;');
     expect(app).toContain('bootstrapItem?.isMod');
-    expect(app).toContain('role="tablist" aria-label="Mod details sections"');
+    expect(app).toContain("role=\"tablist\" aria-label={t('app.ui.modDetailsSections')}");
     expect(app).toContain('modOrderItemMatchesLookup(item, modDetailsModId)');
-    expect(app).toContain('Файлы');
-    expect(app).toContain('Конфликты');
-    expect(app).toContain('Перезаписывает:');
-    expect(app).toContain('Перезаписывается:');
+    expect(app).toContain("label: t('app.tab.files')");
+    expect(app).toContain("label: t('app.tab.conflicts')");
+    expect(app).toContain("t('app.ui.overwritesColon')");
+    expect(app).toContain("t('app.ui.overwrittenByColon')");
     expect(app).not.toContain('const scanDirectory = async');
     expect(app).not.toMatch(/Loading mod(?!s)/);
     expect(detailsWindow).not.toContain('Loading tree');
@@ -150,8 +150,8 @@ describe('mod details window', () => {
     expect(editor).toContain('LazyMonacoEditorSurface');
     expect(editor).toContain('loadMonacoEditorSurface');
     expect(editor).toContain('<TextEditorSidebar');
-    expect(editor).toContain('Command Palette');
-    expect(editor).toContain('Save All');
+    expect(editor).toContain("t('editor.action.commandPalette')");
+    expect(editor).toContain("t('editor.action.saveAll')");
     expect(editor).toContain("runEditorAction('undo')");
     expect(editor).toContain("runEditorAction('redo')");
     expect(monacoSurface).toContain('monaco.editor.create');
@@ -230,7 +230,7 @@ describe('mod details window', () => {
     expect(app).not.toContain(
       "import { FilePreviewWorkspace } from './features/file-preview/FilePreviewWorkspace';"
     );
-    expect(registry).toContain("title: '.nif Preview'");
+    expect(registry).toContain("titleKey: 'preview.nif.title'");
     expect(registry).toContain("extension: '.nif'");
     expect(registry).toContain('cuboid.svg');
     expect(workspace).toContain('new THREE.WebGLRenderer({ antialias: true })');

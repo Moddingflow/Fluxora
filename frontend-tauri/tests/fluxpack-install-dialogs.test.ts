@@ -4,10 +4,15 @@ import { describe, expect, it } from 'vitest';
 
 import { FluxPackInstallConflictDialog } from '../src/renderer/features/fluxpack/FluxPackInstallConflictDialog';
 import { FluxPackManualDownloadsDialog } from '../src/renderer/features/fluxpack/FluxPackManualDownloadsDialog';
+import { LocalizationProvider } from '../src/localization/react';
+
+const renderRussian = (element: React.ReactElement) => renderToStaticMarkup(
+  React.createElement(LocalizationProvider, { language: 'ru-ru' }, element)
+);
 
 describe('FluxPack install dialogs', () => {
   it('offers an explicit Delta update or a separate new build when names collide', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderRussian(
       React.createElement(FluxPackInstallConflictDialog, {
         buildName: 'Foundation Edition',
         onCancel: () => undefined,
@@ -20,12 +25,12 @@ describe('FluxPack install dialogs', () => {
     expect(markup).toContain('Foundation Edition');
     expect(markup).toContain('Обновить существующую');
     expect(markup).toContain('Установить как новую');
-    expect(markup).toContain('Delta');
+    expect(markup).toContain('Дельта-обновление');
     expect(markup).toContain('autofocus=""');
   });
 
   it('keeps the highlighted Nexus download action fixed while manual archives are collected', () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderRussian(
       React.createElement(FluxPackManualDownloadsDialog, {
         buildName: 'Foundation Edition',
         onCancel: () => undefined,

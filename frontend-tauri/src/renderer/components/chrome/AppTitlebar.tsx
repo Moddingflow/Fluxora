@@ -2,6 +2,7 @@ import { Icon } from '../../design-system/icons';
 import { AppUpdateToolbarButton } from '../../features/update/AppUpdateToolbarButton';
 import type { AppUpdateToolbarViewState } from '../../features/update/app-update-state';
 import geminiIcon from '../../../../../Icons/gemini.svg';
+import { useLocalization } from '../../../localization/react';
 
 export type AppTitlebarMode = 'main' | 'settings';
 
@@ -50,12 +51,13 @@ export function AppTitlebar({
   onToggleMaximize,
   onClose
 }: AppTitlebarProps) {
+  const { t } = useLocalization();
   const isSettingsWindow = mode === 'settings';
-  const titleText = title ?? (isSettingsWindow ? 'Settings' : 'Fluxora');
+  const titleText = title ?? (isSettingsWindow ? t('titlebar.settings') : t('titlebar.appName'));
 
   return (
     <header
-      aria-label={isSettingsWindow ? 'Fluxora settings window chrome' : 'Fluxora window chrome'}
+      aria-label={isSettingsWindow ? t('titlebar.aria.settings') : t('titlebar.aria.main')}
       className={`titlebar${isSettingsWindow ? ' titlebar--settings-window' : ''}`}
       data-tauri-drag-region
     >
@@ -78,21 +80,21 @@ export function AppTitlebar({
       <div className="titlebar__drag" data-tauri-drag-region />
 
       {showShortcuts ? (
-        <nav aria-label="Window shortcuts" className="titlebar__shortcuts">
+        <nav aria-label={t('titlebar.shortcuts')} className="titlebar__shortcuts">
           <button
-            aria-label="Home"
+            aria-label={t('titlebar.home')}
             className="titlebar__shortcut"
             data-active={homeActive ? 'true' : undefined}
-            title="Home"
+            title={t('titlebar.home')}
             type="button"
             onClick={() => runTitlebarAction(onHome)}
           >
             <Icon name="layers" size={15} />
           </button>
           <button
-            aria-label="Refresh"
+            aria-label={t('titlebar.refresh')}
             className="titlebar__shortcut"
-            title="Refresh"
+            title={t('titlebar.refresh')}
             type="button"
             onClick={() => runTitlebarAction(onRefresh)}
           >
@@ -101,11 +103,11 @@ export function AppTitlebar({
           {showAi ? (
             <button
               aria-keyshortcuts="Control+Shift+G"
-              aria-label={aiActive ? 'Close Fluxora AI' : 'Open Fluxora AI'}
+              aria-label={aiActive ? t('titlebar.ai.close') : t('titlebar.ai.open')}
               aria-pressed={aiActive}
               className="titlebar__shortcut titlebar__shortcut--ai"
               data-active={aiActive ? 'true' : undefined}
-              title="Toggle AI chat (Ctrl+Shift+G)"
+              title={t('titlebar.ai.toggle')}
               type="button"
               onClick={() => runTitlebarAction(onToggleAi)}
             >
@@ -114,10 +116,10 @@ export function AppTitlebar({
           ) : null}
           <AppUpdateToolbarButton update={update} />
           <button
-            aria-label="Open settings"
+            aria-label={t('titlebar.openSettings')}
             className="titlebar__shortcut"
             data-active={settingsActive ? 'true' : undefined}
-            title="Open settings"
+            title={t('titlebar.openSettings')}
             type="button"
             onClick={() => runTitlebarAction(onOpenSettings)}
           >
@@ -126,13 +128,13 @@ export function AppTitlebar({
         </nav>
       ) : null}
 
-      <div aria-label="Window controls" className="titlebar__window-controls">
+      <div aria-label={t('titlebar.windowControls')} className="titlebar__window-controls">
         {!isSettingsWindow ? (
           <>
             <button
-              aria-label="Minimize"
+              aria-label={t('titlebar.minimize')}
               className="titlebar__caption-button"
-              title="Minimize"
+              title={t('titlebar.minimize')}
               type="button"
               onClick={() => runTitlebarAction(onMinimize)}
             >
@@ -141,9 +143,9 @@ export function AppTitlebar({
               </span>
             </button>
             <button
-              aria-label="Maximize"
+              aria-label={t('titlebar.maximize')}
               className="titlebar__caption-button"
-              title="Maximize"
+              title={t('titlebar.maximize')}
               type="button"
               onClick={() => runTitlebarAction(onToggleMaximize)}
             >
@@ -154,13 +156,13 @@ export function AppTitlebar({
           </>
         ) : null}
         <button
-          aria-label="Close"
+          aria-label={t('titlebar.close')}
           className={`titlebar__caption-button ${
             isSettingsWindow
               ? 'titlebar__caption-button--custom-close'
               : 'titlebar__caption-button--close'
           }`}
-          title="Close"
+          title={t('titlebar.close')}
           type="button"
           onClick={() => runTitlebarAction(onClose)}
         >

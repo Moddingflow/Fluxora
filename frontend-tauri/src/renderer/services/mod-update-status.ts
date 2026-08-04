@@ -3,6 +3,7 @@ import type {
   FluxoraModUpdateCheckReason,
   FluxoraModUpdateCheckResult
 } from '../../shared/fluxora-api';
+import { translateForLanguage, type TranslationKey } from '../../localization';
 
 export type ModUpdateResultsByProject = Record<string, FluxoraModUpdateCheckResult>;
 
@@ -24,56 +25,74 @@ export const rememberModUpdateResult = (
   [modUpdateProjectKey(projectDirectory)]: result
 });
 
-const reasonText = (reason: FluxoraModUpdateCheckReason): string => {
+const reasonText = (reason: FluxoraModUpdateCheckReason, language: string): string => {
+  let key: TranslationKey;
   switch (reason) {
     case 'authenticationUnavailable':
-      return 'недоступна авторизация Nexus';
+      key = 'modUpdate.reason.authenticationUnavailable';
+      break;
     case 'quotaReserve':
-      return 'достигнут резерв API-квоты';
+      key = 'modUpdate.reason.quotaReserve';
+      break;
     case 'rateLimited':
-      return 'Nexus временно ограничил частоту запросов';
+      key = 'modUpdate.reason.rateLimited';
+      break;
     case 'offlineBackoff':
     case 'networkError':
-      return 'сеть или Nexus временно недоступны';
+      key = 'modUpdate.reason.network';
+      break;
     case 'ambiguousMetadata':
-      return 'метаданные файлов неоднозначны';
+      key = 'modUpdate.reason.ambiguousMetadata';
+      break;
     case 'metadataUnavailable':
-      return 'метаданные файлов недоступны';
+      key = 'modUpdate.reason.metadataUnavailable';
+      break;
     case 'cancelled':
-      return 'проверка отменена';
+      key = 'modUpdate.reason.cancelled';
+      break;
     case 'dailyTtl':
-      return 'повторная автоматическая проверка ещё не требуется';
+      key = 'modUpdate.reason.dailyTtl';
+      break;
     case 'noEligibleMods':
-      return 'нет модов с полной Nexus identity';
+      key = 'modUpdate.reason.noEligibleMods';
+      break;
     case 'none':
-      return 'часть модов не удалось проверить';
+      key = 'modUpdate.reason.none';
+      break;
   }
+  return translateForLanguage(language, key);
 };
 
 export const modUpdateFreshnessView = (
   item: FluxoraModOrderItem,
-  _lastResult?: FluxoraModUpdateCheckResult
+  _lastResult?: FluxoraModUpdateCheckResult,
+  language = 'en-US'
 ): ModUpdateFreshnessView => {
   const state = (item.updateCheckState ?? '').trim().toLocaleLowerCase('en-US');
   if (state === 'baseline_pending' || state === 'recheck_required') {
     return {
       label: null,
-      title: 'Показана последняя известная версия.',
+      title: translateForLanguage(language, 'modUpdate.freshness.lastKnown'),
       tone: 'confirmed'
     };
   }
   return {
     label: null,
-    title: state === 'completed' ? 'Версия подтверждена последней успешной проверкой.' : '',
+    title: state === 'completed'
+      ? translateForLanguage(language, 'modUpdate.freshness.confirmed')
+      : '',
     tone: 'confirmed'
   };
 };
 
 export const modUpdateTransientMessage = (
-  result: FluxoraModUpdateCheckResult | undefined
+  result: FluxoraModUpdateCheckResult | undefined,
+  language = 'en-US'
 ): string | null => {
   if (result?.state !== 'partial') {
     return null;
   }
-  return `Проверка обновлений завершена частично: ${reasonText(result.reason)}. Последние успешно известные версии сохранены.`;
+  return translateForLanguage(language, 'modUpdate.partial', {
+    reason: reasonText(result.reason, language)
+  });
 };

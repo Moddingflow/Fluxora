@@ -11,6 +11,7 @@ import {
   WholeWord,
   X
 } from '../../design-system/icons/lucide-compat';
+import { useLocalization } from '../../../localization/react';
 
 import type {
   TextEditorFileTreeRow,
@@ -91,25 +92,26 @@ export function TextEditorSidebar({
   onSelectSearchResult,
   onToggleDirectory
 }: TextEditorSidebarProps) {
+  const { t } = useLocalization();
   if (view === 'search') {
     return (
-      <aside className="text-editor-sidebar" aria-label="Search open editors">
+      <aside className="text-editor-sidebar" aria-label={t('editor.aria.searchOpenEditors')}>
         <header className="text-editor-sidebar-header">
-          <strong>SEARCH</strong>
+          <strong>{t('editor.sidebar.search')}</strong>
           <span>{searchResults.length}</span>
         </header>
         <div className="text-editor-search-box">
           <input
-            aria-label="Search open editors"
+            aria-label={t('editor.aria.searchOpenEditors')}
             autoFocus
-            placeholder="Search open editors"
+            placeholder={t('editor.sidebar.searchPlaceholder')}
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           />
           <div className="text-editor-search-controls">
             <ToggleButton
               active={Boolean(searchOptions.matchCase)}
-              label="Match Case"
+              label={t('editor.sidebar.matchCase')}
               onClick={() => onSearchOptionsChange({
                 ...searchOptions,
                 matchCase: !searchOptions.matchCase
@@ -119,7 +121,7 @@ export function TextEditorSidebar({
             </ToggleButton>
             <ToggleButton
               active={Boolean(searchOptions.wholeWord)}
-              label="Match Whole Word"
+              label={t('editor.sidebar.wholeWord')}
               onClick={() => onSearchOptionsChange({
                 ...searchOptions,
                 wholeWord: !searchOptions.wholeWord
@@ -129,7 +131,7 @@ export function TextEditorSidebar({
             </ToggleButton>
             <ToggleButton
               active={Boolean(searchOptions.useRegex)}
-              label="Use Regular Expression"
+              label={t('editor.sidebar.regex')}
               onClick={() => onSearchOptionsChange({
                 ...searchOptions,
                 useRegex: !searchOptions.useRegex
@@ -157,10 +159,10 @@ export function TextEditorSidebar({
             </button>
           ))}
           {searchQuery && searchResults.length === 0 ? (
-            <div className="text-editor-sidebar-empty">No results in open editors</div>
+            <div className="text-editor-sidebar-empty">{t('editor.sidebar.noSearchResults')}</div>
           ) : null}
           {!searchQuery ? (
-            <div className="text-editor-sidebar-empty">Type to search open editors</div>
+            <div className="text-editor-sidebar-empty">{t('editor.sidebar.typeToSearch')}</div>
           ) : null}
         </div>
       </aside>
@@ -168,10 +170,10 @@ export function TextEditorSidebar({
   }
 
   return (
-    <aside className="text-editor-sidebar" aria-label="Explorer">
+    <aside className="text-editor-sidebar" aria-label={t('editor.action.explorer')}>
       <header className="text-editor-sidebar-header">
-        <strong>EXPLORER</strong>
-        <button aria-label="Open File" title="Open File" type="button" onClick={onOpenFile}>
+        <strong>{t('editor.sidebar.explorer')}</strong>
+        <button aria-label={t('editor.action.openFile')} title={t('editor.action.openFile')} type="button" onClick={onOpenFile}>
           <FolderOpen size={15} />
         </button>
       </header>
@@ -179,7 +181,7 @@ export function TextEditorSidebar({
       <section className="text-editor-sidebar-section" aria-labelledby="open-editors-heading">
         <h2 id="open-editors-heading">
           <ChevronDown size={14} />
-          OPEN EDITORS
+          {t('editor.sidebar.openEditors')}
           <span>{tabs.length}</span>
         </h2>
         <div className="text-editor-open-editors">
@@ -197,12 +199,12 @@ export function TextEditorSidebar({
               >
                 <FileCode2 size={14} />
                 <span>{tab.fileName}</span>
-                {isTextEditorTabDirty(tab) ? <i aria-label="Unsaved" /> : null}
+                {isTextEditorTabDirty(tab) ? <i aria-label={t('editor.aria.unsaved')} /> : null}
               </button>
               <button
-                aria-label={`Close ${tab.fileName}`}
+                aria-label={t('editor.aria.closeFile', { name: tab.fileName })}
                 className="text-editor-open-editor-close"
-                title="Close Editor"
+                title={t('editor.action.closeEditor')}
                 type="button"
                 onClick={() => onCloseTab(tab.id)}
               >
@@ -211,7 +213,7 @@ export function TextEditorSidebar({
             </div>
           ))}
           {tabs.length === 0 ? (
-            <div className="text-editor-sidebar-empty">No open editors</div>
+            <div className="text-editor-sidebar-empty">{t('editor.sidebar.noOpenEditors')}</div>
           ) : null}
         </div>
       </section>
@@ -222,15 +224,15 @@ export function TextEditorSidebar({
             <ChevronDown size={14} />
             <span title={modName}>{modName.toUpperCase()}</span>
             <button
-              aria-label="Refresh Mod Files"
-              title="Refresh"
+              aria-label={t('editor.sidebar.refreshModFiles')}
+              title={t('editor.sidebar.refresh')}
               type="button"
               onClick={onRefreshTree}
             >
               <RefreshCw size={13} />
             </button>
           </h2>
-          <div className="text-editor-file-tree" role="tree" aria-label={`${modName} files`}>
+          <div className="text-editor-file-tree" role="tree" aria-label={t('editor.aria.modFiles', { name: modName })}>
             {fileTreeRows.map((row) => {
               const editable = !row.entry.isDirectory && isTextEditorFileName(row.entry.name);
               const expanded = expandedDirectories.has(row.entry.relativePath);
@@ -263,7 +265,7 @@ export function TextEditorSidebar({
                     ? expanded ? <FolderOpen size={14} /> : <Folder size={14} />
                     : editable ? <FileCode2 size={14} /> : <File size={14} />}
                   <span>{row.entry.name}</span>
-                  {loading ? <i aria-label="Loading" /> : null}
+                  {loading ? <i aria-label={t('editor.aria.loading')} /> : null}
                 </button>
               );
             })}
@@ -272,7 +274,9 @@ export function TextEditorSidebar({
             ) : null}
             {!fileTreeError && fileTreeRows.length === 0 ? (
               <div className="text-editor-sidebar-empty">
-                {loadingDirectories.has('') ? 'Loading files' : 'No files'}
+                {loadingDirectories.has('')
+                  ? t('editor.sidebar.loadingFiles')
+                  : t('editor.sidebar.noFiles')}
               </div>
             ) : null}
           </div>

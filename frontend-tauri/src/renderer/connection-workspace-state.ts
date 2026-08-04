@@ -3,6 +3,7 @@ import type {
   FluxoraExternalConnectionState,
   FluxoraExternalConnectionStatus
 } from '../shared/fluxora-api';
+import { translateForLanguage } from '../localization';
 
 export const connectionSnapshotStorageKey = 'fluxora.settings.connectionSnapshot.v1';
 const legacyNexusStatusStorageKey = 'fluxora.settings.nexusStatus';
@@ -107,13 +108,15 @@ const migrateLegacyNexusStatus = (value: unknown): FluxoraExternalConnectionSnap
     providers: [
       {
         providerId: 'nexus',
-        label: 'Nexus Mods',
+        label: translateForLanguage('en-US', 'settings.nexus.providerLabel'),
         state,
         accountName,
         hasStoredSession: linked,
         retryable: state === 'restoring',
         requiresUserAction: state === 'reauthRequired',
-        message: state === 'restoring' ? 'Restoring saved Nexus Mods session.' : '',
+        message: state === 'restoring'
+          ? translateForLanguage('en-US', 'settings.nexus.restoringMessage')
+          : '',
         checkedAtUtc: '',
         operationId
       }
@@ -184,45 +187,55 @@ export const connectionIsReady = (
 ): boolean => status?.state === 'ready';
 
 export const connectionSummary = (
-  status: FluxoraExternalConnectionStatus | null | undefined
+  status: FluxoraExternalConnectionStatus | null | undefined,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (!status) {
-    return 'Status pending';
+    return translateForLanguage(language, 'settings.connection.pending');
   }
   switch (status.state) {
     case 'ready':
-      return status.accountName ? `Connected - ${status.accountName}` : 'Connected';
+      return status.accountName
+        ? translateForLanguage(language, 'settings.connection.connectedAccount', {
+            account: status.accountName
+          })
+        : translateForLanguage(language, 'settings.connection.connected');
     case 'connecting':
-      return 'Connecting';
+      return translateForLanguage(language, 'settings.connection.connecting');
     case 'restoring':
     case 'temporarilyUnavailable':
-      return 'Reconnecting';
+      return translateForLanguage(language, 'settings.connection.reconnecting');
     case 'reauthRequired':
-      return status.accountName ? `Reconnect - ${status.accountName}` : 'Reconnect';
+      return status.accountName
+        ? translateForLanguage(language, 'settings.connection.reconnectAccount', {
+            account: status.accountName
+          })
+        : translateForLanguage(language, 'settings.connection.reconnect');
     case 'notConfigured':
-      return status.message || 'Provider is not configured';
+      return status.message || translateForLanguage(language, 'settings.connection.notConfigured');
     case 'notLinked':
     default:
-      return 'Not connected';
+      return translateForLanguage(language, 'settings.connection.notConnected');
   }
 };
 
 export const connectionActionLabel = (
-  status: FluxoraExternalConnectionStatus | null | undefined
+  status: FluxoraExternalConnectionStatus | null | undefined,
+  language: string | null | undefined = 'en-US'
 ): string => {
   if (status?.state === 'ready') {
-    return 'Disconnect';
+    return translateForLanguage(language, 'settings.connection.action.disconnect');
   }
   if (status?.state === 'connecting') {
-    return 'Cancel';
+    return translateForLanguage(language, 'settings.connection.action.cancel');
   }
   if (status?.state === 'reauthRequired') {
-    return 'Reconnect';
+    return translateForLanguage(language, 'settings.connection.action.reconnect');
   }
   if (status?.state === 'restoring' || status?.state === 'temporarilyUnavailable') {
-    return 'Reconnecting';
+    return translateForLanguage(language, 'settings.connection.action.reconnecting');
   }
-  return 'Connect';
+  return translateForLanguage(language, 'settings.connection.action.connect');
 };
 
 export const connectionCanToggle = (

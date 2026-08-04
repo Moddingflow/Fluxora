@@ -448,6 +448,7 @@ export function SetupApp() {
   return (
     <div className="setup-shell">
       <InstallerTitlebar
+        language={state.language}
         onClose={() => api.requestClose()}
         onCloseBlocked={(key) => dispatch({ type: 'notice', key })}
         onMinimize={() => api.minimizeWindow()}
@@ -456,7 +457,7 @@ export function SetupApp() {
       <aside className="setup-rail">
         <div className="setup-rail__identity" aria-hidden="true">
           <Icon name="fluxora-mark" size={28} />
-          <span>Fluxora</span>
+          <span>{translate(state.language, 'setup.brand')}</span>
         </div>
         <SetupStepNavigation
           currentStep={state.step}
@@ -470,7 +471,7 @@ export function SetupApp() {
           }
           onNavigate={(step) => dispatch({ type: 'step', step })}
         />
-        <p className="setup-rail__meta">Windows · x64</p>
+        <p className="setup-rail__meta">{translate(state.language, 'setup.platform')}</p>
       </aside>
       <section className="setup-stage">
         <main className="setup-content">{activeStep}</main>

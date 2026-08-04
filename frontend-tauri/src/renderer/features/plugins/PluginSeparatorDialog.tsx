@@ -2,6 +2,7 @@ import { X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type CSSProperties, type FormEvent } from 'react';
 
 import layersIcon from '../../../../../Icons/layers.svg';
+import { translateForLanguage } from '../../../localization';
 import { Button } from '../../design-system';
 
 export const PLUGIN_SEPARATOR_NAME_MAX_LENGTH = 255;
@@ -30,54 +31,18 @@ export interface PluginSeparatorCopy {
   title: string;
 }
 
-const pluginSeparatorCopyByLanguage: Record<
-  'de' | 'en' | 'ru',
-  PluginSeparatorCopy
-> = {
-  en: {
-    cancelLabel: 'Cancel',
-    closeLabel: 'Close separator creation',
-    createLabel: 'Create',
-    creatingLabel: 'Creating plugin separator',
-    inputLabel: 'Separator name',
-    menuLabel: 'Create separator',
-    requiredMessage: 'Enter a separator name.',
-    title: 'Create separator'
-  },
-  de: {
-    cancelLabel: 'Abbrechen',
-    closeLabel: 'Erstellung des Trenners schließen',
-    createLabel: 'Erstellen',
-    creatingLabel: 'Plugin-Trenner wird erstellt',
-    inputLabel: 'Name des Trenners',
-    menuLabel: 'Trenner erstellen',
-    requiredMessage: 'Gib einen Namen für den Trenner ein.',
-    title: 'Trenner erstellen'
-  },
-  ru: {
-    cancelLabel: 'Отмена',
-    closeLabel: 'Закрыть создание разделителя',
-    createLabel: 'Создать',
-    creatingLabel: 'Создание разделителя плагинов',
-    inputLabel: 'Название разделителя',
-    menuLabel: 'Создать разделитель',
-    requiredMessage: 'Введите название разделителя.',
-    title: 'Создать разделитель'
-  }
-};
-
 export const pluginSeparatorCopy = (
   language: string | null | undefined
-): PluginSeparatorCopy => {
-  const normalized = language?.trim().toLocaleLowerCase() ?? '';
-  if (normalized.startsWith('ru')) {
-    return pluginSeparatorCopyByLanguage.ru;
-  }
-  if (normalized.startsWith('de')) {
-    return pluginSeparatorCopyByLanguage.de;
-  }
-  return pluginSeparatorCopyByLanguage.en;
-};
+): PluginSeparatorCopy => ({
+  cancelLabel: translateForLanguage(language, 'pluginSeparator.cancel'),
+  closeLabel: translateForLanguage(language, 'pluginSeparator.close'),
+  createLabel: translateForLanguage(language, 'pluginSeparator.create'),
+  creatingLabel: translateForLanguage(language, 'pluginSeparator.creating'),
+  inputLabel: translateForLanguage(language, 'pluginSeparator.input'),
+  menuLabel: translateForLanguage(language, 'pluginSeparator.menu'),
+  requiredMessage: translateForLanguage(language, 'pluginSeparator.required'),
+  title: translateForLanguage(language, 'pluginSeparator.title')
+});
 
 type PluginSeparatorIconStyle = CSSProperties & {
   '--mod-create-icon': string;

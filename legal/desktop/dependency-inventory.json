@@ -12,11 +12,11 @@
     },
     {
       "path": "frontend-tauri/package.json",
-      "sha256": "e9d3cc752d51a99db2013dee22ba699768020cc2ee431aa2f414efaf26316505"
+      "sha256": "89bd7c36681d5225eaf1c7f728112b6b3fd5c954ac8ba52fc6812d3dad7b1340"
     },
     {
       "path": "frontend-tauri/pnpm-lock.yaml",
-      "sha256": "84602daa589966ad7c12c11868ccc151c9b98b4bdd3827678d6262451bacf715"
+      "sha256": "0ec00e7ed4491526015e8f29ff74fd950b80040666396366a6b890e654c92f2e"
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.toml",
@@ -123,9 +123,15 @@
     "pnpm": {
       "platform": "win32-x64",
       "runtimeDistributed": {
-        "count": 22,
-        "packageSetSha256": "c036ac0ecbf9902310d21fa2c68f95c5d6e465a245ddda63743b5215177bad50",
+        "count": 25,
+        "packageSetSha256": "181c64ec645de0102ee6bc9e627925a269d38c6fb8cd4aeabded9fc595eb5908",
         "packages": [
+          {
+            "name": "@babel/runtime",
+            "version": "7.29.7",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
           {
             "name": "@supabase/auth-js",
             "version": "2.104.0",
@@ -199,6 +205,12 @@
             "source": "npm-registry"
           },
           {
+            "name": "i18next",
+            "version": "26.0.2",
+            "license": "MIT",
+            "source": "npm-registry"
+          },
+          {
             "name": "iceberg-js",
             "version": "0.8.1",
             "license": "MIT",
@@ -247,6 +259,12 @@
             "source": "npm-registry"
           },
           {
+            "name": "typescript",
+            "version": "6.0.3",
+            "license": "Apache-2.0",
+            "source": "npm-registry"
+          },
+          {
             "name": "undici-types",
             "version": "8.3.0",
             "license": "MIT",
@@ -261,8 +279,8 @@
         ]
       },
       "buildTestOnly": {
-        "count": 104,
-        "packageSetSha256": "65290e44dd4a2a7f5917ac72d9d5da524a7cfbeb8fc4f9ab5defaef774a33540",
+        "count": 103,
+        "packageSetSha256": "8aa5a32e6350cc60e8b2772a885554f1ed1266c6a5b4c7c36dd16c935d54cd71",
         "packages": [
           {
             "name": "@babel/code-frame",
@@ -850,12 +868,6 @@
             "name": "tinyrainbow",
             "version": "3.1.0",
             "license": "MIT",
-            "source": "npm-registry"
-          },
-          {
-            "name": "typescript",
-            "version": "6.0.3",
-            "license": "Apache-2.0",
             "source": "npm-registry"
           },
           {

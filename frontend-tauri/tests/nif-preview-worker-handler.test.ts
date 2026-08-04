@@ -105,7 +105,7 @@ describe('NIF preview worker handler', () => {
     }
     expect(dispatch.response.model.meshes).toEqual([]);
     expect(dispatch.response.model.warnings).toContain(
-      'NIF contains no renderable triangle geometry; the preview is intentionally empty.'
+      'preview.warning.noGeometry'
     );
     expect(dispatch.transfer).toEqual([]);
   });

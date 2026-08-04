@@ -667,12 +667,12 @@ test('renders grounding sources, verified file changes and working Undo actions'
   await diffPreview.getByRole('button', { name: 'Close changes preview' }).click();
 
   await changedFile.click({ button: 'right' });
-  const changeMenu = page.getByRole('menu', { name: /SettingsUser.json actions/ });
+  const changeMenu = page.getByRole('menu', { name: /Actions for .*SettingsUser.json/ });
   await expect(changeMenu).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(changeMenu).toHaveCount(0);
   await changedFile.click({ button: 'right' });
-  await changeMenu.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
+  await changeMenu.getByRole('menuitem', { name: 'Show in folder' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
     .toContain('shell.showItemInFolder:D:\\Fluxora\\Builds\\E2E AI Build\\mods\\Fluxora AI Overrides\\SKSE\\Plugins\\CommunityShaders\\SettingsUser.json');
 

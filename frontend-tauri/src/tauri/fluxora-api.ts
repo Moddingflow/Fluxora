@@ -871,6 +871,12 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         language,
         request
       ),
+    onLanguageChanged: (callback: (result: NativeBridgeLanguageResult) => void) =>
+      listenTyped<NativeBridgeLanguageResult>(
+        ipc,
+        FluxoraIpcChannels.settingsLanguageChanged,
+        callback
+      ),
     getTheme: (request?: OperationRequest) =>
       invokeTyped<NativeBridgeThemeResult>(ipc, FluxoraIpcChannels.settingsGetTheme, request),
     setTheme: (theme: FluxoraThemeMode, request?: OperationRequest) =>

@@ -241,7 +241,7 @@ export const createModdingFlowActivationConfirmationStore = ({
           ...snapshot,
           planPreview: null,
           busyAction: null,
-          errorMessage: error instanceof Error ? error.message : 'Activation plan preview failed.'
+          errorMessage: 'preview-plan'
         };
         refreshActions();
         throw error;
@@ -295,7 +295,7 @@ export const createModdingFlowActivationConfirmationStore = ({
           ...snapshot,
           planPreview: null,
           busyAction: null,
-          errorMessage: error instanceof Error ? error.message : 'Activation confirmation failed.'
+          errorMessage: 'action-accept'
         };
         refreshActions();
         throw error;
@@ -330,7 +330,7 @@ export const createModdingFlowActivationConfirmationStore = ({
         snapshot = {
           ...snapshot,
           busyAction: null,
-          errorMessage: error instanceof Error ? error.message : 'Activation dismissal failed.'
+          errorMessage: 'action-dismiss'
         };
         refreshActions();
         throw error;

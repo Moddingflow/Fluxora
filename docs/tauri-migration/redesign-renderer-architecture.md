@@ -37,6 +37,7 @@ Graphify query for the broad redesign split returned backend-heavy noise around 
 | Install/FOMOD/details | `features/install/InstallDialog.tsx`, `App.tsx`, `install-workspace-state.ts` | Dialog state, analyze/install flow, FOMOD selections, placement overrides and virtualized details tree. |
 | Profiles/executables | `App.tsx`, `profiles-executables-workspace-state.ts` | Profile CRUD, executable list/edit/icon/launch state and capability display. |
 | Settings/transfer | `features/settings/SettingsWorkspace.tsx`, `App.tsx`, `settings-workspace-state.ts`, `TransferSettingsPanel.tsx`, `TransferMo2Page.tsx`, `mo2-transfer-request.ts` | Settings nav, Nexus/language/transfer forms, MO2 handoff page and transfer progress/cancel state. |
+| Application localization | `localization/app-language-state.ts`, `localization/react.tsx`, `App.tsx`, `features/text-editor/TextEditorWindow.tsx` | Startup language gate, optimistic renderer locale, rollback state and typed cross-window locale-event consumption. Native settings remain the persistence authority. |
 | Operation overlays/dialogs | `features/operations/OperationOverlay.tsx`, `features/fluxpack/*`, `App.tsx`, `services/renderer-operation-service.ts` | Operation id creation, progress subscription, provider-segmented FluxPack progress, conflict/manual-download dialogs, cancel affordance and build overlays. |
 
 The redesign migration should reduce `App.tsx` toward app startup, route selection, global bridge/security state, selected build context and top-level composition only.

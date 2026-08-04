@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useLocalization } from '../../../localization/react';
 import { cx } from './utils';
 
 export interface CustomSelectOption {
@@ -58,12 +59,14 @@ export function CustomSelect({
   className,
   density = 'regular',
   disabled = false,
-  emptyLabel = 'No options',
+  emptyLabel,
   menuMaxHeight = 330,
   onValueChange,
   options,
   value
 }: CustomSelectProps) {
+  const { t } = useLocalization();
+  const resolvedEmptyLabel = emptyLabel ?? t('common.noOptions');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -270,7 +273,7 @@ export function CustomSelect({
     }
   };
 
-  const selectedLabel = selectedOption?.label ?? emptyLabel;
+  const selectedLabel = selectedOption?.label ?? resolvedEmptyLabel;
   const selectedTitle = optionLabelText(selectedLabel);
 
   return (
@@ -329,7 +332,7 @@ export function CustomSelect({
                   type="button"
                 >
                   <span className="flx-custom-select__option-copy">
-                    <strong>{emptyLabel}</strong>
+                    <strong>{resolvedEmptyLabel}</strong>
                   </span>
                   <Check size={15} aria-hidden="true" />
                 </button>

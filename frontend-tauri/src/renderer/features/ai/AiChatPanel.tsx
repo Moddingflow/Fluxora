@@ -32,6 +32,7 @@ import { AiFileDiffPreviewDialog } from './AiFileDiffPreviewDialog';
 import { AiAccountGate } from './AiAccountGate';
 import { AiQuotaIndicator } from './AiQuotaIndicator';
 import { AiVoiceProcessingIndicator } from './AiVoiceProcessingIndicator';
+import { useLocalization } from '../../../localization/react';
 
 export interface AiChatPanelProps {
   hostReady: boolean;
@@ -62,21 +63,27 @@ export interface AiChatPanelProps {
 
 const rejectVoiceSend = () => false;
 
-const tokenNumber = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
 const ContextUsage = ({ state }: { state: AiChatState }) => {
+  const { t, locale } = useLocalization();
+  const tokenNumber = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
   const chat = state.chats.find((candidate) => candidate.id === state.activeChatId);
   const usage = chat?.contextUsage;
   if (!usage) {
-    return <span className="ai-context-usage" data-state={chat?.contextEstimateState}>Контекст: —</span>;
+    return <span className="ai-context-usage" data-state={chat?.contextEstimateState}>{t('ai.context.none')}</span>;
   }
   return (
     <span
       className="ai-context-usage"
       data-level={usage.level}
-      title={`Output limit: ${tokenNumber.format(usage.modelOutputTokenLimit ?? 0)} tokens · ${usage.precision}`}
+      title={t('ai.context.tooltip', {
+        limit: tokenNumber.format(usage.modelOutputTokenLimit ?? 0),
+        precision: usage.precision
+      })}
     >
-      Использовано контекста: {tokenNumber.format(usage.currentContextTokens)} /{' '}
-      {tokenNumber.format(usage.contextWindowTokens)} токенов
+      {t('ai.context.usage', {
+        current: tokenNumber.format(usage.currentContextTokens),
+        total: tokenNumber.format(usage.contextWindowTokens)
+      })}
     </span>
   );
 };
@@ -84,8 +91,10 @@ const ContextUsage = ({ state }: { state: AiChatState }) => {
 const SourceList = ({ sources, onOpen }: {
   sources: FluxoraAiCitation[];
   onOpen: (url: string) => void;
-}) => sources.length ? (
-  <div className="ai-chat-message__sources" aria-label="Sources">
+}) => {
+  const { t } = useLocalization();
+  return sources.length ? (
+  <div className="ai-chat-message__sources" aria-label={t('ai.sources')}>
     {sources.map((source) => (
       <button className="ai-chat-source" key={`${source.id}:${source.url}`} type="button" onClick={() => onOpen(source.url)}>
         <ExternalLink size={12} aria-hidden="true" />
@@ -94,6 +103,7 @@ const SourceList = ({ sources, onOpen }: {
     ))}
   </div>
 ) : null;
+};
 
 const FileChanges = ({
   changeSet,
@@ -110,16 +120,17 @@ const FileChanges = ({
   onOpen: (change: FluxoraAiFileChange, firstChangedLine: number, changeSet: FluxoraAiFileChangeSet) => void;
   onRollbackRun: (changeSet: FluxoraAiFileChangeSet) => void | Promise<void>;
 }) => {
+  const { t } = useLocalization();
   const [undoing, setUndoing] = useState(false);
   const rollbackLabel = undoing
-    ? 'Undoing…'
+    ? t('ai.rollback.undoing')
     : changeSet.rollbackState === 'rolled-back'
-      ? 'Undone'
+      ? t('ai.rollback.undone')
       : changeSet.rollbackState === 'conflict'
-        ? 'Needs review'
+        ? t('ai.rollback.review')
         : changeSet.rollbackState === 'unavailable'
-          ? 'Undo unavailable'
-          : 'Undo';
+          ? t('ai.rollback.unavailable')
+          : t('ai.rollback.undo');
 
   const undo = async () => {
     if (undoing || changeSet.rollbackState !== 'available') return;
@@ -134,13 +145,13 @@ const FileChanges = ({
   return (
     <div
       className="ai-file-change-set"
-      aria-label="Applied file changes"
+      aria-label={t('ai.fileChanges.applied')}
       data-run-id={changeSet.runId}
       data-rollback-state={undoing ? 'undoing' : changeSet.rollbackState}
       data-rollback-reason={changeSet.rollbackReason}
     >
       <header>
-        <strong>Managed override</strong>
+        <strong>{t('ai.fileChanges.override')}</strong>
         <button
           type="button"
           disabled={undoing || changeSet.rollbackState !== 'available'}
@@ -170,7 +181,10 @@ const FileChanges = ({
           >
             <FileText size={13} aria-hidden="true" />
             <span className="ai-file-change__path">{change.relativePath}</span>
-            <span className="ai-file-change__stats" aria-label={`${change.addedLines} lines added, ${change.removedLines} lines removed`}>
+            <span className="ai-file-change__stats" aria-label={t('ai.fileChanges.stats', {
+              added: change.addedLines,
+              removed: change.removedLines
+            })}>
               <span className="ai-file-change__added">+{change.addedLines}</span>
               <span className="ai-file-change__removed">−{change.removedLines}</span>
             </span>
@@ -179,7 +193,7 @@ const FileChanges = ({
       </div>
       {changeSet.rollbackState === 'rolled-back' && changeSet.preservedNewerChanges ? (
         <small className="ai-file-change-set__confirmation" role="status">
-          Newer non-overlapping changes were preserved.
+          {t('ai.fileChanges.preserved')}
         </small>
       ) : null}
     </div>
@@ -193,24 +207,31 @@ const CapabilityEffects = ({
   execution: FluxoraAiExecution;
   onUndo: (compensationToken: string) => void;
 }) => {
+  const { t } = useLocalization();
   const effects = execution.verifiedEffects.filter((effect) => effect.compensationToken);
   if (!effects.length) return null;
   return (
-    <div className="ai-file-change-set" aria-label="Verified Fluxora changes">
-      <header><strong>Verified Fluxora changes</strong></header>
+    <div className="ai-file-change-set" aria-label={t('ai.effects.verified')}>
+      <header><strong>{t('ai.effects.verified')}</strong></header>
       {effects.map((effect) => {
         const rollbackState = effect.rollbackState ?? 'available';
         return (
           <div className="ai-file-change" key={`${effect.operationId}:${effect.compensationToken}`}>
             <span>{effect.tool.replace(/^local\./, '')}</span>
-            <small>{rollbackState === 'rolled-back' ? 'Rolled back and verified' : 'Native postcondition verified'}</small>
+            <small>{rollbackState === 'rolled-back'
+              ? t('ai.effects.rolledBack')
+              : t('ai.effects.postcondition')}</small>
             <button
               type="button"
               disabled={rollbackState !== 'available' && rollbackState !== 'blocked'}
               onClick={() => effect.compensationToken && onUndo(effect.compensationToken)}
             >
               <RotateCcw size={12} aria-hidden="true" />
-              {rollbackState === 'rolling-back' ? 'Undoing…' : rollbackState === 'rolled-back' ? 'Undone' : 'Undo'}
+              {rollbackState === 'rolling-back'
+                ? t('ai.rollback.undoing')
+                : rollbackState === 'rolled-back'
+                  ? t('ai.rollback.undone')
+                  : t('ai.rollback.undo')}
             </button>
           </div>
         );
@@ -244,6 +265,7 @@ export function AiChatPanel({
   onToggleCollapse,
   onVoiceSend = rejectVoiceSend
 }: AiChatPanelProps) {
+  const { t } = useLocalization();
   const [previewedFile, setPreviewedFile] = useState<{
     change: FluxoraAiFileChange;
     changeSet: FluxoraAiFileChangeSet;
@@ -297,8 +319,8 @@ export function AiChatPanel({
 
   if (state.isCollapsed) {
     return (
-      <aside className="ai-chat-panel ai-chat-panel--collapsed" aria-label="Fluxora AI">
-        <button type="button" aria-label="Expand AI chat" onClick={() => { void voice.cancel(); onToggleCollapse(); }}>
+      <aside className="ai-chat-panel ai-chat-panel--collapsed" aria-label={t('ai.name')}>
+        <button type="button" aria-label={t('ai.expand')} onClick={() => { void voice.cancel(); onToggleCollapse(); }}>
           <Bot size={18} aria-hidden="true" />
           <ChevronLeft size={14} aria-hidden="true" />
         </button>
@@ -310,7 +332,7 @@ export function AiChatPanel({
   const voiceCaptureActive = ['preparing', 'recording', 'transcribing'].includes(voice.state.phase);
   const accountRequired = quota?.availability === 'connectionRequired';
   return (
-    <aside className="ai-chat-panel" aria-label="Fluxora AI">
+    <aside className="ai-chat-panel" aria-label={t('ai.name')}>
       {previewedFile ? (
         <AiFileDiffPreviewDialog
           change={previewedFile.change}
@@ -330,7 +352,7 @@ export function AiChatPanel({
         <div
           className="mod-row-menu mod-row-menu--context ai-file-change-menu"
           role="menu"
-          aria-label={`${fileContextMenu.change.relativePath} actions`}
+          aria-label={t('ai.file.namedActions', { name: fileContextMenu.change.relativePath })}
           style={{
             left: Math.min(fileContextMenu.left, Math.max(8, window.innerWidth - 244)),
             top: Math.min(fileContextMenu.top, Math.max(8, window.innerHeight - 50))
@@ -346,7 +368,7 @@ export function AiChatPanel({
             }}
           >
             <FolderOpen size={14} aria-hidden="true" />
-            <span>Открыть в проводнике</span>
+            <span>{t('ai.file.showInFolder')}</span>
           </button>
         </div>,
         document.body
@@ -359,10 +381,10 @@ export function AiChatPanel({
         />
       ) : null}
       <header className="ai-chat-panel__header">
-        <span className="ai-chat-panel__identity"><Bot className="ai-chat-panel__icon" size={17} aria-hidden="true" /><strong>Fluxora AI</strong></span>
+        <span className="ai-chat-panel__identity"><Bot className="ai-chat-panel__icon" size={17} aria-hidden="true" /><strong>{t('ai.name')}</strong></span>
         <div className="ai-chat-panel__controls">
-          <button className="ai-chat-panel__icon-button" type="button" aria-label="Collapse AI chat" onClick={() => { void voice.cancel(); onToggleCollapse(); }}><ChevronRight size={15} /></button>
-          <button className="ai-chat-panel__icon-button" type="button" aria-label="Close AI chat" onClick={() => { void voice.cancel(); onClose(); }}><X size={15} /></button>
+          <button className="ai-chat-panel__icon-button" type="button" aria-label={t('ai.collapse')} onClick={() => { void voice.cancel(); onToggleCollapse(); }}><ChevronRight size={15} /></button>
+          <button className="ai-chat-panel__icon-button" type="button" aria-label={t('ai.close')} onClick={() => { void voice.cancel(); onClose(); }}><X size={15} /></button>
         </div>
       </header>
 
@@ -375,25 +397,28 @@ export function AiChatPanel({
           />
         ) : (
           <>
-        <div className="ai-chat-tabs" role="tablist" aria-label="Build AI chats">
+        <div className="ai-chat-tabs" role="tablist" aria-label={t('ai.chats')}>
           <div className="ai-chat-tabs__list">
-            {state.chats.map((chat) => (
+            {state.chats.map((chat) => {
+              const chatTitle = chat.title || t('ai.chat.newShort');
+              return (
               <span className="ai-chat-tab-shell" key={chat.id} data-active={chat.id === state.activeChatId ? 'true' : undefined}>
                 <button
                   className="ai-chat-tab"
                   type="button"
                   role="tab"
                   aria-selected={chat.id === state.activeChatId}
-                  title={chat.title}
+                  title={chatTitle}
                   onClick={() => onSelectChat(chat.id)}
                 >
-                  <span className="ai-chat-tab__title">{chat.title}</span>
+                  <span className="ai-chat-tab__title">{chatTitle}</span>
                 </button>
-                <button className="ai-chat-tab__close" type="button" aria-label={`Close ${chat.title}`} onClick={() => onCloseChat(chat.id)}><X size={11} /></button>
+                <button className="ai-chat-tab__close" type="button" aria-label={t('ai.chat.closeNamed', { name: chatTitle })} onClick={() => onCloseChat(chat.id)}><X size={11} /></button>
               </span>
-            ))}
+              );
+            })}
           </div>
-          <button className="ai-chat-tabs__new" type="button" aria-label="New AI chat" title="New chat" onClick={onCreateChat}><Plus size={14} /></button>
+          <button className="ai-chat-tabs__new" type="button" aria-label={t('ai.chat.new')} title={t('ai.chat.newShort')} onClick={onCreateChat}><Plus size={14} /></button>
         </div>
 
         <ContextUsage state={state} />
@@ -411,14 +436,14 @@ export function AiChatPanel({
           {state.messages.length === 0 ? (
             <div className="ai-chat-empty">
               <Bot size={20} aria-hidden="true" />
-              <strong>Ask about this build</strong>
-              <span>Gemini can search the selected build and apply one verified managed config override.</span>
+              <strong>{t('ai.empty.title')}</strong>
+              <span>{t('ai.empty.detail')}</span>
             </div>
           ) : state.messages.map((message) => (
             <article className="ai-chat-message" data-role={message.role} data-status={message.agentStatus} key={message.id}>
               <div className="ai-chat-message__content"><p>{message.text}</p></div>
               {message.agentStatus === 'needs-input' ? (
-                <small className="ai-chat-message__waiting" role="status">Waiting for your answer</small>
+                <small className="ai-chat-message__waiting" role="status">{t('ai.waitingAnswer')}</small>
               ) : null}
               <SourceList sources={message.sources ?? []} onOpen={onOpenSource} />
               {message.fileChangeSet ? (
@@ -449,7 +474,7 @@ export function AiChatPanel({
             </div>
           ) : null}
           {showDeveloperDiagnostics && activeEvents.length ? (
-            <details className="ai-run-event-details"><summary>Tool events</summary>{activeEvents.map((event) => (
+            <details className="ai-run-event-details"><summary>{t('ai.toolEvents')}</summary>{activeEvents.map((event) => (
               <code key={`detail-${event.eventId}`}>{event.stage}: {event.message}</code>
             ))}</details>
           ) : null}
@@ -472,10 +497,10 @@ export function AiChatPanel({
                 <div className="ai-voice-recorder__status">
                   <strong>{formatVoiceDuration(voice.state.elapsedMs)}</strong>
                   <span>{voice.state.phase === 'recording'
-                    ? 'Listening locally'
-                    : 'Starting microphone…'}</span>
+                    ? t('ai.voice.listening')
+                    : t('ai.voice.starting')}</span>
                 </div>
-                <div className="ai-voice-waveform" aria-label="Live microphone level">
+                <div className="ai-voice-waveform" aria-label={t('ai.voice.level')}>
                   {voice.state.levels.map((level, index) => (
                     <span
                       key={index}
@@ -487,7 +512,7 @@ export function AiChatPanel({
                   <button
                     className="ai-voice-action ai-voice-action--stop"
                     type="button"
-                    aria-label="Stop and add voice transcript"
+                    aria-label={t('ai.voice.stopDraft')}
                     onClick={() => void voice.stop('draft')}
                   >
                     <Square size={13} aria-hidden="true" />
@@ -495,7 +520,7 @@ export function AiChatPanel({
                   <button
                     className="ai-voice-action ai-voice-action--send"
                     type="button"
-                    aria-label="Stop, transcribe and send message"
+                    aria-label={t('ai.voice.stopSend')}
                     disabled={voice.state.phase !== 'recording'}
                     onClick={() => void voice.stop('send')}
                   >
@@ -507,8 +532,8 @@ export function AiChatPanel({
             ) : (
               <>
                 <textarea
-                  aria-label="Message Fluxora AI"
-                  placeholder="Ask Gemini about this build…"
+                  aria-label={t('ai.message.label')}
+                  placeholder={t('ai.message.placeholder')}
                   value={state.draft}
                   disabled={state.isRunning}
                   onChange={(event) => onDraftChange(event.target.value)}
@@ -525,18 +550,18 @@ export function AiChatPanel({
                     <div className="ai-voice-error__actions">
                       {voice.state.error.canOpenMicrophoneSettings ? (
                         <button type="button" onClick={() => void voice.openMicrophoneSettings()}>
-                          Open Windows settings
+                          {t('ai.voice.openSettings')}
                         </button>
                       ) : null}
                       {voice.state.error.canRetry ? (
                         <button type="button" onClick={() => void voice.start()}>
-                          Retry recording
+                          {t('ai.voice.retry')}
                         </button>
                       ) : null}
                     </div>
                     {showDeveloperDiagnostics ? (
                       <details className="ai-voice-error__debug">
-                        <summary>Developer details</summary>
+                        <summary>{t('ai.developerDetails')}</summary>
                         <code>
                           {voice.state.error.code} · {voice.state.error.stage} ·{' '}
                           {voice.state.error.operationId}
@@ -552,17 +577,17 @@ export function AiChatPanel({
                   <button
                     className="ai-chat-input__tool-button ai-chat-input__mic-button"
                     type="button"
-                    aria-label="Start voice input"
-                    title="Voice input"
+                    aria-label={t('ai.voice.start')}
+                    title={t('ai.voice.title')}
                     disabled={state.isRunning}
                     onClick={() => void voice.start()}
                   >
                     <img src={aiMicIcon} alt="" aria-hidden="true" />
                   </button>
                   {state.isRunning ? (
-                    <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label="Stop AI run" onClick={onCancel}><Square size={14} /></button>
+                    <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label={t('ai.run.stop')} onClick={onCancel}><Square size={14} /></button>
                   ) : (
-                    <button className="ai-chat-send-button" type="button" aria-label="Send message" disabled={!canSend} onClick={onSend}><Send size={15} /></button>
+                    <button className="ai-chat-send-button" type="button" aria-label={t('ai.message.send')} disabled={!canSend} onClick={onSend}><Send size={15} /></button>
                   )}
                 </div>
               </>

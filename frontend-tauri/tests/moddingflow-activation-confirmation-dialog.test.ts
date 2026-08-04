@@ -1,5 +1,4 @@
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +6,7 @@ import {
   ModdingFlowActivationConfirmationFlow
 } from '../src/renderer/features/moddingflow/ModdingFlowActivationConfirmationDialog';
 import type { ModdingFlowActivationConfirmationSnapshot } from '../src/renderer/features/moddingflow/moddingflow-activation-confirmation-store';
+import { renderLocalized } from './localization-test-utils';
 
 const loading: ModdingFlowActivationConfirmationSnapshot = {
   state: 'loading',
@@ -29,7 +29,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
       dismiss: vi.fn(),
       startTransfer: vi.fn()
     };
-    const markup = renderToStaticMarkup(React.createElement(
+    const markup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationFlow,
       {
         activation: {
@@ -51,7 +51,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
   });
 
   it('renders a safe loading skeleton without a spoofable title or enabled confirmation', () => {
-    const markup = renderToStaticMarkup(React.createElement(
+    const markup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: loading,
@@ -83,7 +83,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
     ] as const;
 
     states.forEach(([state, expected]) => {
-      const markup = renderToStaticMarkup(React.createElement(
+      const markup = renderLocalized(React.createElement(
         ModdingFlowActivationConfirmationDialog,
         {
           snapshot: {
@@ -127,7 +127,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
         operationId: 'op_preview_disconnected'
       }
     };
-    const markup = renderToStaticMarkup(React.createElement(
+    const markup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: disconnected,
@@ -140,7 +140,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
         onSelectProfile: vi.fn()
       }
     ));
-    const busyMarkup = renderToStaticMarkup(React.createElement(
+    const busyMarkup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: disconnected,
@@ -189,7 +189,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
       },
       operationId: 'op_preview_available'
     };
-    const markup = renderToStaticMarkup(React.createElement(
+    const markup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: {
@@ -224,7 +224,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
       .not.toContain('disabled');
     expect(markup).not.toContain('Подтвердить загрузку');
 
-    const confirmedMarkup = renderToStaticMarkup(React.createElement(
+    const confirmedMarkup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: {
@@ -260,7 +260,7 @@ describe('ModdingFlow activation confirmation dialog', () => {
     expect(confirmedMarkup).toContain('Подтвердить загрузку');
     expect(confirmedMarkup).not.toContain('aaaaaaaa-bbbb');
 
-    const conflictMarkup = renderToStaticMarkup(React.createElement(
+    const conflictMarkup = renderLocalized(React.createElement(
       ModdingFlowActivationConfirmationDialog,
       {
         snapshot: {

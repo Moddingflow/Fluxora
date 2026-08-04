@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { LocalizationProvider } from '../src/localization/react';
 import {
   MOD_CREATION_NAME_MAX_LENGTH,
   ModCreationDialog,
@@ -12,12 +13,16 @@ const noop = () => undefined;
 
 const renderDialog = (state: ModCreationDialogState | null) =>
   renderToStaticMarkup(
-    React.createElement(ModCreationDialog, {
-      state,
-      onCancel: noop,
-      onNameChange: noop,
-      onSubmit: noop
-    })
+    React.createElement(
+      LocalizationProvider,
+      { language: 'ru-RU' },
+      React.createElement(ModCreationDialog, {
+        state,
+        onCancel: noop,
+        onNameChange: noop,
+        onSubmit: noop
+      })
+    )
   );
 
 describe('mod creation dialog', () => {

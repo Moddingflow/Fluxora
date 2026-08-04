@@ -2,12 +2,15 @@ import { X } from '../../design-system/icons/lucide-compat';
 import { useEffect, useRef, type CSSProperties } from 'react';
 
 import trashIcon from '../../../../../Icons/trash.svg';
+import { translateForLanguage, type TranslationKey } from '../../../localization';
+import { useLocalization } from '../../../localization/react';
 
 export type DeletionConfirmationKind = 'mod' | 'separator' | 'build' | 'download';
 
 export interface DeletionConfirmationDialogProps {
   description?: string;
   kind: DeletionConfirmationKind;
+  language?: string | null;
   itemName: string;
   itemCount?: number;
   onCancel: () => void;
@@ -16,70 +19,41 @@ export interface DeletionConfirmationDialogProps {
 
 type DeletionConfirmationIconStyle = CSSProperties & { '--delete-confirmation-icon': string };
 
-const titleByKind: Record<DeletionConfirmationKind, string> = {
-  mod: 'Удаление мода',
-  separator: 'Удаление разделителя',
-  build: 'Удаление сборки',
-  download: 'Удаление файла'
-};
-
-const pluralTitleByKind: Record<DeletionConfirmationKind, string> = {
-  mod: 'Удаление модов',
-  separator: 'Удаление разделителей',
-  build: 'Удаление сборок',
-  download: 'Удаление файлов'
-};
-
-const subjectFormsByKind: Record<DeletionConfirmationKind, readonly [string, string, string]> = {
-  mod: ['мод', 'мода', 'модов'],
-  separator: ['разделитель', 'разделителя', 'разделителей'],
-  build: ['сборка', 'сборки', 'сборок'],
-  download: ['файл', 'файла', 'файлов']
-};
-
-const russianPluralForm = (
-  count: number,
-  forms: readonly [string, string, string]
-): string => {
-  const absolute = Math.abs(count);
-  const mod10 = absolute % 10;
-  const mod100 = absolute % 100;
-
-  if (mod10 === 1 && mod100 !== 11) {
-    return forms[0];
-  }
-
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-    return forms[1];
-  }
-
-  return forms[2];
-};
-
 export const deletionSubjectLabel = (
   kind: DeletionConfirmationKind,
   itemName: string,
-  itemCount: number | undefined
+  itemCount: number | undefined,
+  language: string | null | undefined
 ): string => {
   if (!itemCount || itemCount <= 1) {
     return itemName;
   }
 
-  return `${itemCount} ${russianPluralForm(itemCount, subjectFormsByKind[kind])}`;
+  return translateForLanguage(
+    language,
+    `deletion.subject.${kind}` as TranslationKey,
+    { count: itemCount }
+  );
 };
 
 export function DeletionConfirmationDialog({
   description,
   itemCount,
   kind,
+  language,
   itemName,
   onCancel,
   onConfirm
 }: DeletionConfirmationDialogProps) {
+  const { locale } = useLocalization();
+  const activeLanguage = language ?? locale;
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
-  const hasMultipleItems = Boolean(itemCount && itemCount > 1);
-  const title = hasMultipleItems ? pluralTitleByKind[kind] : titleByKind[kind];
-  const subject = deletionSubjectLabel(kind, itemName, itemCount);
+  const title = translateForLanguage(
+    activeLanguage,
+    `deletion.title.${kind}` as TranslationKey,
+    { count: itemCount ?? 1 }
+  );
+  const subject = deletionSubjectLabel(kind, itemName, itemCount, activeLanguage);
 
   useEffect(() => {
     const previouslyFocusedElement =
@@ -129,9 +103,9 @@ export function DeletionConfirmationDialog({
             <strong id="delete-confirmation-title">{title}</strong>
           </div>
           <button
-            aria-label="Закрыть окно удаления"
+            aria-label={translateForLanguage(activeLanguage, 'deletion.close')}
             className="icon-button"
-            title="Закрыть окно удаления"
+            title={translateForLanguage(activeLanguage, 'deletion.close')}
             type="button"
             onClick={onCancel}
           >
@@ -151,7 +125,7 @@ export function DeletionConfirmationDialog({
             type="button"
             onClick={onConfirm}
           >
-            Удалить
+            {translateForLanguage(activeLanguage, 'deletion.confirm')}
           </button>
         </footer>
       </section>

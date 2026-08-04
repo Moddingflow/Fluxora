@@ -1,10 +1,6 @@
 import type { FluxoraFluxPackPackageType } from '../../../shared/fluxora-api';
 import { CustomSelect } from '../../design-system';
-
-const packageTypeOptions = [
-  { label: 'Полная', value: 'full' },
-  { label: 'Рецепт', value: 'recipe' }
-] as const;
+import { useLocalization } from '../../../localization/react';
 
 export interface FluxPackPackageTypeSelectProps {
   disabled?: boolean;
@@ -17,11 +13,16 @@ export function FluxPackPackageTypeSelect({
   onChange,
   value
 }: FluxPackPackageTypeSelectProps) {
+  const { t } = useLocalization();
+  const packageTypeOptions = [
+    { label: t('fluxpack.type.full'), value: 'full' },
+    { label: t('fluxpack.type.recipe'), value: 'recipe' }
+  ] as const;
   return (
     <label className="fluxpack-package-type-control">
-      <span>Тип упаковки</span>
+      <span>{t('fluxpack.type.label')}</span>
       <CustomSelect
-        ariaLabel="Тип упаковки FluxPack"
+        ariaLabel={t('fluxpack.type.aria')}
         className="fluxpack-package-type-select"
         density="compact"
         disabled={disabled}

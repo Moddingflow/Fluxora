@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { LocalizationProvider } from '../src/localization/react';
 import type { FluxoraOperationProgress } from '../src/shared/fluxora-api';
 import {
   ModUpdateCheckSplash,
@@ -30,13 +31,17 @@ const progress = (
 
 describe('mod update check splash', () => {
   it('renders real operation progress as a full loading splash', () => {
-    const started = createModUpdateCheckSplashState('op_mod_updates');
+    const started = createModUpdateCheckSplashState('op_mod_updates', 'ru-RU');
     const updated = applyModUpdateCheckProgress(
       started,
       progress('op_mod_updates', 40, 'Readable Progress Mod')
     );
     const markup = renderToStaticMarkup(
-      React.createElement(ModUpdateCheckSplash, { state: updated })
+      React.createElement(
+        LocalizationProvider,
+        { language: 'ru-RU' },
+        React.createElement(ModUpdateCheckSplash, { state: updated })
+      )
     );
 
     expect(markup).toContain('flx-loading-splash');
@@ -48,7 +53,7 @@ describe('mod update check splash', () => {
   });
 
   it('ignores progress from another operation', () => {
-    const started = createModUpdateCheckSplashState('op_mod_updates');
+    const started = createModUpdateCheckSplashState('op_mod_updates', 'ru-RU');
 
     expect(
       applyModUpdateCheckProgress(started, progress('op_other', 80, 'Other Mod'))

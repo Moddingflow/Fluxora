@@ -108,9 +108,9 @@ describe('mod update status', () => {
   });
 
   it('keeps a short manual-only partial message without a persistent warning model', () => {
-    expect(modUpdateTransientMessage(result('partial', 'authenticationUnavailable')))
+    expect(modUpdateTransientMessage(result('partial', 'authenticationUnavailable'), 'ru-RU'))
       .toContain('авторизация Nexus');
-    expect(modUpdateTransientMessage(result('partial', 'metadataUnavailable')))
+    expect(modUpdateTransientMessage(result('partial', 'metadataUnavailable'), 'ru-RU'))
       .toContain('метаданные файлов недоступны');
     expect(modUpdateTransientMessage(result('completed', 'none'))).toBeNull();
   });

@@ -1,10 +1,12 @@
 import type { FluxoraApi, FluxoraUpdateStatus } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 import type { AppUpdateToolbarViewState } from './app-update-state';
 
 export interface AppUpdateCoordinatorOptions {
   api: FluxoraApi['updates'];
   createOperationId: (kind: string) => string;
   onStatus: (status: FluxoraUpdateStatus, userInitiated: boolean) => void;
+  language?: string | null;
 }
 
 export interface AppUpdateCoordinator {
@@ -59,17 +61,21 @@ export const acknowledgeRendererReady = async (
   return false;
 };
 
-const sanitizeUpdateErrorMessage = (message: string): string =>
+const sanitizeUpdateErrorMessage = (message: string, language?: string | null): string =>
   message.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim().slice(0, 240)
-  || 'Неизвестная ошибка обновления';
+  || translateForLanguage(language, 'update.errorUnknown');
 
-const updateErrorMessage = (error: unknown): string => sanitizeUpdateErrorMessage(
-  error instanceof Error && error.message.trim() ? error.message : 'Не удалось проверить обновление'
+const updateErrorMessage = (error: unknown, language?: string | null): string => sanitizeUpdateErrorMessage(
+  error instanceof Error && error.message.trim()
+    ? error.message
+    : translateForLanguage(language, 'update.checkFailed'),
+  language
 );
 
 export const createAppUpdateCoordinator = ({
   api,
   createOperationId,
+  language,
   onStatus
 }: AppUpdateCoordinatorOptions): AppUpdateCoordinator => {
   let started = false;
@@ -103,7 +109,7 @@ export const createAppUpdateCoordinator = ({
           state: 'error',
           error: {
             code: 'statusBootstrapFailed',
-            message: updateErrorMessage(error),
+            message: updateErrorMessage(error, language),
             retryable: true
           }
         });
@@ -144,7 +150,7 @@ export const createAppUpdateCoordinator = ({
             operationId,
             error: {
               code: 'checkFailed',
-              message: updateErrorMessage(error),
+            message: updateErrorMessage(error, language),
               retryable: true
             }
           };
@@ -187,7 +193,7 @@ export const createAppUpdateCoordinator = ({
             operationId,
             error: {
               code: 'downloadAndInstallFailed',
-              message: updateErrorMessage(error),
+              message: updateErrorMessage(error, language),
               retryable: true
             }
           }, true);
@@ -219,7 +225,7 @@ export const createAppUpdateCoordinator = ({
             operationId,
             error: {
               code: 'cancelFailed',
-              message: updateErrorMessage(error),
+              message: updateErrorMessage(error, language),
               retryable: true
             }
           }, true);
@@ -246,7 +252,8 @@ export const appUpdateToolbarView = (
   status: FluxoraUpdateStatus,
   userInitiated: boolean,
   onActivate: () => void | Promise<void>,
-  onCancel: () => void | Promise<void> = onActivate
+  onCancel: () => void | Promise<void> = onActivate,
+  language?: string | null
 ): AppUpdateToolbarViewState => {
   if (
     status.state === 'idle'
@@ -268,7 +275,8 @@ export const appUpdateToolbarView = (
 
   if (status.state === 'error') {
     const errorMessage = sanitizeUpdateErrorMessage(
-      status.error?.message ?? 'Неизвестная ошибка обновления'
+      status.error?.message ?? translateForLanguage(language, 'update.errorUnknown'),
+      language
     );
     if (status.error?.retryable) return {
       state: 'error',

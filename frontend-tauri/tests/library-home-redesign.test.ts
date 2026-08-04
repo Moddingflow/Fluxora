@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { LibraryHome, type ProjectLibraryStats } from '../src/renderer/features/library/LibraryHome';
 import type { FluxoraProject } from '../src/shared/fluxora-api';
+import { renderLocalized } from './localization-test-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,7 +56,7 @@ const renderLibrary = (
   catalogState: 'idle' | 'loading' | 'ready' | 'blocked' | 'error' = 'ready',
   projectItems: FluxoraProject[] = projects
 ) =>
-  renderToStaticMarkup(
+  renderLocalized(
     React.createElement(LibraryHome, {
       catalogPath: 'D:\\Fluxora\\Configs',
       catalogState,
@@ -78,7 +78,8 @@ const renderLibrary = (
       searchText: '',
       selectedProject,
       selectedProjectStats: selectedProject ? selectedStats : null
-    })
+    }),
+    'en-US'
   );
 
 describe('library home redesign', () => {
@@ -89,8 +90,8 @@ describe('library home redesign', () => {
     expect(markup).toContain('Library');
     expect(markup).toContain('2 builds');
     expect(markup).toContain('Search builds');
-    expect(markup).toContain('Установить');
-    expect(markup).toContain('aria-label="Установить сборку из FluxPack"');
+    expect(markup).toContain('Install');
+    expect(markup).toContain('aria-label="Install a build from FluxPack"');
     expect(markup).toContain('Skyrim graphics overhaul');
     expect(markup).toContain('248 mods · 32.4 GB');
     expect(markup).toContain('aria-label="Open Skyrim graphics overhaul"');
@@ -187,7 +188,7 @@ describe('library home redesign', () => {
     expect(styles).toContain('.library-build-actions[data-menu-open="true"]');
     expect(styles).toContain('grid-template-columns: repeat(3, minmax(140px, 1fr));');
     expect(styles).toContain('.library-detail-path-row');
-    expect(component).toContain('aria-label={`Open ${project.name}`}');
+    expect(component).toContain("aria-label={t('library.openNamed', { name: project.name })}");
     expect(component).not.toContain('onOpenSelectedProject');
     expect(styles).not.toContain('.library-detail-actions');
     expect(styles).not.toContain('activity-banner');

@@ -230,7 +230,7 @@ describe('plugin workspace state', () => {
 
     expect(assessment.items).toBeNull();
     expect(assessment.blockedReason).toBe(
-      'Dependent.esp должен загружаться после Required.esm.'
+      'Dependent.esp must load after Required.esm.'
     );
     expect(
       targetIndexForPluginDrop(
@@ -261,7 +261,7 @@ describe('plugin workspace state', () => {
     );
     expect(assessment.items).toBeNull();
     expect(assessment.blockedReason).toBe(
-      'Dependent.esp должен загружаться после Required.esm.'
+      'Dependent.esp must load after Required.esm.'
     );
     expect(
       targetIndexForPluginDrop(
@@ -290,7 +290,7 @@ describe('plugin workspace state', () => {
     );
     expect(assessment.items).toBeNull();
     expect(assessment.blockedReason).toBe(
-      'Dependent.esp должен загружаться после Skyrim.esm.'
+      'Dependent.esp must load after Skyrim.esm.'
     );
   });
 

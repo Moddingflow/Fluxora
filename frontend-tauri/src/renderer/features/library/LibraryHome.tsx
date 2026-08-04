@@ -14,6 +14,7 @@ import {
 import { projectDisplayPath } from '../../project-catalog-state';
 import { shortPath } from '../../services/path-display-service';
 import type { FluxoraProject } from '../../../shared/fluxora-api';
+import { useLocalization, type LocalizationContextValue } from '../../../localization/react';
 
 export type LibraryCatalogState = 'idle' | 'loading' | 'ready' | 'blocked' | 'error';
 
@@ -49,36 +50,60 @@ interface LibraryHomeProps {
   selectedProjectStats: ProjectLibraryStats | null;
 }
 
-const hiddenStatValues = new Set(['', '-', 'Not tracked']);
 const primaryActionIcon = { size: 16, strokeWidth: 2.35 } as const;
 const libraryLoadingRows = [0, 1, 2] as const;
 
-const hasStatValue = (value: string): boolean => !hiddenStatValues.has(value.trim());
-
-const statValue = (value: string, fallback: string): string =>
-  hasStatValue(value) ? value : fallback;
-
-const projectGameLabel = (project: FluxoraProject): string =>
-  project.gameName || project.templateId || 'Fluxora build';
-
-const projectIcon = (project: FluxoraProject): string =>
-  /skyrim/i.test(projectGameLabel(project)) ? skyrimIcon : fluxoraLogo;
-
-const rowMeta = (project: FluxoraProject, stats: ProjectLibraryStats): string => {
-  const parts = [
-    hasStatValue(stats.mods) ? `${stats.mods} mods` : null,
-    hasStatValue(stats.size) ? stats.size : null
-  ].filter(Boolean);
-
-  return parts.length > 0 ? parts.join(' · ') : projectGameLabel(project);
+const hasStatValue = (value: string, notTracked = ''): boolean => {
+  const normalized = value.trim();
+  return normalized !== '' && normalized !== '-' && normalized !== notTracked;
 };
 
-const detailMetrics = (stats: ProjectLibraryStats) =>
-  [
-    { label: 'Mods', value: statValue(stats.mods, 'Not indexed') },
-    { label: 'Last launched', value: statValue(stats.lastLaunch, 'Not launched') },
-    { label: 'Size', value: statValue(stats.size, 'Not indexed') }
+const statValue = (value: string, fallback: string, notTracked = ''): string =>
+  hasStatValue(value, notTracked) ? value : fallback;
+
+const projectGameLabel = (project: FluxoraProject, fallback: string): string =>
+  project.gameName || project.templateId || fallback;
+
+const projectIcon = (project: FluxoraProject, fallback: string): string =>
+  /skyrim/i.test(projectGameLabel(project, fallback)) ? skyrimIcon : fluxoraLogo;
+
+const rowMeta = (
+  project: FluxoraProject,
+  stats: ProjectLibraryStats,
+  t: LocalizationContextValue['t'],
+  fallback: string
+): string => {
+  const modCount = Number(stats.mods);
+  const notTracked = t('library.notTracked');
+  const parts = [
+    hasStatValue(stats.mods, notTracked)
+      ? Number.isFinite(modCount)
+        ? t('library.modsCount', { count: modCount })
+        : stats.mods
+      : null,
+    hasStatValue(stats.size, notTracked) ? stats.size : null
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' · ') : projectGameLabel(project, fallback);
+};
+
+const detailMetrics = (stats: ProjectLibraryStats, t: LocalizationContextValue['t']) => {
+  const notTracked = t('library.notTracked');
+  return [
+    {
+      label: t('library.metric.mods'),
+      value: statValue(stats.mods, t('library.notIndexed'), notTracked)
+    },
+    {
+      label: t('library.metric.lastLaunched'),
+      value: statValue(stats.lastLaunch, t('library.notLaunched'), notTracked)
+    },
+    {
+      label: t('library.metric.size'),
+      value: statValue(stats.size, t('library.notIndexed'), notTracked)
+    }
   ];
+};
 
 export function LibraryHome({
   bridgeErrorMessage,
@@ -103,18 +128,20 @@ export function LibraryHome({
   selectedProject,
   selectedProjectStats
 }: LibraryHomeProps) {
-  const selectedGameLabel = selectedProject ? projectGameLabel(selectedProject) : '';
-  const selectedMetrics = selectedProjectStats ? detailMetrics(selectedProjectStats) : [];
+  const { t } = useLocalization();
+  const fallbackName = t('build.fallbackName');
+  const selectedGameLabel = selectedProject ? projectGameLabel(selectedProject, fallbackName) : '';
+  const selectedMetrics = selectedProjectStats ? detailMetrics(selectedProjectStats, t) : [];
 
   return (
-    <section className="library-page" aria-label="Build library">
-      <aside className="library-sidebar" aria-label="Build library sidebar">
+    <section className="library-page" aria-label={t('library.aria')}>
+      <aside className="library-sidebar" aria-label={t('library.sidebarAria')}>
         <header className="library-header">
           <div className="library-header__title">
-            <span className="library-header__heading">Library</span>
-            <Badge tone="neutral">{projects.length} builds</Badge>
+            <span className="library-header__heading">{t('library.title')}</span>
+            <Badge tone="neutral">{t('library.buildsCount', { count: projects.length })}</Badge>
             <Button
-              aria-label="Установить сборку из FluxPack"
+              aria-label={t('library.installFluxPack')}
               className="library-header__install"
               disabled={isInstallFluxPackDisabled}
               iconLeft={<Icon name="hard-drive" size={14} />}
@@ -122,20 +149,20 @@ export function LibraryHome({
               size="sm"
               variant="secondary"
             >
-              Установить
+              {t('library.install')}
             </Button>
           </div>
           <Input
-            aria-label="Search builds"
+            aria-label={t('library.search')}
             leadingIcon={<Icon name="search" size={14} />}
             onChange={(event) => onSearchChange(event.currentTarget.value)}
-            placeholder="Search builds"
+            placeholder={t('library.search')}
             value={searchText}
           />
         </header>
 
-        <div className="library-list" aria-label="Builds">
-          <SectionLabel>Builds</SectionLabel>
+        <div className="library-list" aria-label={t('library.builds')}>
+          <SectionLabel>{t('library.builds')}</SectionLabel>
           <LibraryProjectRows
             bridgeErrorMessage={bridgeErrorMessage}
             catalogPath={catalogPath}
@@ -162,16 +189,16 @@ export function LibraryHome({
             iconLeft={<Icon name="plus" {...primaryActionIcon} />}
             onClick={onNewBuild}
           >
-            New build
+            {t('library.newBuild')}
           </Button>
         </footer>
       </aside>
 
-      <section className="library-home-main" aria-label="Selected build summary">
+      <section className="library-home-main" aria-label={t('library.selectedSummary')}>
         {selectedProject && selectedProjectStats ? (
-          <article className="library-detail-card" aria-label={`${selectedProject.name} summary`}>
+          <article className="library-detail-card" aria-label={t('library.namedSummary', { name: selectedProject.name })}>
             <header className="library-detail-hero">
-              <img src={projectIcon(selectedProject)} alt="" />
+              <img src={projectIcon(selectedProject, fallbackName)} alt="" />
               <div className="library-detail-identity">
                 <h2>{selectedProject.name}</h2>
                 <span>{selectedGameLabel}</span>
@@ -190,7 +217,7 @@ export function LibraryHome({
             <div className="library-detail-paths">
               <div className="library-detail-path-row">
                 <div>
-                  <span>Project path</span>
+                  <span>{t('library.projectPath')}</span>
                   <strong title={projectDisplayPath(selectedProject)}>
                     {shortPath(projectDisplayPath(selectedProject))}
                   </strong>
@@ -200,7 +227,7 @@ export function LibraryHome({
                   onClick={() => onOpenProjectDirectory(selectedProject)}
                   variant="secondary"
                 >
-                  Open folder
+                  {t('library.openFolder')}
                 </Button>
               </div>
             </div>
@@ -213,13 +240,13 @@ export function LibraryHome({
                 iconLeft={<Icon name="plus" {...primaryActionIcon} />}
                 onClick={onNewBuild}
               >
-                New build
+                {t('library.newBuild')}
               </Button>
             }
             className="library-home-empty"
-            description="Open a build from the library on the left or create a new one to see its details."
+            description={t('library.chooseBuildDescription')}
             icon={<Icon name="layers" size={26} />}
-            title="Choose a build"
+            title={t('library.chooseBuild')}
           />
         )}
       </section>
@@ -262,16 +289,18 @@ function LibraryProjectRows({
   renderProjectRowMenu,
   selectedProject
 }: LibraryProjectRowsProps) {
+  const { t } = useLocalization();
+  const fallbackName = t('build.fallbackName');
   if (catalogState === 'loading' && projects.length === 0) {
     return (
       <div
         className="library-build-list library-build-list--loading"
         role="list"
-        aria-label="Fluxora builds"
+        aria-label={t('library.fluxoraBuilds')}
         aria-busy="true"
       >
         <span className="sr-only" role="status">
-          Loading builds
+          {t('library.loading')}
         </span>
         {libraryLoadingRows.map((index) => (
           <div
@@ -301,9 +330,9 @@ function LibraryProjectRows({
     return (
       <EmptyState
         compact
-        description={bridgeErrorMessage ?? 'Build the native bridge host first.'}
+        description={bridgeErrorMessage ?? t('library.bridgeRequired')}
         icon={<Icon name="alert-triangle" size={18} />}
-        title={catalogState === 'blocked' ? 'Core unavailable' : 'Catalog unavailable'}
+        title={catalogState === 'blocked' ? t('library.coreUnavailable') : t('library.catalogUnavailable')}
         tone="error"
       />
     );
@@ -320,20 +349,20 @@ function LibraryProjectRows({
               onClick={onNewBuild}
               size="sm"
             >
-              New build
+              {t('library.newBuild')}
             </Button>
           ) : null
         }
         compact
-        description={catalogPath || 'Create or open a Fluxora build.'}
+        description={catalogPath || t('library.createOrOpen')}
         icon={<Icon name="folder" size={18} />}
-        title={projects.length === 0 ? 'No builds yet' : 'No matching builds'}
+        title={projects.length === 0 ? t('library.noBuilds') : t('library.noMatches')}
       />
     );
   }
 
   return (
-    <div className="library-build-list" role="list" aria-label="Fluxora builds">
+    <div className="library-build-list" role="list" aria-label={t('library.fluxoraBuilds')}>
       {filteredProjects.map((project) => {
         const isSelected =
           selectedProject?.id === project.id ||
@@ -351,7 +380,7 @@ function LibraryProjectRows({
           >
             <button
               aria-current={isSelected ? 'true' : undefined}
-              aria-label={`Select ${project.name}`}
+              aria-label={t('library.selectNamed', { name: project.name })}
               className="library-build-row"
               disabled={isNewBuildDisabled}
               onClick={() => onSelectProject(project)}
@@ -362,14 +391,14 @@ function LibraryProjectRows({
               }}
               type="button"
             >
-              <img className="project-row__icon" src={projectIcon(project)} alt="" />
+              <img className="project-row__icon" src={projectIcon(project, fallbackName)} alt="" />
               <span className="project-row__main">
                 <strong>{project.name}</strong>
-                <small>{rowMeta(project, stats)}</small>
+                <small>{rowMeta(project, stats, t, fallbackName)}</small>
               </span>
             </button>
             <Button
-              aria-label={`Open ${project.name}`}
+              aria-label={t('library.openNamed', { name: project.name })}
               className="library-build-open"
               disabled={isNewBuildDisabled}
               fullWidth
@@ -381,17 +410,17 @@ function LibraryProjectRows({
               }}
               size="sm"
             >
-              Open
+              {t('library.open')}
             </Button>
             <div
               className="row-actions library-build-actions"
-              aria-label={`${project.name} actions`}
+              aria-label={t('library.namedActions', { name: project.name })}
               data-menu-open={isProjectMenuOpen}
             >
               <IconButton
                 data-project-menu-trigger="true"
                 disabled={isProjectInteractionDisabled}
-                label={`${project.name} actions`}
+                label={t('library.namedActions', { name: project.name })}
                 onClick={(event) => {
                   event.stopPropagation();
                   onSelectProject(project);

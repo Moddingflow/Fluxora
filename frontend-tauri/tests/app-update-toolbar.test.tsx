@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
+import { LocalizationProvider } from '../src/localization/react';
 import { AppTitlebar } from '../src/renderer/components/chrome/AppTitlebar';
 
 const noop = () => undefined;
@@ -12,12 +13,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const renderTitlebar = (update: Parameters<typeof AppTitlebar>[0]['update']) =>
   renderToStaticMarkup(
-    React.createElement(AppTitlebar, {
-      update,
-      onClose: noop,
-      onMinimize: noop,
-      onToggleMaximize: noop
-    })
+    React.createElement(
+      LocalizationProvider,
+      { language: 'ru-RU' },
+      React.createElement(AppTitlebar, {
+        update,
+        onClose: noop,
+        onMinimize: noop,
+        onToggleMaximize: noop
+      })
+    )
   );
 
 describe('app update titlebar control', () => {

@@ -46,7 +46,7 @@ export const handleNifPreviewWorkerRequest = (
         type: 'error',
         requestId: request.requestId,
         generation: request.generation,
-        message: error instanceof Error ? error.message : 'Preview worker failed.'
+        message: error instanceof Error ? error.message : 'preview.worker.failed'
       },
       transfer: []
     };

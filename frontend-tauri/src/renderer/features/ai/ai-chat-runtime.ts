@@ -7,12 +7,14 @@ import type {
   FluxoraAiIntermediateEvent,
   FluxoraApi
 } from '../../../shared/fluxora-api';
+import { translateForLanguage } from '../../../localization';
 import {
   activeAiChatThread,
   createAiMessage,
   createAiRun,
   createAiSession,
   createAiStreamEvent,
+  DEFAULT_AI_CHAT_TITLE,
   type AiAgentStatus,
   type AiMessage,
   type AiRun,
@@ -21,7 +23,6 @@ import {
 } from './ai-chat-state';
 import { FLUXORA_AI_MODEL_ID, FLUXORA_AI_PROVIDER_ID, type AiChatSettings } from './ai-chat-settings';
 
-export const AI_RUN_CANCELLED_TEXT = 'Остановлено';
 const AI_SESSION_STORAGE_KEY = 'fluxora.ai.single-agent.sessions.v1';
 const AI_MIGRATION_MARKER_KEY = 'fluxora.ai.single-agent-migration.v1';
 
@@ -53,6 +54,8 @@ export interface AiLocalRunHandle {
 }
 
 export interface AiHostRunSettings extends AiChatSettings {
+  cancelledText?: string;
+  errorText?: string;
   fileWorkspace?: FluxoraAiFileWorkspaceEnvelope;
   preparedRequest?: FluxoraAiChatRequest;
 }
@@ -73,8 +76,10 @@ export const aiSessionScopeKey = (scope: AiSessionScope): string => {
   return directory ? `directory:${directory}` : 'no-build';
 };
 
-export const aiSessionBuildLabel = (scope: AiSessionScope): string =>
-  scope.projectName?.trim() || 'Selected build';
+export const aiSessionBuildLabel = (
+  scope: AiSessionScope,
+  language?: string | null
+): string => scope.projectName?.trim() || translateForLanguage(language, 'app.ui.selectedBuild');
 
 const clearLegacyAiStateOnce = (storage: AiSessionStorage): void => {
   if (storage.getItem(AI_MIGRATION_MARKER_KEY) === 'done') return;
@@ -112,6 +117,7 @@ const normalizeSingleAgentSession = (session: AiSession): AiSession => ({
   ...session,
   chats: session.chats.map((chat) => ({
     ...chat,
+    title: chat.title === 'New chat' ? DEFAULT_AI_CHAT_TITLE : chat.title,
     intermediateEvents: Array.isArray(chat.intermediateEvents) ? chat.intermediateEvents : [],
     activeGoal: normalizeActiveGoal(chat.activeGoal)
   }))
@@ -136,7 +142,11 @@ const normalizeActiveGoal = (value: unknown): AiSession['chats'][number]['active
   };
 };
 
-const recoverInterruptedRuns = (session: AiSession, now = new Date()): AiSession => {
+const recoverInterruptedRuns = (
+  session: AiSession,
+  language?: string | null,
+  now = new Date()
+): AiSession => {
   let changed = false;
   const recoveredAt = now.toISOString();
   const chats = session.chats.map((chat) => {
@@ -154,7 +164,7 @@ const recoverInterruptedRuns = (session: AiSession, now = new Date()): AiSession
         ...chat.messages,
         ...interrupted.map((run) => createAiMessage(
           'assistant',
-          'Предыдущий запрос был остановлен при завершении Fluxora.',
+          translateForLanguage(language, 'app.message.aiRecovered'),
           now,
           run.id,
           { agentStatus: 'stopped' }
@@ -165,21 +175,29 @@ const recoverInterruptedRuns = (session: AiSession, now = new Date()): AiSession
   return changed ? { ...session, chats, updatedAt: recoveredAt } : session;
 };
 
-export const createAiSessionForScope = (scope: AiSessionScope, now = new Date()): AiSession =>
-  createAiSession(aiSessionScopeKey(scope), aiSessionBuildLabel(scope), now);
+export const createAiSessionForScope = (
+  scope: AiSessionScope,
+  now = new Date(),
+  language?: string | null
+): AiSession => createAiSession(
+  aiSessionScopeKey(scope),
+  aiSessionBuildLabel(scope, language),
+  now
+);
 
 export const loadAiSession = (
   storage: AiSessionStorage | undefined,
   scope: AiSessionScope,
+  language?: string | null,
   now = new Date()
 ): AiSession => {
-  if (!storage) return createAiSessionForScope(scope, now);
+  if (!storage) return createAiSessionForScope(scope, now, language);
   clearLegacyAiStateOnce(storage);
   const scopeKey = aiSessionScopeKey(scope);
   const stored = parseStoredSessions(storage)[scopeKey];
   return isSingleAgentSession(stored)
-    ? recoverInterruptedRuns(normalizeSingleAgentSession(stored), now)
-    : createAiSessionForScope(scope, now);
+    ? recoverInterruptedRuns(normalizeSingleAgentSession(stored), language, now)
+    : createAiSessionForScope(scope, now, language);
 };
 
 export const saveAiSession = (storage: AiSessionStorage | undefined, session: AiSession): void => {
@@ -250,27 +268,33 @@ export const createAiHostChatRequest = (
   };
 };
 
-const typedErrorFromUnknown = (error: unknown): FluxoraAiChatError => {
+const typedErrorFromUnknown = (
+  error: unknown,
+  fallbackText: string
+): FluxoraAiChatError => {
   const fallback: FluxoraAiChatError = {
     code: 'ai.transport.unavailable',
     category: 'transport',
     stage: 'provider',
     retryable: true,
-    userMessage: 'Gemini is unavailable. Try again in a moment.',
+    userMessage: fallbackText,
     debugId: `renderer-${Date.now()}`
   };
   if (typeof error === 'string') {
     try {
       const parsed = JSON.parse(error) as Partial<FluxoraAiChatError>;
-      return parsed.code && parsed.userMessage ? { ...fallback, ...parsed } : fallback;
+      return parsed.code && parsed.userMessage
+        ? { ...fallback, ...parsed, userMessage: fallbackText }
+        : fallback;
     } catch {
       return { ...fallback, debugId: `renderer-${Date.now()}` };
     }
   }
   if (error && typeof error === 'object') {
     const candidate = error as Partial<FluxoraAiChatError> & { message?: string };
-    if (candidate.code && candidate.userMessage) return { ...fallback, ...candidate };
-    if (candidate.message) return { ...fallback, userMessage: candidate.message };
+    if (candidate.code && candidate.userMessage) {
+      return { ...fallback, ...candidate, userMessage: fallbackText };
+    }
   }
   return fallback;
 };
@@ -336,7 +360,10 @@ export const startHostAiRun = (
     },
     (error) => {
       if (cancelled) return;
-      const typedError = typedErrorFromUnknown(error);
+      const typedError = typedErrorFromUnknown(
+        error,
+        settings.errorText ?? translateForLanguage(undefined, 'ai.diagnostic.unavailable.message')
+      );
       const event = createAiStreamEvent(run, 'run-finished', { status: 'blocked' });
       callbacks.onFinish(createAiMessage(
         'assistant',
@@ -356,7 +383,13 @@ export const startHostAiRun = (
       cancelled = true;
       unsubscribe();
       callbacks.onFinish(
-        createAiMessage('assistant', AI_RUN_CANCELLED_TEXT, new Date(), run.id, { agentStatus: 'stopped' }),
+        createAiMessage(
+          'assistant',
+          settings.cancelledText ?? translateForLanguage(undefined, 'app.message.aiStopped'),
+          new Date(),
+          run.id,
+          { agentStatus: 'stopped' }
+        ),
         createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' }),
         'stopped'
       );

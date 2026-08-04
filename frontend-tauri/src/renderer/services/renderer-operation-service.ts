@@ -1,3 +1,5 @@
+import { translateForLanguage } from '../../localization';
+
 export const createRendererOperationId = (scope: string): string => {
   const random =
     typeof globalThis.crypto?.randomUUID === 'function'
@@ -6,9 +8,13 @@ export const createRendererOperationId = (scope: string): string => {
   return `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${random}`;
 };
 
-const fallbackErrorMessage = 'Operation failed.';
+const fallbackErrorMessage = (language?: string | null): string =>
+  translateForLanguage(
+    language ?? (typeof document === 'undefined' ? undefined : document.documentElement.lang),
+    'common.operationFailed'
+  );
 
-const cleanErrorText = (value: unknown): string | null => {
+const cleanErrorText = (value: unknown, language?: string | null): string | null => {
   if (typeof value !== 'string') {
     return null;
   }
@@ -19,18 +25,18 @@ const cleanErrorText = (value: unknown): string | null => {
   }
 
   if (/(?:\n|\r).*(?:\bat\s+|stack|stderr|stdout|traceback|exception)/i.test(trimmed)) {
-    return trimmed.split(/\r?\n/)[0]?.trim() || fallbackErrorMessage;
+    return trimmed.split(/\r?\n/)[0]?.trim() || fallbackErrorMessage(language);
   }
 
   return trimmed;
 };
 
-export const errorMessage = (error: unknown): string => {
+export const errorMessage = (error: unknown, language?: string | null): string => {
   if (error instanceof Error) {
-    return cleanErrorText(error.message) ?? fallbackErrorMessage;
+    return cleanErrorText(error.message, language) ?? fallbackErrorMessage(language);
   }
 
-  const directMessage = cleanErrorText(error);
+  const directMessage = cleanErrorText(error, language);
   if (directMessage) {
     return directMessage;
   }
@@ -38,13 +44,13 @@ export const errorMessage = (error: unknown): string => {
   if (error && typeof error === 'object') {
     const record = error as Record<string, unknown>;
     return (
-      cleanErrorText(record.message) ??
-      cleanErrorText(record.error) ??
-      cleanErrorText(record.detail) ??
-      cleanErrorText(record.reason) ??
-      fallbackErrorMessage
+      cleanErrorText(record.message, language) ??
+      cleanErrorText(record.error, language) ??
+      cleanErrorText(record.detail, language) ??
+      cleanErrorText(record.reason, language) ??
+      fallbackErrorMessage(language)
     );
   }
 
-  return fallbackErrorMessage;
+  return fallbackErrorMessage(language);
 };

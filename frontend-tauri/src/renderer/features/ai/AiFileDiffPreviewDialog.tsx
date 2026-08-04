@@ -8,6 +8,7 @@ import {
 } from '../../design-system/icons/lucide-compat';
 
 import type { FluxoraAiFileChange } from '../../../shared/fluxora-api';
+import { useLocalization } from '../../../localization/react';
 
 type DiffRowKind = 'added' | 'context' | 'removed';
 
@@ -54,6 +55,7 @@ export function AiFileDiffPreviewDialog({
   onOpenEditor: () => void;
   onShowInFolder: () => void;
 }) {
+  const { t } = useLocalization();
   const dialogRef = useRef<HTMLElement>(null);
   const fileName = fileNameFromPath(change.relativePath);
   const hunks = useMemo(() => diffRows(change), [change]);
@@ -83,7 +85,7 @@ export function AiFileDiffPreviewDialog({
         className="ai-file-diff-preview"
         role="dialog"
         aria-modal="true"
-        aria-label={`Changes preview: ${fileName}`}
+        aria-label={t('ai.diff.aria', { name: fileName })}
         tabIndex={-1}
       >
         <header className="ai-file-diff-preview__header">
@@ -94,18 +96,18 @@ export function AiFileDiffPreviewDialog({
               <span>{change.relativePath}</span>
             </div>
           </div>
-          <button type="button" aria-label="Close changes preview" onClick={onClose}>
+          <button type="button" aria-label={t('ai.diff.close')} onClick={onClose}>
             <X size={16} aria-hidden="true" />
           </button>
         </header>
 
         <div className="ai-file-diff-preview__summary">
-          <span>Read-only changes preview</span>
+          <span>{t('ai.diff.readOnly')}</span>
           <span className="ai-file-change__added">+{change.addedLines}</span>
           <span className="ai-file-change__removed">−{change.removedLines}</span>
         </div>
 
-        <div className="ai-file-diff-preview__body" role="region" aria-label="Changed lines">
+        <div className="ai-file-diff-preview__body" role="region" aria-label={t('ai.diff.changedLines')}>
           {change.hunks.map((hunk, hunkIndex) => (
             <section className="ai-file-diff-preview__hunk" key={`${hunk.oldStart}:${hunk.newStart}:${hunkIndex}`}>
               <div className="ai-file-diff-preview__hunk-header">
@@ -124,11 +126,11 @@ export function AiFileDiffPreviewDialog({
         <footer className="ai-file-diff-preview__actions">
           <button type="button" onClick={onShowInFolder}>
             <FolderOpen size={14} aria-hidden="true" />
-            Открыть в проводнике
+            {t('ai.file.showInFolder')}
           </button>
           <button type="button" onClick={onOpenEditor}>
             <FilePenLine size={14} aria-hidden="true" />
-            Open full editor
+            {t('ai.diff.openEditor')}
           </button>
         </footer>
       </section>

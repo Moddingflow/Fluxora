@@ -1,5 +1,6 @@
 import { useEffect, useRef, type FormEvent } from 'react';
 
+import { translateForLanguage } from '../../../localization';
 import { Button, Icon, IconButton } from '../../design-system';
 
 export const BUILD_RENAME_NAME_MAX_LENGTH = 255;
@@ -30,51 +31,17 @@ export interface BuildRenameDialogCopy {
   unchangedMessage: string;
 }
 
-const buildRenameDialogCopyByLanguage: Record<
-  'de' | 'en' | 'ru',
-  BuildRenameDialogCopy
-> = {
-  en: {
-    closeLabel: 'Close build rename',
-    inputLabel: 'New build name',
-    renameLabel: 'Rename',
-    renamingLabel: 'Renaming…',
-    requiredMessage: 'Enter a build name.',
-    title: 'Rename build',
-    unchangedMessage: 'Enter a different build name.'
-  },
-  de: {
-    closeLabel: 'Umbenennen der Sammlung schließen',
-    inputLabel: 'Neuer Name der Sammlung',
-    renameLabel: 'Umbenennen',
-    renamingLabel: 'Wird umbenannt…',
-    requiredMessage: 'Gib einen Namen für die Sammlung ein.',
-    title: 'Sammlung umbenennen',
-    unchangedMessage: 'Gib einen anderen Namen für die Sammlung ein.'
-  },
-  ru: {
-    closeLabel: 'Закрыть переименование сборки',
-    inputLabel: 'Новое название сборки',
-    renameLabel: 'Переименовать',
-    renamingLabel: 'Переименование…',
-    requiredMessage: 'Введите название сборки.',
-    title: 'Переименовать сборку',
-    unchangedMessage: 'Введите другое название сборки.'
-  }
-};
-
 export const buildRenameDialogCopy = (
   language: string | null | undefined
-): BuildRenameDialogCopy => {
-  const normalized = language?.trim().toLocaleLowerCase() ?? '';
-  if (normalized.startsWith('ru')) {
-    return buildRenameDialogCopyByLanguage.ru;
-  }
-  if (normalized.startsWith('de')) {
-    return buildRenameDialogCopyByLanguage.de;
-  }
-  return buildRenameDialogCopyByLanguage.en;
-};
+): BuildRenameDialogCopy => ({
+  closeLabel: translateForLanguage(language, 'buildRename.close'),
+  inputLabel: translateForLanguage(language, 'buildRename.input'),
+  renameLabel: translateForLanguage(language, 'buildRename.rename'),
+  renamingLabel: translateForLanguage(language, 'buildRename.renaming'),
+  requiredMessage: translateForLanguage(language, 'buildRename.required'),
+  title: translateForLanguage(language, 'buildRename.title'),
+  unchangedMessage: translateForLanguage(language, 'buildRename.unchanged')
+});
 
 export function BuildRenameDialog({
   language,

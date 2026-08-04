@@ -32,6 +32,7 @@ import type {
   FluxoraTransferDriveOption
 } from '../shared/fluxora-api';
 import type { TransferStepId } from './TransferSettingsPanel';
+import { useLocalization } from '../localization/react';
 
 export type TransferDriveListState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -66,35 +67,6 @@ const clampPercent = (value: number | undefined): number =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value ?? 0 : 0));
 
 const transferStepOrder: TransferStepId[] = ['source', 'destination', 'review'];
-
-const transferStepMeta: Record<
-  TransferStepId,
-  {
-    title: string;
-    short: string;
-    hint: string;
-    icon: ReactNode;
-  }
-> = {
-  source: {
-    title: 'Папка сборки',
-    short: 'Папка',
-    hint: 'Выберите существующую сборку Mod Organizer 2',
-    icon: <FolderOpen size={20} aria-hidden="true" />
-  },
-  destination: {
-    title: 'Диск установки',
-    short: 'Диск',
-    hint: 'Куда создать папку Fluxora Builds',
-    icon: <HardDrive size={20} aria-hidden="true" />
-  },
-  review: {
-    title: 'Проверка',
-    short: 'Проверка',
-    hint: 'Проверьте путь, игру и место перед переносом',
-    icon: <Check size={20} aria-hidden="true" />
-  }
-};
 
 const pathLeaf = (rawPath: string): string => {
   const trimmed = rawPath.trim().replace(/[\\/]+$/, '');
@@ -164,6 +136,27 @@ export const TransferMo2Page = ({
   onCancel,
   onClose
 }: TransferMo2PageProps) => {
+  const { t } = useLocalization();
+  const transferStepMeta: Record<
+    TransferStepId,
+    { title: string; hint: string; icon: ReactNode }
+  > = {
+    source: {
+      title: t('transfer.step.source.title'),
+      hint: t('transfer.step.source.hint'),
+      icon: <FolderOpen size={20} aria-hidden="true" />
+    },
+    destination: {
+      title: t('transfer.step.destination.title'),
+      hint: t('transfer.step.destination.hint'),
+      icon: <HardDrive size={20} aria-hidden="true" />
+    },
+    review: {
+      title: t('transfer.step.review.title'),
+      hint: t('transfer.step.review.hint'),
+      icon: <Check size={20} aria-hidden="true" />
+    }
+  };
   const analysisStatus = transferAnalysisStatus(analysis);
   const requiredBytes = analysis?.totalBytes ?? progress?.totalBytes ?? 0;
   const canBrowseSource = bridgeReady && transferAvailable && !isRunning && !busyLabel;
@@ -175,16 +168,16 @@ export const TransferMo2Page = ({
     Boolean(sourceDirectory.trim()) &&
     Boolean(destinationRootDirectory.trim());
   const canStart = canAnalyze && Boolean(analysis) && analysisStatus === 'ready';
-  const isAutoChecking = busyLabel === 'Проверяем перенос' && !analysis;
+  const isAutoChecking = busyLabel === t('transfer.checking') && !analysis;
   const selectedDrive = findTransferDriveForPath(drives, destinationRootDirectory);
-  const sourceLabel = sourceDirectory ? shortPath(sourceDirectory) : 'Выберите папку Mod Organizer 2';
+  const sourceLabel = sourceDirectory ? shortPath(sourceDirectory) : t('transfer.source.placeholder');
   const destinationLabel = destinationRootDirectory
     ? shortPath(destinationRootDirectory)
     : defaultDestinationRoot
       ? shortPath(defaultDestinationRoot)
-      : 'Fluxora выберет диск из списка';
-  const buildName = analysis?.projectName || pathLeaf(sourceDirectory) || 'Foundation Edition';
-  const gameName = analysis?.gameName || 'Игра будет определена после проверки';
+      : t('transfer.destination.placeholder');
+  const buildName = analysis?.projectName || pathLeaf(sourceDirectory) || t('transfer.defaultBuildName');
+  const gameName = analysis?.gameName || t('transfer.gamePending');
   const targetProjectDirectory = normalizeMo2TransferTargetProjectDirectory(
     analysis?.targetProjectDirectory,
     analysis?.destinationRootDirectory || destinationRootDirectory || defaultDestinationRoot,
@@ -258,16 +251,16 @@ export const TransferMo2Page = ({
 
   const renderRail = (activeStep: TransferStepId) => {
     return (
-      <aside className="transfer-wizard-rail" aria-label="Шаги переноса сборки">
+      <aside className="transfer-wizard-rail" aria-label={t('transfer.stepsAria')}>
         <div className="transfer-flow">
-          {renderFlowChip('Mod Organizer 2', modOrganizerIcon)}
+          {renderFlowChip(t('transfer.mo2'), modOrganizerIcon)}
           <ChevronRight size={15} aria-hidden="true" />
           {renderFlowChip('Fluxora', fluxoraLogo, true)}
         </div>
 
         <WizardStepper
           activeStepId={activeStep}
-          ariaLabel="Transfer steps"
+          ariaLabel={t('transfer.stepsAria')}
           className="transfer-rail-steps"
           disabled={isRunning}
           onStepSelect={(stepId) => onSelectStep(stepId as TransferStepId)}
@@ -292,7 +285,7 @@ export const TransferMo2Page = ({
       <header className="transfer-step-header">
         <span className="transfer-step-header__icon">{meta.icon}</span>
         <div>
-          <span>Шаг {index}</span>
+          <span>{t('transfer.stepNumber', { number: index })}</span>
           <h2>{meta.title}</h2>
         </div>
       </header>
@@ -322,16 +315,13 @@ export const TransferMo2Page = ({
 
   const renderSourceStep = () => (
     <div className="transfer-step-stack">
-      <p>
-        Выберите папку существующей сборки Mod Organizer 2. Fluxora возьмет название из этой
-        папки, а исходная сборка останется на месте и не будет изменена.
-      </p>
+      <p>{t('transfer.source.description')}</p>
       {renderFieldShell(
-        'Папка сборки',
+        t('transfer.step.source.title'),
         <FolderOpen size={15} aria-hidden="true" />,
-        sourceDirectory ? sourceLabel : 'Выбрать папку со сборкой',
+        sourceDirectory ? sourceLabel : t('transfer.source.choose'),
         {
-          title: sourceDirectory || 'Выберите папку Mod Organizer 2',
+          title: sourceDirectory || t('transfer.source.placeholder'),
           onClick: onBrowseSource,
           disabled: !canBrowseSource
         }
@@ -339,23 +329,23 @@ export const TransferMo2Page = ({
       {sourceDirectory ? (
         <div className="transfer-source-note">
           <Layers size={15} aria-hidden="true" />
-          <span title={buildName}>Название после переноса: {buildName}</span>
+          <span title={buildName}>{t('transfer.source.renamed', { name: buildName })}</span>
         </div>
       ) : null}
     </div>
   );
 
   const renderDriveList = () => (
-    <section className="transfer-drive-section transfer-drive-section--wizard" aria-label="Диски назначения">
+    <section className="transfer-drive-section transfer-drive-section--wizard" aria-label={t('transfer.drivesAria')}>
       <header>
         <div>
-          <strong>Установить на:</strong>
+          <strong>{t('transfer.installOn')}</strong>
           <span>{destinationLabel}</span>
         </div>
         <button
           className="icon-button"
           type="button"
-          title="Обновить список дисков"
+          title={t('transfer.refreshDrives')}
           disabled={isRunning || driveState === 'loading'}
           onClick={onRefreshDrives}
         >
@@ -392,11 +382,11 @@ export const TransferMo2Page = ({
                 </small>
               </span>
               <span className="transfer-drive-row__space">
-                <strong>доступно {formatTransferBytes(drive.availableBytes)}</strong>
+                <strong>{t('transfer.availableSpace', { bytes: formatTransferBytes(drive.availableBytes) })}</strong>
                 <small>
                   {requiredBytes > 0
-                    ? `нужно ${formatTransferBytes(requiredBytes)}`
-                    : 'нужно посчитать'}
+                    ? t('transfer.requiredSpace', { bytes: formatTransferBytes(requiredBytes) })
+                    : t('transfer.requiredCalculate')}
                 </small>
               </span>
               <span className="transfer-drive-row__meter" aria-hidden="true">
@@ -409,8 +399,8 @@ export const TransferMo2Page = ({
 
       {drives.length === 0 ? (
         <div className="settings-note" data-status={driveState === 'error' ? 'error' : 'ready'}>
-          <strong>{driveState === 'error' ? 'Диски не загрузились' : 'Диски пока не найдены'}</strong>
-          <span>Fluxora оставит выбор папки недоступным, пока main process не вернет список томов.</span>
+          <strong>{driveState === 'error' ? t('transfer.drivesError') : t('transfer.drivesEmpty')}</strong>
+          <span>{t('transfer.drivesWaiting')}</span>
         </div>
       ) : null}
     </section>
@@ -418,43 +408,48 @@ export const TransferMo2Page = ({
 
   const renderReviewSummary = () => {
     const availableBytes = analysis?.availableBytes ?? selectedDrive?.availableBytes;
-    const requiredSpaceText = requiredBytes > 0 ? `нужно ${formatTransferBytes(requiredBytes)}` : 'нужно проверить';
+    const requiredSpaceText = requiredBytes > 0
+      ? t('transfer.requiredSpace', { bytes: formatTransferBytes(requiredBytes) })
+      : t('transfer.spaceNeedsCheck');
     const spaceText =
       availableBytes === undefined
         ? requiredSpaceText
-        : `${requiredSpaceText}, доступно ${formatTransferBytes(availableBytes)}`;
+        : t('transfer.spaceSummary', {
+            required: requiredSpaceText,
+            available: formatTransferBytes(availableBytes)
+          });
     const warningText =
       analysis && analysisStatus !== 'ready'
-        ? analysis.warningMessage || analysis.statusMessage || 'Перенос сейчас недоступен.'
+        ? analysis.warningMessage || analysis.statusMessage || t('transfer.unavailable')
         : null;
 
     return (
       <div className="transfer-analysis" data-status={analysisStatus}>
         <dl className="settings-facts transfer-review-facts">
           <div>
-            <dt>Папка сборки</dt>
+            <dt>{t('transfer.review.source')}</dt>
             <dd title={sourceDirectory || sourceLabel}>{sourceLabel}</dd>
           </div>
           <div>
-            <dt>Выбранный диск</dt>
+            <dt>{t('transfer.review.drive')}</dt>
             <dd title={destinationRootDirectory || destinationLabel}>{selectedDrive?.label || destinationLabel}</dd>
           </div>
           <div>
-            <dt>Итоговый путь</dt>
-            <dd title={targetProjectDirectory}>{targetProjectDirectory || 'Диск еще не выбран'}</dd>
+            <dt>{t('transfer.review.target')}</dt>
+            <dd title={targetProjectDirectory}>{targetProjectDirectory || t('transfer.review.noDrive')}</dd>
           </div>
           <div>
-            <dt>Игра</dt>
+            <dt>{t('transfer.review.game')}</dt>
             <dd>{gameName}</dd>
           </div>
           <div>
-            <dt>Место</dt>
+            <dt>{t('transfer.review.space')}</dt>
             <dd>{spaceText}</dd>
           </div>
         </dl>
         {warningText ? (
           <div className="settings-note" data-status="error">
-            <strong>{analysis?.statusMessage || 'Перенос недоступен'}</strong>
+            <strong>{analysis?.statusMessage || t('transfer.unavailable')}</strong>
             <span>{warningText}</span>
           </div>
         ) : null}
@@ -464,14 +459,11 @@ export const TransferMo2Page = ({
 
   const renderDestinationStep = () => (
     <div className="transfer-step-stack transfer-step-stack--install">
-      <p>
-        Выберите диск, куда Fluxora перенесет сборку. На выбранном диске будет создана папка
-        Fluxora Builds, а внутри нее сборка {buildName}.
-      </p>
+      <p>{t('transfer.destination.description', { name: buildName })}</p>
       {renderFieldShell(
-        'Итоговая структура',
+        t('transfer.destination.structure'),
         <FolderOpen size={15} aria-hidden="true" />,
-        targetProjectDirectory || 'Выберите диск назначения',
+        targetProjectDirectory || t('transfer.destination.choose'),
         {
           title: targetProjectDirectory || destinationLabel,
           disabled: true
@@ -483,19 +475,14 @@ export const TransferMo2Page = ({
 
   const renderReviewStep = () => (
     <div className="transfer-step-stack transfer-step-stack--install">
-      <p>
-        Проверка подтвердит структуру MO2, рассчитает размер переноса и покажет итоговую папку перед
-        запуском копирования.
-      </p>
-      <section className="transfer-review-card transfer-review-card--compact" aria-label="Проверка переноса">
+      <p>{t('transfer.review.description')}</p>
+      <section className="transfer-review-card transfer-review-card--compact" aria-label={t('transfer.review.aria')}>
         {analysis ? (
           renderReviewSummary()
         ) : (
           <div className="settings-note" data-status="ready" aria-busy={isAutoChecking}>
-            <strong>{isAutoChecking ? 'Проверяем перенос' : 'Проверка еще не запущена'}</strong>
-            <span>
-              Выберите диск установки и нажмите «Проверить», чтобы рассчитать размер и итоговый путь.
-            </span>
+            <strong>{isAutoChecking ? t('transfer.checking') : t('transfer.notChecked')}</strong>
+            <span>{t('transfer.review.instructions')}</span>
           </div>
         )}
       </section>
@@ -517,11 +504,11 @@ export const TransferMo2Page = ({
   const footerPrimaryLabel =
     selectedStep === 'source'
       ? sourceDirectory.trim()
-        ? 'Выбрать диск'
-        : 'Выбрать папку'
+        ? t('transfer.footer.selectDrive')
+        : t('transfer.footer.selectFolder')
       : selectedStep === 'destination'
-        ? 'Проверить'
-        : 'Перенести';
+        ? t('transfer.footer.check')
+        : t('transfer.footer.transfer');
   const footerPrimaryIcon =
     selectedStep === 'source' ? (
       sourceDirectory.trim() ? (
@@ -546,7 +533,7 @@ export const TransferMo2Page = ({
     <footer className="transfer-wizard-footer">
       <span className="transfer-footer-spacer" />
       <button className="transfer-footer-button transfer-footer-button--ghost" type="button" onClick={onClose}>
-        Отмена
+        {t('transfer.cancel')}
       </button>
       <button
         className="transfer-footer-button transfer-footer-button--secondary"
@@ -555,7 +542,7 @@ export const TransferMo2Page = ({
         onClick={goToPreviousStep}
       >
         <ChevronLeft size={14} aria-hidden="true" />
-        Назад
+        {t('transfer.back')}
       </button>
       {showPrimaryButton ? (
         <button
@@ -572,7 +559,7 @@ export const TransferMo2Page = ({
   );
 
   const renderSetup = () => (
-    <section className="transfer-operation-page transfer-operation-page--wizard" aria-label="Перенос сборки">
+    <section className="transfer-operation-page transfer-operation-page--wizard" aria-label={t('transfer.pageAria')}>
       <div className="transfer-wizard-page">
         {renderRail(selectedStep)}
         <div className="transfer-wizard-main">
@@ -587,7 +574,7 @@ export const TransferMo2Page = ({
               {renderStepContent()}
               {error ? (
                 <div className="settings-note" data-status="error" role="alert">
-                  <strong>Нужно внимание</strong>
+                  <strong>{t('transfer.attention')}</strong>
                   <span>{error}</span>
                 </div>
               ) : null}
@@ -606,7 +593,7 @@ export const TransferMo2Page = ({
         ? {
             operationId: result.id,
             phase: 'done',
-            currentStep: 'Готово',
+            currentStep: t('transfer.doneStep'),
             currentItem: result.name,
             overallPercent: 100,
             copyPercent: 100,
@@ -622,15 +609,15 @@ export const TransferMo2Page = ({
 
     const percent = clampPercent(visibleProgress.overallPercent);
     const currentStepText =
-      visibleProgress.currentStep || visibleProgress.phase || 'Перенос выполняется';
+      visibleProgress.currentStep || visibleProgress.phase || t('transfer.inProgress');
     const pageTitle = result
-      ? 'Перенос завершен'
+      ? t('transfer.completed')
       : error
-        ? 'Перенос требует внимания'
-        : analysis?.projectName || visibleProgress.currentItem || 'Mod Organizer';
+        ? t('transfer.needsAttention')
+        : analysis?.projectName || visibleProgress.currentItem || t('transfer.mo2');
 
     return (
-      <section className="transfer-operation-page transfer-operation-page--wizard" aria-label="Перенос сборки">
+      <section className="transfer-operation-page transfer-operation-page--wizard" aria-label={t('transfer.pageAria')}>
         <div className="transfer-wizard-page">
           {renderRail('review')}
           <div className="transfer-wizard-main">
@@ -638,7 +625,7 @@ export const TransferMo2Page = ({
               <section className="transfer-progress-card">
                 <FacetSpinner className="transfer-operation-spinner" size={76} />
                 <div className="transfer-operation-copy">
-                  <p className="eyebrow">Перенос сборки</p>
+                  <p className="eyebrow">{t('transfer.eyebrow')}</p>
                   <h2>{pageTitle}</h2>
                   <span className="transfer-operation-current-step">{currentStepText}</span>
                   {visibleProgress.currentItem ? <small>{visibleProgress.currentItem}</small> : null}
@@ -647,7 +634,7 @@ export const TransferMo2Page = ({
                 <div className="transfer-operation-meter">
                   <strong>{percent}%</strong>
                   <ProgressBar
-                    aria-label="MO2 transfer progress"
+                    aria-label={t('transfer.progressAria')}
                     className="transfer-progress-bar"
                     value={percent}
                   />
@@ -655,7 +642,7 @@ export const TransferMo2Page = ({
 
                 {error ? (
                   <div className="settings-note" data-status="error" role="alert">
-                    <strong>Нужно внимание</strong>
+                    <strong>{t('transfer.attention')}</strong>
                     <span>{error}</span>
                   </div>
                 ) : null}
@@ -673,7 +660,7 @@ export const TransferMo2Page = ({
                   onClick={onCancel}
                 >
                   <XCircle size={15} aria-hidden="true" />
-                  {cancelRequested ? 'Отменяем и очищаем' : 'Отменить и очистить'}
+                  {cancelRequested ? t('transfer.cancelling') : t('transfer.cancelAndClean')}
                 </button>
               ) : (
                 result ? null : (
@@ -683,7 +670,7 @@ export const TransferMo2Page = ({
                     onClick={onClose}
                   >
                     <Home size={15} aria-hidden="true" />
-                    В библиотеку
+                    {t('transfer.toLibrary')}
                   </button>
                 )
               )}

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { FluxoraFluxPackPackageType } from '../../../shared/fluxora-api';
 import { Checkbox } from '../../design-system';
 import { FluxPackPackageTypeSelect } from './FluxPackPackageTypeSelect';
+import { useLocalization } from '../../../localization/react';
 
 export interface FluxPackExportOptions {
   packageType: FluxoraFluxPackPackageType;
@@ -25,6 +26,7 @@ export function FluxPackExportDialog({
   onConfirm,
   outputPath
 }: FluxPackExportDialogProps) {
+  const { t } = useLocalization();
   const [packageType, setPackageType] =
     useState<FluxoraFluxPackPackageType>(defaultPackageType);
   const [includeGeneratedAssets, setIncludeGeneratedAssets] = useState(false);
@@ -51,13 +53,13 @@ export function FluxPackExportDialog({
         <header className="fluxpack-export-dialog__header">
           <div className="fluxpack-export-dialog__title">
             <PackageOpen aria-hidden="true" size={17} />
-            <strong id="fluxpack-export-title">Упаковать сборку</strong>
+            <strong id="fluxpack-export-title">{t('fluxpack.export.title')}</strong>
           </div>
           <button
-            aria-label="Закрыть окно упаковки"
+            aria-label={t('fluxpack.export.close')}
             className="icon-button"
             onClick={onCancel}
-            title="Закрыть"
+            title={t('titlebar.close')}
             type="button"
           >
             <X aria-hidden="true" size={16} />
@@ -72,11 +74,11 @@ export function FluxPackExportDialog({
           <FluxPackPackageTypeSelect onChange={setPackageType} value={packageType} />
           <div className="fluxpack-export-dialog__package-hint">
             {isFullPackage ? (
-              <span>Полная — все моды и локальные файлы внутри одного автономного FluxPack.</span>
+              <span>{t('fluxpack.export.fullHint')}</span>
             ) : (
-              <span>Рецепт — моды загружаются из Nexus Mods и других указанных источников.</span>
+              <span>{t('fluxpack.export.recipeHint')}</span>
             )}
-            <span>Максимальное сжатие применяется автоматически.</span>
+            <span>{t('fluxpack.export.compressionHint')}</span>
           </div>
           <Checkbox
             checked={isFullPackage || includeGeneratedAssets}
@@ -84,8 +86,8 @@ export function FluxPackExportDialog({
             disabled={isFullPackage}
             label={
               <>
-                <strong>Добавить сгенерированные файлы</strong>
-                <span>Nemesis, DynDOLOD и другие</span>
+                <strong>{t('fluxpack.export.generated')}</strong>
+                <span>{t('fluxpack.export.generatedDetail')}</span>
               </>
             }
             onCheckedChange={setIncludeGeneratedAssets}
@@ -94,7 +96,7 @@ export function FluxPackExportDialog({
 
         <footer className="fluxpack-export-dialog__actions">
           <button className="tool-button" onClick={onCancel} type="button">
-            Отмена
+            {t('fluxpack.export.cancel')}
           </button>
           <button
             autoFocus
@@ -107,7 +109,7 @@ export function FluxPackExportDialog({
             }
             type="button"
           >
-            Упаковать
+            {t('fluxpack.export.confirm')}
           </button>
         </footer>
       </section>

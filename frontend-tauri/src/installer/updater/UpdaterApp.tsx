@@ -116,6 +116,7 @@ export function UpdaterApp() {
   return (
     <div className="updater-shell" data-presentation={summary?.presentation ?? 'compact'}>
       <InstallerTitlebar
+        language={state.language}
         onClose={() => api.requestClose()}
         onCloseBlocked={(key) => dispatch({ type: 'notice', key })}
         onMinimize={() => api.minimizeWindow()}

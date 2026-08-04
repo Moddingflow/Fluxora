@@ -20,12 +20,13 @@ import {
   type ProjectDraft
 } from '../../project-catalog-state';
 import type { FluxoraGameTemplate } from '../../../shared/fluxora-api';
+import { useLocalization } from '../../../localization/react';
 
 export const CREATE_BUILD_STEPS = [
-  { id: 'name', label: 'Build name', hint: 'Name' },
-  { id: 'game', label: 'Game template', hint: 'Game' },
-  { id: 'executable', label: 'Game executable', hint: 'Official file' },
-  { id: 'location', label: 'Install location', hint: 'Destination' }
+  { id: 'name', labelKey: 'wizard.step.name.label', hintKey: 'wizard.step.name.hint' },
+  { id: 'game', labelKey: 'wizard.step.game.label', hintKey: 'wizard.step.game.hint' },
+  { id: 'executable', labelKey: 'wizard.step.executable.label', hintKey: 'wizard.step.executable.hint' },
+  { id: 'location', labelKey: 'wizard.step.location.label', hintKey: 'wizard.step.location.hint' }
 ] as const;
 
 export interface CreateBuildWizardProps {
@@ -74,6 +75,12 @@ export function CreateBuildWizard({
   selectedTemplate,
   templates
 }: CreateBuildWizardProps) {
+  const { t } = useLocalization();
+  const localizedSteps = CREATE_BUILD_STEPS.map((step) => ({
+    id: step.id,
+    label: t(step.labelKey),
+    hint: t(step.hintKey)
+  }));
   const [templateSearch, setTemplateSearch] = useState('');
   const deferredTemplateSearch = useDeferredValue(templateSearch.trim().toLowerCase());
   const templateButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -138,21 +145,21 @@ export function CreateBuildWizard({
             <Icon name="plus" size={16} strokeWidth={2} />
           </span>
           <div>
-            <strong>New build</strong>
-            <span>Configure locally</span>
+            <strong>{t('wizard.newBuild')}</strong>
+            <span>{t('wizard.configureLocally')}</span>
           </div>
         </header>
 
         <WizardStepper
-          activeStepId={CREATE_BUILD_STEPS[activeStepIndex].id}
-          ariaLabel="Build creation steps"
+          activeStepId={localizedSteps[activeStepIndex].id}
+          ariaLabel={t('wizard.stepsAria')}
           onStepSelect={(stepId) => {
-            const nextIndex = CREATE_BUILD_STEPS.findIndex((step) => step.id === stepId);
+            const nextIndex = localizedSteps.findIndex((step) => step.id === stepId);
             if (nextIndex >= 0) {
               onSelectStep(nextIndex);
             }
           }}
-          steps={CREATE_BUILD_STEPS.map((step, index) => {
+          steps={localizedSteps.map((step, index) => {
             const priorStepsComplete = CREATE_BUILD_STEPS.slice(0, index).every((_, priorIndex) =>
               isProjectDraftStepComplete(draft, priorIndex, selectedTemplate)
             );
@@ -175,15 +182,18 @@ export function CreateBuildWizard({
           <div className="create-build-wizard__content">
             <header className="create-build-wizard__header">
               <span>
-                Step {activeStepIndex + 1} of {CREATE_BUILD_STEPS.length}
+                {t('wizard.stepCounter', {
+                  current: activeStepIndex + 1,
+                  total: CREATE_BUILD_STEPS.length
+                })}
               </span>
-              <h1 id="create-build-title">{CREATE_BUILD_STEPS[activeStepIndex].label}</h1>
+              <h1 id="create-build-title">{localizedSteps[activeStepIndex].label}</h1>
             </header>
 
             <div className="create-build-wizard__body">
               {activeStepIndex === 0 ? (
                 <div className="create-build-field">
-                  <label htmlFor="create-build-name">How should this build be named?</label>
+                  <label htmlFor="create-build-name">{t('wizard.nameQuestion')}</label>
                   <Input
                     aria-describedby={error ? 'create-build-error' : undefined}
                     aria-invalid={Boolean(error)}
@@ -191,7 +201,7 @@ export function CreateBuildWizard({
                     id="create-build-name"
                     maxLength={120}
                     onChange={(event) => onChangeName(event.currentTarget.value)}
-                    placeholder="My Skyrim build"
+                    placeholder={t('wizard.namePlaceholder')}
                     spellCheck={false}
                     value={draft.projectName}
                   />
@@ -202,12 +212,12 @@ export function CreateBuildWizard({
                 <div className="create-build-template-picker">
                   {templates.length > 6 ? (
                     <div className="create-build-field create-build-template-picker__search">
-                      <label htmlFor="create-build-game-search">Find a game</label>
+                      <label htmlFor="create-build-game-search">{t('wizard.findGame')}</label>
                       <Input
                         id="create-build-game-search"
                         leadingIcon={<Icon name="search" size={15} />}
                         onChange={(event) => setTemplateSearch(event.currentTarget.value)}
-                        placeholder="Search games"
+                        placeholder={t('wizard.searchGames')}
                         value={templateSearch}
                       />
                     </div>
@@ -215,7 +225,7 @@ export function CreateBuildWizard({
 
                   <div
                     aria-describedby={error ? 'create-build-error' : undefined}
-                    aria-label="Game templates"
+                    aria-label={t('wizard.templatesAria')}
                     className="create-build-template-grid"
                     role="radiogroup"
                   >
@@ -264,9 +274,11 @@ export function CreateBuildWizard({
 
               {activeStepIndex === 2 ? (
                 <div className="create-build-field">
-                  <label htmlFor="create-build-executable">Official game executable</label>
+                  <label htmlFor="create-build-executable">{t('wizard.officialExecutable')}</label>
                   <p className="create-build-field__help">
-                    Only {executableName ?? 'the primary executable'} declared by this game can be used.
+                    {t('wizard.executableHelp', {
+                      name: executableName ?? t('wizard.primaryExecutable')
+                    })}
                   </p>
                   <div className="create-build-path-row">
                     <Input
@@ -279,7 +291,7 @@ export function CreateBuildWizard({
                           onNext();
                         }
                       }}
-                      placeholder={executableName ?? 'Official executable'}
+                      placeholder={executableName ?? t('wizard.officialExecutablePlaceholder')}
                       readOnly
                       value={draft.gamePath}
                     />
@@ -297,7 +309,9 @@ export function CreateBuildWizard({
                       }}
                       variant="secondary"
                     >
-                      Choose {executableName ?? 'executable'}
+                      {t('wizard.chooseNamedExecutable', {
+                        name: executableName ?? t('wizard.executableGeneric')
+                      })}
                     </Button>
                   </div>
                 </div>
@@ -306,9 +320,9 @@ export function CreateBuildWizard({
               {activeStepIndex === 3 ? (
                 <div className="create-build-location">
                   <div className="create-build-field">
-                    <label htmlFor="create-build-location">Builds folder</label>
+                    <label htmlFor="create-build-location">{t('wizard.buildsFolder')}</label>
                     <p className="create-build-field__help">
-                      The build name is appended to this folder automatically.
+                      {t('wizard.buildsFolderHelp')}
                     </p>
                     <div className="create-build-path-row">
                       <Input
@@ -324,15 +338,17 @@ export function CreateBuildWizard({
                         onClick={() => void onBrowseInstallRoot()}
                         variant="secondary"
                       >
-                        Browse
+                        {t('wizard.browse')}
                       </Button>
                     </div>
                   </div>
 
                   <div className="create-build-preview" data-loading={previewBusy || undefined}>
-                    <span>Build directory</span>
+                    <span>{t('wizard.buildDirectory')}</span>
                     <strong>
-                      {previewBusy ? 'Calculating…' : previewDirectory || 'Waiting for a valid name'}
+                      {previewBusy
+                        ? t('wizard.calculating')
+                        : previewDirectory || t('wizard.waitingValidName')}
                     </strong>
                   </div>
                 </div>
@@ -349,18 +365,18 @@ export function CreateBuildWizard({
 
         <footer className="create-build-wizard__footer">
           <Button onClick={onCancel} variant="ghost">
-            Cancel
+            {t('wizard.cancel')}
           </Button>
           <div>
             <Button disabled={activeStepIndex === 0} onClick={onBack} variant="secondary">
-              Back
+              {t('wizard.back')}
             </Button>
             <Button
               disabled={busy}
               iconRight={<Icon name={finalStep ? 'check' : 'chevron-right'} size={15} />}
               type="submit"
             >
-              {finalStep ? 'Create build' : 'Next'}
+              {finalStep ? t('wizard.create') : t('wizard.next')}
             </Button>
           </div>
         </footer>

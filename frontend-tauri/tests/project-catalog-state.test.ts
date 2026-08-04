@@ -140,6 +140,7 @@ describe('project catalog state', () => {
 
     expect(firstIncompleteProjectDraftStep(draft, templates)).toBe(0);
     expect(projectDraftStepError(draft, 0, null)).toBe('Enter a build name.');
+    expect(projectDraftStepError(draft, 0, null, 'ru-RU')).toBe('Введите название сборки.');
 
     const namedDraft = { ...draft, projectName: 'Northwind' };
     expect(firstIncompleteProjectDraftStep(namedDraft, templates)).toBe(1);

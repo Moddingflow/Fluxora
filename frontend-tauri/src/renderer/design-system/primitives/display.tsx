@@ -1,5 +1,7 @@
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
+import type { TranslationKey } from '../../../localization';
+import { useLocalization } from '../../../localization/react';
 import { cx } from './utils';
 
 export type CardVariant = 'panel' | 'raised' | 'soft' | 'inset' | 'hero';
@@ -51,12 +53,12 @@ export type StatusDotState =
   | 'mixed'
   | 'fully-overwritten';
 
-const STATUS_LABELS: Record<StatusDotState, string> = {
-  none: 'No overwrite conflicts',
-  overwritten: 'Overwritten by others',
-  overwrites: 'Overwrites other mods',
-  mixed: 'Mixed overwrite conflicts',
-  'fully-overwritten': 'Fully overwritten'
+const STATUS_LABEL_KEYS: Record<StatusDotState, TranslationKey> = {
+  none: 'status.overwrite.none',
+  overwritten: 'status.overwrite.overwritten',
+  overwrites: 'status.overwrite.overwrites',
+  mixed: 'status.overwrite.mixed',
+  'fully-overwritten': 'status.overwrite.fully'
 };
 
 const STATUS_ICON_URLS: Record<StatusDotState, string | null> = {
@@ -82,7 +84,8 @@ export function StatusDot({
   title,
   ...rest
 }: StatusDotProps) {
-  const accessibleLabel = label ?? STATUS_LABELS[state];
+  const { t } = useLocalization();
+  const accessibleLabel = label ?? t(STATUS_LABEL_KEYS[state]);
   const iconUrl = STATUS_ICON_URLS[state];
   const mergedStyle: CSSProperties & {
     '--flx-status-icon'?: string;

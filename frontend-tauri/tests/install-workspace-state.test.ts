@@ -179,6 +179,9 @@ describe('install workspace state', () => {
     expect(validateInstallModName(' SkyUI ')).toBe('');
     expect(validateInstallModName('CON')).toContain('reserved');
     expect(validateInstallModName('bad/name')).toContain('characters');
+    expect(validateInstallModName('CON', 'ru-RU')).toBe(
+      'Это название зарезервировано в Windows. Выберите другое.'
+    );
   });
 
   it('builds placement rows and serializes real drop overrides', () => {
