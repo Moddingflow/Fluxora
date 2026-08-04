@@ -71,10 +71,13 @@ export const FluxoraIpcChannels = {
   buildContentUnwatch: 'fluxora:build-content:unwatch',
   buildContentChanged: 'fluxora:build-content:changed',
   executablesGetIcon: 'fluxora:executables:get-icon',
+  executablesInspect: 'fluxora:executables:inspect',
   executablesCompleteManagedLaunch: 'fluxora:executables:complete-managed-launch',
   executablesLaunch: 'fluxora:executables:launch',
   executablesList: 'fluxora:executables:list',
   executablesSave: 'fluxora:executables:save',
+  executablesSaved: 'fluxora:executables:saved',
+  executablesUpdatePrimary: 'fluxora:executables:update-primary',
   processesWaitForExit: 'fluxora:processes:wait-for-exit',
   processesWatchLaunchReady: 'fluxora:processes:watch-launch-ready',
   linksOpenExternal: 'fluxora:links:open-external',
@@ -192,8 +195,10 @@ export const FluxoraIpcChannels = {
   updatesStatus: 'fluxora:updates:status',
   uiLog: 'fluxora:ui:log',
   windowClose: 'fluxora:window:close',
+  windowForceClose: 'fluxora:window:force-close',
   windowMinimize: 'fluxora:window:minimize',
   windowOpenBuildSettings: 'fluxora:window:open-build-settings',
+  windowOpenExecutableSettings: 'fluxora:window:open-executable-settings',
   windowOpenFilePreview: 'fluxora:window:open-file-preview',
   windowOpenModDetails: 'fluxora:window:open-mod-details',
   windowOpenSettings: 'fluxora:window:open-settings',
@@ -942,6 +947,25 @@ export interface FluxoraExecutable {
   iconPath: string;
   managedToolKind?: 'bodySlide' | 'texGen' | 'dynDoLod';
   executableDisplayMetadata?: FluxoraExecutableDisplayMetadata;
+}
+
+export type FluxoraExecutableDisplayNameSource =
+  | 'file-description'
+  | 'product-name'
+  | 'file-name';
+
+export interface FluxoraExecutableInspection {
+  executablePath: string;
+  suggestedDisplayName: string;
+  displayNameSource: FluxoraExecutableDisplayNameSource;
+  iconPath: string;
+  operationId: string;
+}
+
+export interface FluxoraExecutablesSavedEvent {
+  configPath: string;
+  executables: FluxoraExecutable[];
+  operationId: string;
 }
 
 export interface FluxoraManagedOutputMod {
@@ -2931,6 +2955,18 @@ export interface FluxoraApi {
       executables: FluxoraExecutable[],
       request?: OperationRequest
     ) => Promise<FluxoraExecutable[]>;
+    updatePrimary: (
+      configPath: string,
+      executablePath: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraExecutable[]>;
+    inspect: (
+      configPath: string,
+      executablePath: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraExecutableInspection>;
+    onSaved: (callback: (event: FluxoraExecutablesSavedEvent) => void) => () => void;
+    toIconUrl: (iconPath: string) => string;
     launch: (
       configPath: string,
       executableId: string,
@@ -3241,8 +3277,13 @@ export interface FluxoraApi {
   };
   windowControls: {
     close: () => Promise<void>;
+    forceClose: () => Promise<void>;
+    onCloseRequested: (
+      listener: () => boolean | Promise<boolean>
+    ) => Promise<() => void>;
     minimize: () => Promise<void>;
     openBuildSettings: (configPath: string, buildName: string) => Promise<void>;
+    openExecutableSettings: (configPath: string, buildName: string) => Promise<void>;
     openFilePreview: (
       configPath: string,
       projectDirectory: string,

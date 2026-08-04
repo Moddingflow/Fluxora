@@ -3343,10 +3343,49 @@ namespace fluxora
             std::vector<GameExecutable> executables)
         {
             if (const std::optional<GameExecutable> defaultExecutable = defaultGameExecutable(context);
-                defaultExecutable.has_value() &&
-                !hasExecutablePath(executables, defaultExecutable->executablePath))
+                defaultExecutable.has_value())
             {
-                executables.insert(executables.begin(), defaultExecutable.value());
+                const std::wstring defaultFileName =
+                    std::filesystem::path(defaultExecutable->executablePath).filename().wstring();
+                const bool alreadyConfigured = std::any_of(
+                    executables.begin(),
+                    executables.end(),
+                    [&defaultExecutable, &defaultFileName](const GameExecutable& executable)
+                    {
+                        return equalsIgnoreCase(executable.id, L"game") ||
+                            equalsIgnoreCase(
+                                std::filesystem::path(executable.executablePath).filename().wstring(),
+                                defaultFileName) ||
+                            equalsIgnoreCase(
+                                executable.executablePath,
+                                defaultExecutable->executablePath);
+                    });
+                if (!alreadyConfigured)
+                {
+                    executables.insert(executables.begin(), defaultExecutable.value());
+                }
+            }
+
+            if (!context.projectDirectory.empty() && !context.gamePath.empty())
+            {
+                for (GameExecutable& executable : executables)
+                {
+                    const std::filesystem::path configuredPath(executable.executablePath);
+                    if (!configuredPath.is_relative() || configuredPath.has_parent_path())
+                    {
+                        continue;
+                    }
+
+                    const std::filesystem::path gameFile = context.gamePath / configuredPath;
+                    const std::optional<std::filesystem::path> projectRelative =
+                        relativePathIfInsideLexical(gameFile, context.projectDirectory);
+                    if (projectRelative.has_value() &&
+                        projectRelative->has_parent_path() &&
+                        isReadableExecutableFile(gameFile))
+                    {
+                        executable.executablePath = projectRelative->wstring();
+                    }
+                }
             }
 
             return normalizeExecutables(executables);
@@ -4220,6 +4259,103 @@ namespace fluxora
         resolveExecutableIconPaths(context, iconService_, normalized);
         logger_.write(LogLevel::Info, "Project executable list updated.");
         return normalized;
+    }
+
+    std::vector<GameExecutable> ExecutableService::updatePrimaryExecutable(
+        const std::filesystem::path& configPath,
+        const std::filesystem::path& executablePath) const
+    {
+        ProjectExecutableContext context = readProjectExecutableContext(configPath, &logger_);
+        const BuildPathSettings settings = pathSettings_.loadForConfig(configPath);
+        context.gamePath = settings.gameDirectory;
+        context.modsDirectory = settings.modsDirectory;
+        context.overwriteDirectory = settings.overwriteDirectory;
+
+        std::vector<GameExecutable> current =
+            withDefaultGameExecutable(context, readExecutablesFromManifest(context.manifest));
+        const auto isPrimary = [&context](const GameExecutable& executable)
+        {
+            if (equalsIgnoreCase(executable.id, L"game"))
+            {
+                return true;
+            }
+            if (!context.executableRules.has_value())
+            {
+                return false;
+            }
+
+            const std::wstring configuredName =
+                std::filesystem::path(executable.executablePath).filename().wstring();
+            return std::any_of(
+                context.executableRules->executables.begin(),
+                context.executableRules->executables.end(),
+                [&executable, &configuredName](const GameExecutableDefinition& definition)
+                {
+                    return definition.role == GameExecutableRole::Primary &&
+                        ((!definition.id.empty() &&
+                          equalsIgnoreCase(definition.id, executable.id)) ||
+                         (!configuredName.empty() &&
+                          equalsIgnoreCase(configuredName, definition.name.displayName())));
+                });
+        };
+
+        auto primary = std::find_if(current.begin(), current.end(), isPrimary);
+        if (primary == current.end())
+        {
+            GameExecutable created = defaultGameExecutable(context).value_or(GameExecutable{
+                L"game",
+                fileNameWithoutExtension(executablePath.filename().wstring()),
+                {},
+                {},
+                {}
+            });
+            current.insert(current.begin(), std::move(created));
+            primary = current.begin();
+        }
+
+        std::filesystem::path storedPath = executablePath;
+        if (executablePath.is_absolute())
+        {
+            const std::optional<std::filesystem::path> projectRelative =
+                context.projectDirectory.empty()
+                    ? std::nullopt
+                    : relativePathIfInsideLexical(executablePath, context.projectDirectory);
+            if (projectRelative.has_value() && projectRelative->has_filename())
+            {
+                storedPath = projectRelative.value();
+            }
+            else if (!context.gamePath.empty())
+            {
+                const std::optional<std::filesystem::path> gameRelative =
+                    relativePathIfInsideLexical(executablePath, context.gamePath);
+                if (gameRelative.has_value() &&
+                    gameRelative->has_filename() &&
+                    !gameRelative->has_parent_path())
+                {
+                    storedPath = gameRelative.value();
+                }
+            }
+        }
+        primary->executablePath = storedPath.wstring();
+
+        std::vector<GameExecutable> normalized = normalizeExecutables(current);
+        detectManagedToolKinds(normalized);
+        writeManifestWithExecutables(context, normalized);
+        resolveExecutableIconPaths(context, iconService_, normalized);
+        logger_.write(LogLevel::Info, "Project primary executable updated.");
+        return normalized;
+    }
+
+    std::filesystem::path ExecutableService::resolveProjectExecutablePath(
+        const std::filesystem::path& configPath,
+        const std::filesystem::path& executablePath) const
+    {
+        ProjectExecutableContext context = readProjectExecutableContext(configPath, &logger_);
+        const BuildPathSettings settings = pathSettings_.loadForConfig(configPath);
+        context.gamePath = settings.gameDirectory;
+        context.modsDirectory = settings.modsDirectory;
+        context.overwriteDirectory = settings.overwriteDirectory;
+        return resolveExistingFile(context, executablePath.wstring());
     }
 
     ResolvedExecutableLaunch ExecutableService::resolveExecutable(

@@ -43,18 +43,33 @@ describe('build refresh loading', () => {
 
   it('uses table-shaped first paint and keeps generic loading strips out of workspace refreshes', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const executableManager = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'executables',
+      'ExecutableSettingsWindow.tsx'
+    );
+    const executableManagerStyles = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'executables',
+      'executable-settings-window.css'
+    );
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
     expect(app).toContain(
       "profilesWorkspace.loadState === 'loading' && profilesWorkspace.items.length === 0"
     );
-    expect(app).toContain(
-      "executablesWorkspace.loadState === 'loading' && executablesWorkspace.items.length === 0"
-    );
     expect(app).toContain('profile-row--skeleton');
-    expect(app).toContain('executable-row--skeleton');
-    expect(styles).toContain('.profile-row--skeleton,');
-    expect(styles).toContain('.executable-row--skeleton {');
+    expect(styles).toContain('.profile-row--skeleton');
+    expect(app).not.toContain('executable-row--skeleton');
+    expect(executableManager).toContain('loading && draft.length === 0');
+    expect(executableManager).toContain('<Skeleton /><Skeleton /><Skeleton />');
+    expect(executableManagerStyles).toContain('.executable-settings__skeleton');
     expect(app).toContain('const showBusy = options.showBusy ?? false;');
   });
 

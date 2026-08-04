@@ -233,16 +233,18 @@
       }
     },
     {
-      "files": ["info-circle.svg"],
+      "files": ["app-window.svg", "info-circle.svg"],
       "repository": "https://github.com/tabler/tabler-icons",
       "tag": "v3.44.0",
       "license": "MIT",
       "licenseFile": "TABLER-ICONS-LICENSE.txt",
       "upstreamBasePath": "icons/outline",
       "upstreamOverrides": {
+        "app-window.svg": "icons/outline/app-window.svg",
         "info-circle.svg": "icons/outline/info-circle.svg"
       },
       "hashes": {
+        "app-window.svg": "2edd0cabf00b4f32d4511544627773cb6e0ea28d7bfff60993170045bd0a78c3",
         "info-circle.svg": "8bb2ea8aa6e56cab6137f44a0b1a1eabeab526b7f96ea8be36d583868a737562"
       }
     },

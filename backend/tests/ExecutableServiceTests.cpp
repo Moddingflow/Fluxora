@@ -232,6 +232,36 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ExecutableServiceTests, ListAdaptsLegacyBareGameExecutableToFluxoraProjectPath)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Imported Build";
+        const std::filesystem::path config = project / L"build.json";
+        writeExecutableStub(project / L"Stock Game" / L"SkyrimSE.exe");
+        writeTextFile(
+            config,
+            "{\"schemaVersion\":\"1\",\"name\":\"Imported Build\","
+            "\"templateId\":\"skyrimse\",\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\",\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\",\"launchExecutables\":[{"
+            "\"id\":\"game\",\"displayName\":\"Skyrim Special Edition\","
+            "\"executablePath\":\"SkyrimSE.exe\",\"arguments\":\"\","
+            "\"workingDirectory\":\"\"}]}"
+        );
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const std::vector<GameExecutable> listed = service.listProjectExecutables(config);
+
+        ASSERT_EQ(listed.size(), 1U);
+        EXPECT_EQ(
+            std::filesystem::path(listed.front().executablePath),
+            std::filesystem::path(L"Stock Game") / L"SkyrimSE.exe");
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheMaterializesEarlyDataRuntimeDirectories)
     {
         TempDirectory temp;

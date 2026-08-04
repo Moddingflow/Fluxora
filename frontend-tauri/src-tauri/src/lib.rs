@@ -97,6 +97,7 @@ const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_INVOKE_ERROR_SCHEMA: &str = "fluxora.tauri.bridge-error.v1";
 const SETTINGS_LANGUAGE_CHANGED_EVENT: &str = "fluxora:settings:language-changed";
+const EXECUTABLES_SAVED_EVENT: &str = "fluxora:executables:saved";
 const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 10 * 60 * 1_000 + 30_000;
@@ -119,6 +120,7 @@ const AI_RUN_EVENT: &str = "fluxora:ai:run-event";
 const MAIN_WINDOW_LABEL: &str = "main";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const BUILD_SETTINGS_WINDOW_LABEL_PREFIX: &str = "build-settings";
+const EXECUTABLE_SETTINGS_WINDOW_LABEL_PREFIX: &str = "executable-settings";
 const MOD_DETAILS_WINDOW_LABEL_PREFIX: &str = "mod-details";
 const TEXT_EDITOR_WINDOW_LABEL_PREFIX: &str = "text-editor";
 const FILE_PREVIEW_WINDOW_LABEL_PREFIX: &str = "file-preview";
@@ -7922,6 +7924,25 @@ fn language_changed_event_payload(
     }))
 }
 
+fn executables_saved_event_payload(
+    method: &str,
+    params: &Value,
+    result: &Result<Value, String>,
+    operation_id: &str,
+) -> Option<Value> {
+    if !matches!(method, "executables.save" | "executables.updatePrimary") {
+        return None;
+    }
+
+    let config_path = params.get("configPath")?.as_str()?;
+    let executables = result.as_ref().ok()?.as_array()?;
+    Some(json!({
+        "configPath": config_path,
+        "executables": executables,
+        "operationId": operation_id
+    }))
+}
+
 #[tauri::command]
 async fn fluxora_bridge_request(
     app: AppHandle,
@@ -7996,12 +8017,18 @@ async fn execute_bridge_request(
     let queue_started_at = Instant::now();
     let mut bridge = state.process(lane).lock().await;
     let queue_wait_us = queue_started_at.elapsed().as_micros();
+    let event_params = params.clone();
     let result = bridge
         .request(&app, &method, params, request, timeout_ms)
         .await;
 
     if let Some(payload) = language_changed_event_payload(&method, &result, &operation_id) {
         let _ = app.emit(SETTINGS_LANGUAGE_CHANGED_EVENT, &payload);
+    }
+    if let Some(payload) =
+        executables_saved_event_payload(&method, &event_params, &result, &operation_id)
+    {
+        let _ = app.emit(EXECUTABLES_SAVED_EVENT, &payload);
     }
 
     let log_app = app.clone();
@@ -9458,6 +9485,11 @@ async fn fluxora_window_close(window: tauri::WebviewWindow) -> Result<(), String
 }
 
 #[tauri::command]
+async fn fluxora_window_force_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.destroy().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         show_activation_window(&window, true);
@@ -9517,6 +9549,53 @@ async fn fluxora_open_build_settings_window(
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
         .title(format!("Settings \u{00B7} {build_title}"))
+        .inner_size(980.0, 700.0)
+        .min_inner_size(860.0, 620.0)
+        .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_open_executable_settings_window(
+    app: AppHandle,
+    config_path: String,
+    build_name: String,
+) -> Result<(), String> {
+    let config_path = config_path.trim();
+    if config_path.is_empty() {
+        return Err("Executable settings require a project config path.".to_string());
+    }
+
+    let build_name = build_name.trim();
+    let build_title = if build_name.is_empty() {
+        "Build"
+    } else {
+        build_name
+    };
+    let label = format!(
+        "{EXECUTABLE_SETTINGS_WINDOW_LABEL_PREFIX}:{}",
+        stable_label_suffix(config_path)
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        show_activation_window(&window, true);
+        return Ok(());
+    }
+
+    let url = format!(
+        "/?window=executable-settings&project={}&name={}",
+        encode_query_component(config_path),
+        encode_query_component(build_title)
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Executables \u{00B7} {build_title}"))
         .inner_size(980.0, 700.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true)
@@ -11655,8 +11734,10 @@ pub fn run() {
             fluxora_window_minimize,
             fluxora_window_toggle_maximize,
             fluxora_window_close,
+            fluxora_window_force_close,
             fluxora_open_settings_window,
             fluxora_open_build_settings_window,
+            fluxora_open_executable_settings_window,
             fluxora_open_mod_details_window,
             fluxora_open_text_editor_window,
             fluxora_open_ai_text_editor_window,
@@ -11702,6 +11783,49 @@ mod tests {
             language_changed_event_payload("settings.setLanguage", &failure, "op_language_ru"),
             None
         );
+    }
+
+    #[test]
+    fn successful_executable_mutation_selects_canonical_cross_window_event_payload() {
+        let params = json!({
+            "configPath": "C:\\Games\\Fluxora\\fluxora.json",
+            "executablesJson": "renderer input is intentionally ignored"
+        });
+        let canonical = json!([{
+            "id": "game",
+            "name": "Fluxora Game",
+            "path": "game.exe",
+            "arguments": "--private"
+        }]);
+        let success = Ok(canonical.clone());
+
+        assert_eq!(
+            executables_saved_event_payload(
+                "executables.save",
+                &params,
+                &success,
+                "op_executables_save"
+            ),
+            Some(json!({
+                "configPath": "C:\\Games\\Fluxora\\fluxora.json",
+                "executables": canonical,
+                "operationId": "op_executables_save"
+            }))
+        );
+        assert!(executables_saved_event_payload(
+            "executables.list",
+            &params,
+            &success,
+            "op_executables_list"
+        )
+        .is_none());
+        assert!(executables_saved_event_payload(
+            "executables.save",
+            &params,
+            &Err("write failed".to_string()),
+            "op_executables_save"
+        )
+        .is_none());
     }
 
     #[test]
@@ -12750,6 +12874,8 @@ mod tests {
             ("profiles.delete", BridgeLane::Main),
             ("executables.list", BridgeLane::Main),
             ("executables.save", BridgeLane::Main),
+            ("executables.updatePrimary", BridgeLane::Main),
+            ("executables.inspect", BridgeLane::Main),
             ("executables.launch", BridgeLane::Main),
             ("executables.completeManagedLaunch", BridgeLane::Main),
             ("executables.getIcon", BridgeLane::Main),

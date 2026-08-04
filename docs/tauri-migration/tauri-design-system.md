@@ -54,6 +54,14 @@ Inputs and selectors:
 
 - Text fields use the shared `input` rules, visible focus ring and no raw browser default styling.
 - Multi-option mode controls use `.segmented-control` or `.segmented-grid`, not ad-hoc text buttons.
+- `CustomSelect` may expose one optional footer action after a structural divider. The action is a
+  sibling of the `role="listbox"`, never a `role="option"`, and does not participate in option
+  selection. Arrow keys, Home and End remain option-only; Tab may move from the open selector to the
+  footer, Enter/Space activate it, and Escape closes the popup and restores trigger focus.
+- `ExecutableIdentity` is the shared executable icon/name presentation for launcher selectors and the
+  executable manager. Real icons use a stable `20px` or `24px` image box and `alt=""` because the
+  adjacent name supplies the accessible name. Empty paths, conversion failures and `img.onerror`
+  immediately use the central `app-window` SVG without changing row geometry.
 
 Multi-step workflows:
 
@@ -73,6 +81,20 @@ Tables and trees:
 - Large tables must render through `createVirtualWindow`.
 - File tree rows and archive tree rows use `content-visibility` and stable intrinsic row sizes.
 - Archive placement details render only a virtualized row window, even when the C++ core returns a large preview.
+- Pointer-reorderable rows use the shared `usePointerReorderSession` interaction layer: `5px` drag
+  threshold, pointer capture, hit testing through `document.elementFromPoint`, before/after placement,
+  edge autoscroll, Escape/pointer-cancel cleanup and interactive-child exclusion. The executable
+  manager adds roving focus and Alt+Arrow reordering with an `aria-live` position announcement. Its
+  pointer interaction uses the whole row and one compact desktop-style icon/name/path preview; there is
+  no separate grip icon.
+
+Executable Settings is a compact master/detail workbench: one ordered list above one selected-entry
+form, separated by a single line and followed by a sticky action footer. Only Save is gold/primary;
+Add, Delete and Cancel remain neutral. Selected rows use a restrained accent edge, not a filled card.
+The editor exposes Name, Arguments and Executable file; the compatible working-directory value remains
+internal, and name/icon inspection continues automatically after choosing or changing the executable.
+The surface has no gradients, glass, glow, decorative statistics or launch action. At `860x620`, long
+Russian/German strings, reduced motion and forced colors, all fields and footer actions remain reachable.
 
 Dialogs and overlays:
 

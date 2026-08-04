@@ -4,7 +4,6 @@ import {
   buildActionAvailability,
   buildHeaderCapabilityView,
   buildPathSaveRequest,
-  buildPrimaryExecutableList,
   directoryFromExecutablePath,
   emptyBuildPathDraft,
   fluxPackSummaryFacts,
@@ -94,34 +93,6 @@ describe('build workspace state', () => {
       profilesDirectory: project.paths?.profilesDirectory,
       overwriteDirectory: project.paths?.overwriteDirectory
     });
-  });
-
-  it('updates the primary executable entry for core persistence', () => {
-    const executables: FluxoraExecutable[] = [
-      {
-        id: 'game',
-        displayName: 'Skyrim',
-        executablePath: 'Old.exe',
-        arguments: '',
-        workingDirectory: '',
-        iconPath: '',
-        executableDisplayMetadata: { role: 'primary', isPrimary: true }
-      }
-    ];
-
-    const updated = buildPrimaryExecutableList(executables, {
-      ...emptyBuildPathDraft(project),
-      gameExecutablePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
-      gameDirectory: 'C:\\Games\\Skyrim'
-    });
-
-    expect(updated[0]).toMatchObject({
-      id: 'game',
-      executablePath: 'SkyrimSE.exe',
-      workingDirectory: '',
-      iconPath: ''
-    });
-    expect(executables[0].executablePath).toBe('Old.exe');
   });
 
   it('keeps build header actions capability-driven without requiring every bridge to report method keys', () => {

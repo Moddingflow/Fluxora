@@ -38,4 +38,11 @@ The renderer has no direct Node.js, filesystem or native access. UI code calls t
 
 Pending install rows are renderer orchestration state only. `use-pending-install-orchestrator.ts` creates/reuses the visible row before the native install promise, applies monotonic `FluxoraInstallConflictSnapshot` payloads from `operations.progress` or `mods.rebasePendingInstall`, and performs the temporary-to-permanent id swap or rollback. Exact file inventory, overwrite direction, profile order persistence and filesystem/SQLite commit remain C++ responsibilities.
 
+Executable Settings follows the same boundary. The renderer owns one local all-or-nothing draft and
+the shared pointer/keyboard reorder interactions. The Rust shell owns the project-scoped secondary
+window, close-request adapter, saved-event broadcast and narrow local icon URLs. C++ owns PE metadata,
+display-name fallback, icon extraction, canonical ordered persistence and stale-safe primary updates.
+`executables.inspect`, `executables.updatePrimary` and `executables.onSaved` remain typed
+`window.fluxora` contracts; executable arguments are never logged.
+
 Do not recreate the removed C# WPF product frontend. New product UI belongs here, with business behavior remaining in the C++ core.

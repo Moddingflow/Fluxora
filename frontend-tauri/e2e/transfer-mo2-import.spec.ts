@@ -495,6 +495,7 @@ test.beforeEach(async ({ page }) => {
       },
       windowControls: {
         close: async () => undefined,
+        forceClose: async () => undefined,
         minimize: async () => undefined,
         openBuildSettings: async () => undefined,
         openFilePreview: async () => undefined,

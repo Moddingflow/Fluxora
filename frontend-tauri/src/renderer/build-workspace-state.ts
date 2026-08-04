@@ -305,68 +305,6 @@ export const resolvePrimaryExecutablePath = (
   return project.gamePath;
 };
 
-const storedExecutablePath = (executablePath: string, gameDirectory: string): string => {
-  const normalizedDirectory = directoryFromExecutablePath(executablePath)
-    .replace(/[\\/]+$/, '')
-    .toLowerCase();
-  const normalizedGameDirectory = gameDirectory.replace(/[\\/]+$/, '').toLowerCase();
-  return normalizedDirectory && normalizedDirectory === normalizedGameDirectory
-    ? fileNameFromBuildPath(executablePath)
-    : executablePath;
-};
-
-export const buildPrimaryExecutableList = (
-  executables: FluxoraExecutable[],
-  draft: BuildPathDraft
-): FluxoraExecutable[] => {
-  const executablePath = draft.gameExecutablePath.trim();
-  const gameDirectory = draft.gameDirectory.trim();
-  const next = executables.map((entry) => ({ ...entry }));
-  let index = next.findIndex(
-    (entry) =>
-      entry.id.toLowerCase() === 'game' ||
-      Boolean(
-        entry.executableDisplayMetadata &&
-          typeof entry.executableDisplayMetadata === 'object' &&
-          ((entry.executableDisplayMetadata as { isPrimary?: unknown }).isPrimary === true ||
-            (entry.executableDisplayMetadata as { role?: unknown }).role === 'primary')
-      )
-  );
-
-  if (index < 0) {
-    index = 0;
-    next.unshift({
-      id: 'game',
-      displayName: fileNameFromBuildPath(executablePath).replace(/\.[^.]+$/, '') || 'Game',
-      executablePath: '',
-      arguments: '',
-      workingDirectory: '',
-      iconPath: '',
-      executableDisplayMetadata: {
-        id: 'game',
-        displayName: 'Game',
-        executableName: fileNameFromBuildPath(executablePath),
-        role: 'primary',
-        isPrimary: true
-      }
-    });
-  }
-
-  next[index] = {
-    ...next[index],
-    id: next[index].id || 'game',
-    displayName:
-      next[index].displayName ||
-      fileNameFromBuildPath(executablePath).replace(/\.[^.]+$/, '') ||
-      'Game',
-    executablePath: storedExecutablePath(executablePath, gameDirectory),
-    workingDirectory: '',
-    iconPath: ''
-  };
-
-  return next;
-};
-
 const formatFluxPackBytes = (bytes: number | undefined): string => {
   if (!Number.isFinite(bytes) || (bytes ?? 0) <= 0) {
     return '0 B';

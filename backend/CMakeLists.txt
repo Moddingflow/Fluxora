@@ -204,6 +204,7 @@ add_library(FluxoraCore SHARED
     src/Services/SignedRemoteDownloadTransport.cpp
     src/Services/EffectiveFileTreeService.cpp
     src/Services/ExecutableIconService.cpp
+    src/Services/ExecutableMetadataService.cpp
     src/Services/ExecutableService.cpp
     src/Services/ExternalConnectionService.cpp
     src/Services/FomodInstallerService.cpp

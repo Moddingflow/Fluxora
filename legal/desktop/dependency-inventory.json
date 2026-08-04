@@ -32,11 +32,11 @@
     },
     {
       "path": "backend/CMakeLists.txt",
-      "sha256": "0d0e3db10d9d7e9ae9a8e47e6e549d6af961807dcc5bd8ef7c39892b2b746b4e"
+      "sha256": "48c88cfcefce4aeb336b3e4f58d000a2996714fc80e57894a5b4d20e256487d7"
     },
     {
       "path": "backend/tests/CMakeLists.txt",
-      "sha256": "8e3a316f8d966e5e7903c9a7e11142e5a0e761d87c9b268345c8e91e4e82a36f"
+      "sha256": "e45adae1a3ead46e8d4854d4cdd836ed9562e96f8920fa4bc2401ce91d185565"
     },
     {
       "path": "frontend-tauri/speech/manifest.v1.json",
@@ -76,7 +76,7 @@
     },
     {
       "path": "Icons/provenance.json",
-      "sha256": "6c8128d1fb59e48b307d093fa29f7e73923260dd97ce00c71862359faddb71f8"
+      "sha256": "40bcb1c7fb0697feb7306d5734e787c109ebc64e140f055f85bb54522f4800c5"
     },
     {
       "path": "Icons/installer-updater-icons.json",
@@ -84,7 +84,7 @@
     },
     {
       "path": "Icons/README.md",
-      "sha256": "b91797469e9d64d3ab044f1313332323bb7d80159f258478477797eac24396ca"
+      "sha256": "97625c44b5e2a69693b8555f9853ebe7e2829b2ee0a845c358de6e3c98dfae77"
     },
     {
       "path": "Icons/FLUXORA-ASSET-NOTICE.txt",
@@ -3297,11 +3297,11 @@
   "icons": {
     "sourceRoot": "Icons",
     "verifiedGroupCount": 5,
-    "verifiedFileCount": 90,
+    "verifiedFileCount": 91,
     "projectOwnedFileCount": 3,
     "quarantinedFileCount": 1,
     "installerUpdaterAllowlistedCount": 13,
-    "provenanceSha256": "6c8128d1fb59e48b307d093fa29f7e73923260dd97ce00c71862359faddb71f8",
+    "provenanceSha256": "40bcb1c7fb0697feb7306d5734e787c109ebc64e140f055f85bb54522f4800c5",
     "installerUpdaterAllowlistSha256": "447c1183919421044a6580c4ab26d2943b41f18bf4321a85029caadc56b11a5f"
   },
   "buildTestOnlyTools": [

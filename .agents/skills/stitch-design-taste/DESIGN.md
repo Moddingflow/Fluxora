@@ -197,6 +197,31 @@ Never default to:
 - Destructive confirmation names the affected object and consequence.
 - Menus contain actions, not paragraphs or miniature dashboards.
 - Popovers and menus close predictably on Escape, outside click, and completed action.
+- A select may have one compact footer action only when it opens a broader management workflow. Keep
+  that action outside listbox/option semantics, separate it with one line, allow Tab to reach it, and
+  preserve option-only Arrow/Home/End behavior.
+- Executable identity is one reusable visual contract: stable `20–24px` icon geometry, adjacent
+  ellipsized name, decorative real-image `alt=""`, and the central provenance-tracked `app-window`
+  fallback on missing path, conversion failure or image error.
+
+### Executable management workbench
+
+- Use the fixed list-over-editor composition: a dense reorderable list above the selected-entry form,
+  one divider between them, and a sticky footer.
+- Rows remain `44–48px`, expose the full path by tooltip, and use only a thin restrained gold selection
+  or drop signal. Pointer drag adds one compact desktop-style preview that follows the pointer and reuses
+  the executable icon/name/path identity; the source row dims and the placement line remains visible.
+  The preview has no handle icon, spring motion or decorative content.
+- The editor exposes only Name, Arguments and Executable file. Working-directory compatibility remains
+  internal and path-derived for new entries; it is not a user-facing field or action.
+- Add/Delete belong on the footer left; Cancel/Save belong on the right; Save is the only primary gold
+  action. Launch remains in the main build header.
+- Loading preserves final row geometry, empty state is one sentence plus Add, recoverable errors keep
+  the draft visible, and dirty close/delete each use one compact confirmation.
+- Pointer and keyboard reorder share the same immutable order calculation. Pointer behavior uses the
+  shared `usePointerReorderSession`; keyboard behavior uses roving focus, Alt+Arrow and `aria-live`.
+- At the `860x620` minimum, 200% text zoom, long RU/DE copy, reduced motion and forced colors, the
+  ordered list, form and sticky footer must remain usable without decorative containers.
 
 ## 6. Motion and Feedback
 

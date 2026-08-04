@@ -88,7 +88,7 @@ describe('redesign foundations', () => {
       ['frontend-tauri', 'src', 'renderer', 'assets', 'brand', 'Fluxora.ico'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'images', 'SkyrimSpecialEditionIcon.png'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'images', 'mod-organizer-2.png'],
-      ['frontend-tauri', 'src', 'renderer', 'assets', 'images', 'app-icon-placeholder.png'],
+      ['Icons', 'app-window.svg'],
       ['Icons', 'window-close.svg'],
       ['Icons', 'settings.svg'],
       ['Icons', 'provenance.json'],

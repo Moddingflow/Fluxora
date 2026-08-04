@@ -145,12 +145,13 @@ Upstream: `twbs/icons`, tag `v1.13.1`, path
 ## Tabler icon
 
 Upstream: `tabler/tabler-icons`, tag `v3.44.0`, path
-`icons/outline/info-circle.svg`. Licence: MIT in
+`icons/outline/`. Licence: MIT in
 `TABLER-ICONS-LICENSE.txt`.
 
-| Fluxora filename | Actual use |
-|---|---|
-| `info-circle.svg` | Plugin-count information popover |
+| Fluxora filename | Upstream path | Actual use |
+|---|---|---|
+| `app-window.svg` | `icons/outline/app-window.svg` | Executable identity fallback |
+| `info-circle.svg` | `icons/outline/info-circle.svg` | Plugin-count information popover |
 
 ## Material Design conflict icons
 

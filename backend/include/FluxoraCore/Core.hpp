@@ -17,6 +17,7 @@ namespace fluxora
     class EffectiveFileTreeService;
     class ExecutableService;
     class ExecutableIconService;
+    class ExecutableMetadataService;
     class ExternalConnectionService;
     class FluxPackService;
     class GrassCacheService;
@@ -63,6 +64,7 @@ namespace fluxora
         [[nodiscard]] BodySlideIntegrationService& bodySlideIntegration() noexcept;
         [[nodiscard]] LodGeneratorIntegrationService& lodGeneratorIntegration() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
+        [[nodiscard]] ExecutableMetadataService& executableMetadata() noexcept;
         [[nodiscard]] ExternalConnectionService& externalConnections() noexcept;
         [[nodiscard]] IModdingFlowConnectionCapability* moddingFlowConnectionCapability() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
@@ -97,6 +99,7 @@ namespace fluxora
         std::unique_ptr<InstallOperationService> installs_;
         std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;
         std::unique_ptr<ExecutableIconService> executableIcons_;
+        std::unique_ptr<ExecutableMetadataService> executableMetadata_;
         std::unique_ptr<ExecutableService> executables_;
         std::unique_ptr<BodySlideIntegrationService> bodySlideIntegration_;
         std::unique_ptr<LodGeneratorIntegrationService> lodGeneratorIntegration_;

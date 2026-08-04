@@ -60,6 +60,7 @@ const defaultProps = {
   onExecutableChange: noop,
   onGenerateGrassCache: noop,
   onLaunch: noop,
+  onManageExecutables: noop,
   onProfileChange: noop,
   onSettings: noop,
   profileOptions: ['Default', 'Testing'],

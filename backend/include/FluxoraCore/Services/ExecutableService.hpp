@@ -123,6 +123,14 @@ namespace fluxora
             const std::filesystem::path& configPath,
             const std::vector<GameExecutable>& executables) const;
 
+        [[nodiscard]] std::vector<GameExecutable> updatePrimaryExecutable(
+            const std::filesystem::path& configPath,
+            const std::filesystem::path& executablePath) const;
+
+        [[nodiscard]] std::filesystem::path resolveProjectExecutablePath(
+            const std::filesystem::path& configPath,
+            const std::filesystem::path& executablePath) const;
+
         [[nodiscard]] GameExecutableLaunchResult launchProjectExecutable(
             const std::filesystem::path& configPath,
             std::wstring_view executableId,

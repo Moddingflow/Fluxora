@@ -310,6 +310,22 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Returns the complete canonical executable list after changing only the
+    // primary entry against the latest persisted manifest.
+    FLUXORA_CORE_API int fluxora_update_primary_game_executable(
+        const wchar_t* configPath,
+        const wchar_t* executablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Resolves executablePath against configPath and returns
+    // { "executablePath", "suggestedDisplayName", "displayNameSource", "iconPath" }.
+    FLUXORA_CORE_API int fluxora_inspect_executable(
+        const wchar_t* configPath,
+        const wchar_t* executablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_complete_managed_executable_launch(
         const wchar_t* sessionId,
         const wchar_t* outcome,

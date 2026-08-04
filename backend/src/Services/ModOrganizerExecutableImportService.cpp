@@ -1567,11 +1567,23 @@ namespace fluxora
             executable.arguments = remapArguments(std::move(executable.arguments), mappings, copyRoots);
         }
 
-        if (const std::optional<GameExecutable> defaultExecutable = defaultGameExecutable(context);
-            defaultExecutable.has_value() &&
-            !hasExecutablePath(executables, defaultExecutable->executablePath))
+        if (std::optional<GameExecutable> defaultExecutable = defaultGameExecutable(context);
+            defaultExecutable.has_value())
         {
-            executables.insert(executables.begin(), defaultExecutable.value());
+            const MappedPath mappedDefault = mapConfiguredPath(
+                defaultExecutable->executablePath,
+                context,
+                mappings,
+                true);
+            if (!mappedDefault.text.empty())
+            {
+                defaultExecutable->executablePath = mappedDefault.text;
+            }
+
+            if (!hasExecutablePath(executables, defaultExecutable->executablePath))
+            {
+                executables.insert(executables.begin(), defaultExecutable.value());
+            }
         }
 
         ModOrganizerExecutableImportPlan plan;

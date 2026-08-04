@@ -10,6 +10,7 @@
 #include "FluxoraCore/Services/InstallOperationService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
+#include "FluxoraCore/Services/ExecutableMetadataService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/ExternalConnectionService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
@@ -58,6 +59,7 @@ namespace fluxora
           installs_(std::make_unique<InstallOperationService>(*logger_, *downloads_)),
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
+          executableMetadata_(std::make_unique<ExecutableMetadataService>()),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
           bodySlideIntegration_(std::make_unique<BodySlideIntegrationService>(*logger_, *buildPathSettings_)),
           lodGeneratorIntegration_(std::make_unique<LodGeneratorIntegrationService>(*logger_, *buildPathSettings_)),
@@ -275,6 +277,11 @@ namespace fluxora
     ExecutableIconService& Core::executableIcons() noexcept
     {
         return *executableIcons_;
+    }
+
+    ExecutableMetadataService& Core::executableMetadata() noexcept
+    {
+        return *executableMetadata_;
     }
 
     BodySlideIntegrationService& Core::bodySlideIntegration() noexcept

@@ -21,12 +21,21 @@ export interface CustomSelectOption {
   value: string;
 }
 
+export interface CustomSelectFooterAction {
+  ariaLabel: string;
+  disabled?: boolean;
+  icon?: ReactNode;
+  label: ReactNode;
+  onActivate: () => void;
+}
+
 export interface CustomSelectProps {
   ariaLabel: string;
   className?: string;
   density?: 'regular' | 'compact';
   disabled?: boolean;
   emptyLabel?: ReactNode;
+  footerAction?: CustomSelectFooterAction;
   menuMaxHeight?: number;
   onValueChange?: (value: string) => void;
   options: readonly CustomSelectOption[];
@@ -48,6 +57,7 @@ const menuOptionGap = 4;
 const menuMinimumHeight = 96;
 const regularMenuOptionHeight = 42;
 const compactMenuOptionHeight = 32;
+const footerActionHeight = 41;
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -60,6 +70,7 @@ export function CustomSelect({
   density = 'regular',
   disabled = false,
   emptyLabel,
+  footerAction,
   menuMaxHeight = 330,
   onValueChange,
   options,
@@ -69,6 +80,7 @@ export function CustomSelect({
   const resolvedEmptyLabel = emptyLabel ?? t('common.noOptions');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const footerActionRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const enabledOptions = options.filter((option) => !option.disabled);
@@ -99,7 +111,8 @@ export function CustomSelect({
       menuBorderHeight +
       menuVerticalPadding +
       Math.max(1, options.length) * optionHeight +
-      Math.max(0, options.length - 1) * menuOptionGap;
+      Math.max(0, options.length - 1) * menuOptionGap +
+      (footerAction ? footerActionHeight : 0);
     const preferredHeight = Math.min(
       menuMaxHeight,
       Math.max(Math.min(menuMinimumHeight, contentHeight), contentHeight)
@@ -124,7 +137,7 @@ export function CustomSelect({
     );
 
     setMenuPosition({ height, left, top, width });
-  }, [density, menuMaxHeight, options.length]);
+  }, [density, footerAction, menuMaxHeight, options.length]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -169,7 +182,7 @@ export function CustomSelect({
   }, [isOpen, updateMenuPosition]);
 
   const openList = () => {
-    if (disabled || options.length === 0) {
+    if (disabled || (options.length === 0 && !footerAction)) {
       return;
     }
 
@@ -193,6 +206,24 @@ export function CustomSelect({
 
     closeList();
     buttonRef.current?.focus();
+  };
+
+  const activateFooterAction = () => {
+    if (!footerAction || footerAction.disabled) {
+      return;
+    }
+
+    closeList();
+    buttonRef.current?.focus();
+    window.requestAnimationFrame(() => footerAction.onActivate());
+  };
+
+  const handleFooterKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeList();
+      buttonRef.current?.focus();
+    }
   };
 
   const moveHighlight = (offset: number) => {
@@ -263,10 +294,16 @@ export function CustomSelect({
         if (isOpen) {
           event.preventDefault();
           closeList();
+          buttonRef.current?.focus();
         }
         break;
       case 'Tab':
-        closeList();
+        if (isOpen && footerAction && !footerAction.disabled) {
+          event.preventDefault();
+          footerActionRef.current?.focus();
+        } else {
+          closeList();
+        }
         break;
       default:
         break;
@@ -312,9 +349,7 @@ export function CustomSelect({
               className="flx-custom-select__menu"
               data-density={density}
               data-open={isOpen ? 'true' : 'false'}
-              id={listboxId}
               ref={menuRef}
-              role="listbox"
               style={{
                 height: menuPosition.height,
                 left: menuPosition.left,
@@ -322,56 +357,85 @@ export function CustomSelect({
                 width: menuPosition.width
               }}
             >
-              {options.length === 0 ? (
-                <button
-                  className="flx-custom-select__option"
-                  data-disabled="true"
-                  disabled
-                  role="option"
-                  tabIndex={-1}
-                  type="button"
-                >
-                  <span className="flx-custom-select__option-copy">
-                    <strong>{resolvedEmptyLabel}</strong>
-                  </span>
-                  <Check size={15} aria-hidden="true" />
-                </button>
-              ) : (
-                options.map((option) => {
-                  const isSelected = option.value === selectedValue;
-                  const isHighlighted = option.value === highlightedValue;
-                  const text =
-                    option.searchText ?? optionLabelText(option.label) ?? option.value;
+              <div
+                aria-label={ariaLabel}
+                className="flx-custom-select__listbox"
+                id={listboxId}
+                role="listbox"
+              >
+                {options.length === 0 ? (
+                  <button
+                    aria-selected="false"
+                    className="flx-custom-select__option"
+                    data-disabled="true"
+                    disabled
+                    role="option"
+                    tabIndex={-1}
+                    type="button"
+                  >
+                    <span className="flx-custom-select__option-copy">
+                      <strong>{resolvedEmptyLabel}</strong>
+                    </span>
+                    <Check size={15} aria-hidden="true" />
+                  </button>
+                ) : (
+                  options.map((option) => {
+                    const isSelected = option.value === selectedValue;
+                    const isHighlighted = option.value === highlightedValue;
+                    const text =
+                      option.searchText ?? optionLabelText(option.label) ?? option.value;
 
-                  return (
-                    <button
-                      aria-selected={isSelected}
-                      className="flx-custom-select__option"
-                      data-disabled={option.disabled ? 'true' : 'false'}
-                      data-highlighted={isHighlighted ? 'true' : 'false'}
-                      data-selected={isSelected ? 'true' : 'false'}
-                      disabled={option.disabled}
-                      id={`${listboxId}-${option.value}`}
-                      key={option.value}
-                      onClick={() => chooseOption(option)}
-                      onMouseEnter={() => {
-                        if (!option.disabled) {
-                          setHighlightedValue(option.value);
-                        }
-                      }}
-                      role="option"
-                      tabIndex={-1}
-                      title={text || undefined}
-                      type="button"
-                    >
-                      <span className="flx-custom-select__option-copy">
-                        <strong>{option.label}</strong>
+                    return (
+                      <button
+                        aria-selected={isSelected}
+                        className="flx-custom-select__option"
+                        data-disabled={option.disabled ? 'true' : 'false'}
+                        data-highlighted={isHighlighted ? 'true' : 'false'}
+                        data-selected={isSelected ? 'true' : 'false'}
+                        disabled={option.disabled}
+                        id={`${listboxId}-${option.value}`}
+                        key={option.value}
+                        onClick={() => chooseOption(option)}
+                        onMouseEnter={() => {
+                          if (!option.disabled) {
+                            setHighlightedValue(option.value);
+                          }
+                        }}
+                        role="option"
+                        tabIndex={-1}
+                        title={text || undefined}
+                        type="button"
+                      >
+                        <span className="flx-custom-select__option-copy">
+                          <strong>{option.label}</strong>
+                        </span>
+                        <Check size={15} aria-hidden="true" />
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              {footerAction ? (
+                <div className="flx-custom-select__footer">
+                  <button
+                    aria-label={footerAction.ariaLabel}
+                    className="flx-custom-select__footer-action"
+                    disabled={footerAction.disabled}
+                    onClick={activateFooterAction}
+                    onKeyDown={handleFooterKeyDown}
+                    ref={footerActionRef}
+                    tabIndex={isOpen && !footerAction.disabled ? 0 : -1}
+                    type="button"
+                  >
+                    {footerAction.icon ? (
+                      <span className="flx-custom-select__footer-icon" aria-hidden="true">
+                        {footerAction.icon}
                       </span>
-                      <Check size={15} aria-hidden="true" />
-                    </button>
-                  );
-                })
-              )}
+                    ) : null}
+                    <span>{footerAction.label}</span>
+                  </button>
+                </div>
+              ) : null}
             </div>,
           document.body
         )

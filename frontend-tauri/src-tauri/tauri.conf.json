@@ -39,7 +39,10 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**/.fomod-previews/**/*"],
+          "allow": [
+            "**/.fomod-previews/**/*",
+            "$CONFIG/Fluxora/cache/executable-icons/**/*.png"
+          ],
           "requireLiteralLeadingDot": true
         }
       },

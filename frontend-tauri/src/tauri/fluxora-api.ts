@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview, type DragDropEvent as TauriDragDropEvent } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import type {
   FluxoraApi,
@@ -15,8 +16,10 @@ import type {
   FluxoraDownloadDuplicateChoice,
   FluxoraDownloadMutationResult,
   FluxoraExecutable,
+  FluxoraExecutableInspection,
   FluxoraExecutableIconResult,
   FluxoraExecutableLaunchResult,
+  FluxoraExecutablesSavedEvent,
   FluxoraExternalConnectionSnapshot,
   FluxoraExternalConnectionState,
   FluxoraExternalConnectionStatus,
@@ -149,6 +152,9 @@ export interface IpcInvoker {
   invoke: (channel: FluxoraIpcChannel, ...args: unknown[]) => Promise<unknown>;
   on?: (channel: FluxoraIpcChannel, listener: (...args: unknown[]) => void) => void;
   removeListener?: (channel: FluxoraIpcChannel, listener: (...args: unknown[]) => void) => void;
+  onCloseRequested?: (
+    listener: () => boolean | Promise<boolean>
+  ) => Promise<() => void>;
 }
 
 const invokeTyped = async <T>(
@@ -441,6 +447,24 @@ const toFomodPreviewImageUrl = (imagePath: string): string => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
     ? convertFileSrc(normalizedPath)
     : normalizedPath;
+};
+
+const toExecutableIconUrl = (iconPath: string): string => {
+  const normalizedPath = iconPath.trim();
+  if (!normalizedPath || /^asset:/i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+  if (/^(?:blob|data|https?):/i.test(normalizedPath)) {
+    return '';
+  }
+
+  try {
+    return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+      ? convertFileSrc(normalizedPath)
+      : normalizedPath;
+  } catch {
+    return '';
+  }
 };
 
 const fluxPackExportRequestParams = (rawRequest: unknown): Record<string, unknown> => {
@@ -1608,6 +1632,33 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         executables,
         request
       ),
+    updatePrimary: (
+      configPath: string,
+      executablePath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraExecutable[]>(
+        ipc,
+        FluxoraIpcChannels.executablesUpdatePrimary,
+        configPath,
+        executablePath,
+        request
+      ),
+    inspect: (
+      configPath: string,
+      executablePath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraExecutableInspection>(
+        ipc,
+        FluxoraIpcChannels.executablesInspect,
+        configPath,
+        executablePath,
+        request
+      ),
+    onSaved: (callback: (event: FluxoraExecutablesSavedEvent) => void) =>
+      listenTyped(ipc, FluxoraIpcChannels.executablesSaved, callback),
+    toIconUrl: toExecutableIconUrl,
     launch: (
       configPath: string,
       executableId: string,
@@ -2305,11 +2356,21 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   },
   windowControls: {
     close: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowClose),
+    forceClose: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowForceClose),
+    onCloseRequested: (listener: () => boolean | Promise<boolean>) =>
+      ipc.onCloseRequested?.(listener) ?? Promise.resolve(() => undefined),
     minimize: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowMinimize),
     openBuildSettings: (configPath: string, buildName: string) =>
       invokeTyped<void>(
         ipc,
         FluxoraIpcChannels.windowOpenBuildSettings,
+        configPath,
+        buildName
+      ),
+    openExecutableSettings: (configPath: string, buildName: string) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.windowOpenExecutableSettings,
         configPath,
         buildName
       ),
@@ -3119,6 +3180,7 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.buildSettingsNotifyPathsSaved:
       case FluxoraIpcChannels.uiLog:
       case FluxoraIpcChannels.windowClose:
+      case FluxoraIpcChannels.windowForceClose:
       case FluxoraIpcChannels.windowMinimize:
       case FluxoraIpcChannels.windowOpenBuildSettings:
       case FluxoraIpcChannels.windowOpenFilePreview:
@@ -3759,6 +3821,9 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.windowClose:
         return invoke('fluxora_window_close');
 
+      case FluxoraIpcChannels.windowForceClose:
+        return invoke('fluxora_window_force_close');
+
       case FluxoraIpcChannels.windowSetTaskbarProgress:
         return invoke('fluxora_window_set_taskbar_progress', {
           state: taskbarProgressState(args[0])
@@ -3766,6 +3831,12 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.windowOpenBuildSettings:
         return invoke('fluxora_open_build_settings_window', {
+          configPath: optionalString(args[0]),
+          buildName: optionalString(args[1])
+        });
+
+      case FluxoraIpcChannels.windowOpenExecutableSettings:
+        return invoke('fluxora_open_executable_settings_window', {
           configPath: optionalString(args[0]),
           buildName: optionalString(args[1])
         });
@@ -4465,6 +4536,21 @@ const createTauriInvoker = (): IpcInvoker => ({
         );
       case FluxoraIpcChannels.executablesSave:
         return bridgeRequest('executables.save', { configPath: args[0], executablesJson: JSON.stringify(args[1]) }, requestWithOperationId(args[2], 'executables_save'));
+      case FluxoraIpcChannels.executablesUpdatePrimary:
+        return bridgeRequest(
+          'executables.updatePrimary',
+          { configPath: args[0], executablePath: args[1] },
+          requestWithOperationId(args[2], 'executables_update_primary')
+        );
+      case FluxoraIpcChannels.executablesInspect: {
+        const request = requestWithOperationId(args[2], 'executables_inspect');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'executables.inspect',
+          { configPath: args[0], executablePath: args[1] },
+          request
+        );
+        return withOperationId(data, request, 'executables_inspect');
+      }
       case FluxoraIpcChannels.executablesGetIcon: {
         const request = requestWithOperationId(args[1], 'executables_icon');
         const data = await bridgeRequest<Record<string, unknown>>('executables.getIcon', { executablePath: args[0] }, request);
@@ -4824,7 +4910,19 @@ const createTauriInvoker = (): IpcInvoker => ({
     const unlisten = eventUnlisteners.get(key);
     eventUnlisteners.delete(key);
     void unlisten?.then((dispose) => dispose());
-  }
+  },
+  onCloseRequested: async (listener: () => boolean | Promise<boolean>) =>
+    getCurrentWindow().onCloseRequested(async (event) => {
+      let allowClose = false;
+      try {
+        allowClose = await listener();
+      } catch {
+        allowClose = false;
+      }
+      if (!allowClose) {
+        event.preventDefault();
+      }
+    })
 });
 
 export const createTauriFluxoraApi = (): FluxoraApi =>

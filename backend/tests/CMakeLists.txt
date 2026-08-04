@@ -3,6 +3,21 @@ include(FetchContent)
 if(FLUXORA_ALLOW_SYSTEM_DEPENDENCIES)
     find_package(GTest CONFIG QUIET)
 endif()
+
+if(WIN32)
+    add_executable(ExecutableMetadataDescriptionFixture
+        ExecutableMetadataFixture.cpp
+        ExecutableMetadataDescriptionFixture.rc)
+    add_executable(ExecutableMetadataProductFixture
+        ExecutableMetadataFixture.cpp
+        ExecutableMetadataProductFixture.rc)
+    target_compile_features(ExecutableMetadataDescriptionFixture PRIVATE cxx_std_20)
+    target_compile_features(ExecutableMetadataProductFixture PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(ExecutableMetadataDescriptionFixture PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(ExecutableMetadataProductFixture PRIVATE /W4 /permissive- /utf-8)
+    endif()
+endif()
 if(NOT TARGET GTest::gtest_main)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
@@ -27,6 +42,8 @@ add_executable(FluxoraCoreTests
     DownloadServiceTests.cpp
     DownloadTransferLimiterTests.cpp
     EffectiveFileTreeServiceTests.cpp
+    ExecutableMetadataServiceTests.cpp
+    ExecutablePrimaryUpdateTests.cpp
     ExecutableServiceTests.cpp
     ExternalConnectionServiceTests.cpp
     PgPatcherExecutableServiceTests.cpp
@@ -112,6 +129,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/SignedRemoteDownloadTransport.cpp
     ../src/Services/EffectiveFileTreeService.cpp
     ../src/Services/ExecutableIconService.cpp
+    ../src/Services/ExecutableMetadataService.cpp
     ../src/Services/ExecutableService.cpp
     ../src/Services/ExternalConnectionService.cpp
     ../src/Services/FomodInstallerService.cpp
@@ -187,6 +205,10 @@ if(FLUXORA_ENABLE_MODDINGFLOW_DOWNLOAD_PROVIDER)
 endif()
 
 if(WIN32)
+    add_dependencies(
+        FluxoraCoreTests
+        ExecutableMetadataDescriptionFixture
+        ExecutableMetadataProductFixture)
     target_sources(FluxoraCoreTests
         PRIVATE
             VfsTreeTests.cpp

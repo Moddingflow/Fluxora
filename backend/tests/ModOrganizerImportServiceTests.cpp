@@ -139,6 +139,32 @@ namespace fluxora::tests
         EXPECT_EQ(plan.executables.front().executablePath.find(L'\t'), std::wstring::npos);
     }
 
+    TEST(ModOrganizerImportServiceTests, DefaultGameExecutableKeepsFluxoraRelativeGameDirectory)
+    {
+        TempDirectory temp;
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path game = source / L"Stock Game";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+
+        ModOrganizerExecutableImportContext context;
+        context.sourceDirectory = source;
+        context.modsDirectory = source / L"mods";
+        context.profilesDirectory = source / L"profiles";
+        context.downloadsDirectory = source / L"downloads";
+        context.overwriteDirectory = source / L"overwrite";
+        context.gamePath = game;
+        context.targetProjectDirectory = temp.path() / L"Imported";
+        context.templateId = L"skyrimse";
+
+        const ModOrganizerExecutableImportPlan plan =
+            ModOrganizerExecutableImportService::createPlan({}, context);
+
+        ASSERT_EQ(plan.executables.size(), 1U);
+        EXPECT_EQ(
+            std::filesystem::path(plan.executables.front().executablePath),
+            std::filesystem::path(L"Stock Game") / L"SkyrimSE.exe");
+    }
+
     TEST(ModOrganizerImportServiceTests, AnalyzeUsesSelectedProfileAndCountsSeparators)
     {
         TempDirectory temp;

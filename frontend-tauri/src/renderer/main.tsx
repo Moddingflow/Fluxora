@@ -20,11 +20,18 @@ const LazyAppUpdateWindow = React.lazy(async () => {
   return { default: module.AppUpdateWindow };
 });
 
+const LazyExecutableSettingsWindow = React.lazy(async () => {
+  const module = await import('./features/executables/ExecutableSettingsWindow');
+  return { default: module.ExecutableSettingsWindow };
+});
+
 installTabFocusNavigation();
 
 const windowMode = new URLSearchParams(window.location.search).get('window');
 const RendererRoot = windowMode === 'text-editor'
   ? LazyTextEditorWindow
+  : windowMode === 'executable-settings'
+    ? LazyExecutableSettingsWindow
   : windowMode === 'app-update'
     ? LazyAppUpdateWindow
     : LazyApp;

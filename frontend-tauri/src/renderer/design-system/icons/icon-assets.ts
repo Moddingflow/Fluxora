@@ -1,5 +1,6 @@
 import alertTriangleIcon from '@fluxora-icons/alert-triangle.svg';
 import aiMicIcon from '@fluxora-icons/ai-mic.svg';
+import appWindowIcon from '@fluxora-icons/app-window.svg';
 import fluxoraMarkIcon from '@fluxora-icons/Fluxora.svg';
 import backIcon from '@fluxora-icons/back.svg';
 import botIcon from '@fluxora-icons/bot.svg';
@@ -76,6 +77,7 @@ import windowRestoreIcon from '@fluxora-icons/window-restore.svg';
 export const ICON_FILENAMES = {
   'alert-triangle': 'alert-triangle.svg',
   'ai-mic': 'ai-mic.svg',
+  'app-window': 'app-window.svg',
   back: 'back.svg',
   bot: 'bot.svg',
   box: 'box.svg',
@@ -155,6 +157,7 @@ export type IconName = keyof typeof ICON_FILENAMES;
 export const ICON_ASSETS: Record<IconName, string> = {
   'alert-triangle': alertTriangleIcon,
   'ai-mic': aiMicIcon,
+  'app-window': appWindowIcon,
   back: backIcon,
   bot: botIcon,
   box: boxIcon,

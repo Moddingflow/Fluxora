@@ -145,6 +145,7 @@ import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace'
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
 import { watchLaunchProcessSession } from './features/executables/launch-process-session';
 import { managedExecutableDisplay } from './features/executables/managed-executable-display';
+import { writeExecutableSettingsBootstrap } from './features/executables/executable-settings-bootstrap';
 import {
   BUILD_RENAME_NAME_MAX_LENGTH,
   BuildRenameDialog,
@@ -331,7 +332,6 @@ import {
   executableTitle,
   executablesCapabilityView,
   executablesWorkspaceReducer,
-  filterExecutables,
   filterProfileNames,
   isDefaultProfileName,
   profilesCapabilityView,
@@ -367,7 +367,6 @@ import {
 import {
   buildPathSaveRequest,
   buildHeaderCapabilityView,
-  buildPrimaryExecutableList,
   directoryFromExecutablePath,
   draftFromBuildPathSettings,
   emptyBuildPathDraft,
@@ -558,7 +557,6 @@ type RouteId =
   | 'plugins'
   | 'downloads'
   | 'profiles'
-  | 'executables'
   | 'settings';
 
 const buildScopedAiRoutes = new Set<RouteId>([
@@ -567,8 +565,7 @@ const buildScopedAiRoutes = new Set<RouteId>([
   'mods',
   'plugins',
   'downloads',
-  'profiles',
-  'executables'
+  'profiles'
 ]);
 const aiRollbackCheckpointResetMarker = 'fluxora.ai.rollback-checkpoints.v1';
 
@@ -1831,11 +1828,7 @@ export const App = () => {
     emptyExecutablesWorkspaceState
   );
   const [executablesBusyLabel, setExecutablesBusyLabel] = useState<string | null>(null);
-  const [executableDraft, setExecutableDraft] = useState<FluxoraExecutable | null>(null);
-  const [executableLaunchResult, setExecutableLaunchResult] =
-    useState<FluxoraExecutableLaunchResult | null>(null);
   const [launchSplash, setLaunchSplash] = useState<LaunchSplashState | null>(null);
-  const [executableDeleteArmedId, setExecutableDeleteArmedId] = useState<string | null>(null);
   const [installDialog, setInstallDialog] = useState<InstallDialogState | null>(null);
   const installDetectionPromiseRef = useRef<{
     operationId: string;
@@ -2255,7 +2248,6 @@ export const App = () => {
   const deferredPluginSearchText = useDeferredValue(pluginsWorkspace.searchText);
   const deferredDownloadSearchText = useDeferredValue(downloadsWorkspace.searchText);
   const deferredProfileSearchText = useDeferredValue(profilesWorkspace.searchText);
-  const deferredExecutableSearchText = useDeferredValue(executablesWorkspace.searchText);
 
   const prepareModSearchScroll = useSearchScrollRestoration({
     renderedSearchText: deferredModSearchText,
@@ -2591,11 +2583,6 @@ export const App = () => {
   const filteredProfileItems = useMemo(
     () => filterProfileNames(profilesWorkspace.items, deferredProfileSearchText),
     [profilesWorkspace.items, deferredProfileSearchText]
-  );
-
-  const filteredExecutableItems = useMemo(
-    () => filterExecutables(executablesWorkspace.items, deferredExecutableSearchText),
-    [executablesWorkspace.items, deferredExecutableSearchText]
   );
 
   const selectedExecutableItem = useMemo(
@@ -6785,181 +6772,6 @@ export const App = () => {
     }
   };
 
-  const saveExecutableList = async (
-    executables: FluxoraExecutable[],
-    busyText: string,
-    preferredSelection?: string
-  ): Promise<FluxoraExecutable[] | null> => {
-    if (!selectedProject || !executableCapabilities.bridgeAvailable) {
-      return null;
-    }
-
-    const operationId = createRendererOperationId('executables_save');
-    setExecutablesBusyLabel(busyText);
-    setMessage(null);
-
-    try {
-      const saved = await window.fluxora.executables.save(
-        selectedProject.configPath,
-        executables,
-        { operationId }
-      );
-      setExecutableDeleteArmedId(null);
-      dispatchExecutablesWorkspace({ type: 'items-loaded', items: saved });
-      cacheProjectExecutables(selectedProject, saved);
-      const preferred =
-        saved.find(
-          (entry) => entry.id === preferredSelection || entry.executablePath === preferredSelection
-        ) ?? saved[0] ?? null;
-      if (preferred) {
-        dispatchExecutablesWorkspace({ type: 'selected', id: preferred.id });
-      }
-      setMessage(t('app.message.executablesSaved'));
-      return saved;
-    } catch (error) {
-      setMessage(errorMessage(error));
-      return null;
-    } finally {
-      setExecutablesBusyLabel(null);
-    }
-  };
-
-  const addExecutable = async () => {
-    if (!selectedProject) {
-      return;
-    }
-
-    const picked = await window.fluxora.dialogs.pickExecutable(
-      t('app.dialog.addExecutable'),
-      selectedProject.gamePath
-    );
-    if (picked.canceled || !picked.path) {
-      return;
-    }
-
-    const fileName = fileNameFromPath(picked.path);
-    const displayName = fileName.replace(/\.[^.]+$/, '') || t('app.ui.executable');
-    await saveExecutableList(
-      [
-        ...executablesWorkspace.items,
-        {
-          id: '',
-          displayName,
-          executablePath: picked.path,
-          arguments: '',
-          workingDirectory: '',
-          iconPath: ''
-        }
-      ],
-      t('app.busy.addingExecutable'),
-      picked.path
-    );
-  };
-
-  const deleteExecutable = async () => {
-    if (!selectedExecutableItem) {
-      return;
-    }
-
-    if (executableDeleteArmedId !== selectedExecutableItem.id) {
-      setExecutableDeleteArmedId(selectedExecutableItem.id);
-      setMessage(t('app.message.executableDeleteAgain', {
-        name: executableTitle(selectedExecutableItem, appLocale)
-      }));
-      return;
-    }
-
-    await saveExecutableList(
-      executablesWorkspace.items.filter((entry) => entry.id !== selectedExecutableItem.id),
-      t('app.busy.deletingExecutable')
-    );
-  };
-
-  const saveExecutableDraft = async () => {
-    if (!selectedExecutableItem || !executableDraft) {
-      return;
-    }
-
-    await saveExecutableList(
-      executablesWorkspace.items.map((entry) =>
-        entry.id === selectedExecutableItem.id
-          ? {
-              ...executableDraft,
-              id: selectedExecutableItem.id
-            }
-          : entry
-      ),
-      t('app.busy.savingExecutable'),
-      selectedExecutableItem.id
-    );
-  };
-
-  const browseExecutableForDraft = async () => {
-    if (!executableDraft) {
-      return;
-    }
-
-    const picked = await window.fluxora.dialogs.pickExecutable(
-      t('app.dialog.selectExecutable'),
-      executableDraft.executablePath || selectedProject?.gamePath
-    );
-    if (picked.canceled || !picked.path) {
-      return;
-    }
-    const executablePath = picked.path;
-
-    setExecutableDraft((current) =>
-      current
-        ? {
-            ...current,
-            executablePath,
-            displayName: current.displayName || fileNameFromPath(executablePath).replace(/\.[^.]+$/, '')
-          }
-        : current
-    );
-  };
-
-  const browseExecutableWorkingDirectory = async () => {
-    if (!executableDraft) {
-      return;
-    }
-
-    const picked = await window.fluxora.dialogs.pickFolder(
-      t('app.dialog.selectWorkingDirectory'),
-      executableDraft.workingDirectory || selectedProject?.gamePath
-    );
-    if (picked.canceled || !picked.path) {
-      return;
-    }
-    const workingDirectory = picked.path;
-
-    setExecutableDraft((current) =>
-      current ? { ...current, workingDirectory } : current
-    );
-  };
-
-  const resolveExecutableIcon = async () => {
-    if (!executableDraft?.executablePath) {
-      return;
-    }
-
-    const operationId = createRendererOperationId('executables_icon');
-    setExecutablesBusyLabel(t('app.busy.resolvingIcon'));
-
-    try {
-      const result = await window.fluxora.executables.getIcon(executableDraft.executablePath, {
-        operationId
-      });
-      setExecutableDraft((current) =>
-        current ? { ...current, iconPath: result.iconPath } : current
-      );
-      setMessage(result.iconPath ? t('app.message.iconResolved') : t('app.message.iconNotResolved'));
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setExecutablesBusyLabel(null);
-    }
-  };
 
   const launchExecutable = async () => {
     if (!selectedProject || !selectedExecutableItem || !executableCapabilities.launchAvailable) {
@@ -6979,7 +6791,6 @@ export const App = () => {
     let launchedResult: FluxoraExecutableLaunchResult | null = null;
     let trackedProcessLabel = selectedExecutableItem.displayName;
     setExecutablesBusyLabel(managedDisplay?.preparationLabel ?? t('app.message.launchingExecutable'));
-    setExecutableLaunchResult(null);
     setLaunchSplash({
       operationId,
       appName: selectedExecutableItem.displayName,
@@ -7024,7 +6835,6 @@ export const App = () => {
           operationId
         })
         .catch(() => undefined);
-      setExecutableLaunchResult(result);
       const processName =
         result.handoffDisplayName || result.displayName || selectedExecutableItem.displayName;
       const ready = await window.fluxora.processes.waitForLaunchReady(
@@ -10242,6 +10052,18 @@ export const App = () => {
     });
   }, [isSecondaryWindow]);
 
+  useEffect(() => window.fluxora.executables.onSaved((event) => {
+    setProjects((current) => current.map((project) =>
+      project.configPath === event.configPath
+        ? { ...project, executables: event.executables }
+        : project
+    ));
+    if (selectedProject?.configPath === event.configPath) {
+      dispatchExecutablesWorkspace({ type: 'items-loaded', items: event.executables });
+      setBuildPathExecutables(event.executables);
+    }
+  }), [selectedProject?.configPath]);
+
   useEffect(() => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'profiles') ||
@@ -10278,7 +10100,7 @@ export const App = () => {
 
   useEffect(() => {
     if (
-      (activeRoute !== 'build' && activeRoute !== 'executables') ||
+      activeRoute !== 'build' ||
       !selectedProject ||
       !bridgeStatus?.ready ||
       openingBuildOperationIdRef.current ||
@@ -10390,11 +10212,6 @@ export const App = () => {
     setIsBuildPathsOpen(false);
     setGrassCacheConfirmationOpen(false);
   }, [selectedProject?.configPath, selectedProjectId]);
-
-  useEffect(() => {
-    setExecutableDraft(selectedExecutableItem ? { ...selectedExecutableItem } : null);
-    setExecutableDeleteArmedId(null);
-  }, [selectedExecutableItem?.id]);
 
   useEffect(() => {
     const fileTreeItem =
@@ -11159,6 +10976,26 @@ export const App = () => {
     await loadBuildPathSettings(selectedProject);
   };
 
+  const openExecutableSettings = async () => {
+    if (!selectedProject) {
+      return;
+    }
+    try {
+      writeExecutableSettingsBootstrap({
+        buildName: selectedProject.name,
+        configPath: selectedProject.configPath,
+        executables: executablesWorkspace.items,
+        selectedExecutableId: executablesWorkspace.selectedId
+      });
+      await window.fluxora.windowControls.openExecutableSettings(
+        selectedProject.configPath,
+        selectedProject.name
+      );
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
   const closeBuildPathSettings = async () => {
     if (isBuildSettingsWindow) {
       try {
@@ -11254,9 +11091,9 @@ export const App = () => {
         buildPathSaveRequest(buildPathDraft),
         { operationId }
       );
-      const savedExecutables = await window.fluxora.executables.save(
+      const savedExecutables = await window.fluxora.executables.updatePrimary(
         selectedProject.configPath,
-        buildPrimaryExecutableList(buildPathExecutables, buildPathDraft),
+        buildPathDraft.gameExecutablePath.trim(),
         { operationId }
       );
       const nextProject: FluxoraProject = {
@@ -12175,14 +12012,6 @@ export const App = () => {
 
       if (activeRoute === 'profiles') {
         await loadProfilesWorkspace(selectedProject, {
-          operationId: refreshOperationId,
-          showBusy: false
-        });
-        return;
-      }
-
-      if (activeRoute === 'executables') {
-        await loadExecutablesWorkspace(selectedProject, {
           operationId: refreshOperationId,
           showBusy: false
         });
@@ -15743,409 +15572,8 @@ export const App = () => {
     );
   };
 
-  const renderExecutableRows = () => {
-    if (executablesWorkspace.loadState === 'loading' && executablesWorkspace.items.length === 0) {
-      return (
-        <div
-          className="mod-table executable-table executable-table--loading"
-          role="table"
-          aria-label={t('app.ui.executables')}
-          aria-busy="true"
-        >
-          <div className="mod-row executable-row mod-row--head" role="row">
-            <span role="columnheader">{t('app.ui.executable')}</span>
-            <span role="columnheader">{t('app.ui.path')}</span>
-            <span role="columnheader">{t('app.ui.arguments')}</span>
-            <span role="columnheader">{t('app.ui.workingDirectory')}</span>
-            <span role="columnheader">{t('app.ui.actions')}</span>
-          </div>
-          <div className="mod-table__body" role="rowgroup">
-            {modLoadingSkeletonRows.slice(0, 4).map((index) => (
-              <div
-                className="mod-row executable-row executable-row--skeleton"
-                role="row"
-                aria-hidden="true"
-                key={`executable-skeleton-${index}`}
-              >
-                <div className="mod-row__main" role="cell">
-                  <Skeleton
-                    className="workspace-skeleton--title"
-                    style={{ width: skeletonWidth(index) }}
-                  />
-                  <Skeleton
-                    className="workspace-skeleton--meta"
-                    style={{ width: skeletonWidth(index, 2) }}
-                  />
-                </div>
-                <Skeleton className="workspace-skeleton--cell" role="cell" />
-                <Skeleton className="workspace-skeleton--cell" role="cell" />
-                <Skeleton className="workspace-skeleton--cell" role="cell" />
-                <Skeleton className="workspace-skeleton--action" role="cell" />
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
 
-    if (executablesWorkspace.loadState === 'error') {
-      return (
-        <EmptyState
-          icon={<AlertTriangle size={18} aria-hidden="true" />}
-          title={t('app.ui.executablesUnavailable')}
-          description={
-            executablesWorkspace.errorMessage ?? t('app.ui.executablesLoadFailed')
-          }
-          tone="error"
-        />
-      );
-    }
 
-    if (filteredExecutableItems.length === 0) {
-      return (
-        <EmptyState
-          icon={<Play size={18} aria-hidden="true" />}
-          title={
-            executablesWorkspace.items.length === 0
-              ? t('app.ui.noExecutables')
-              : t('app.ui.noMatchingExecutables')
-          }
-          description={
-            executablesWorkspace.items.length === 0
-              ? t('app.ui.noExecutablesDescription')
-              : t('app.ui.noMatchingExecutablesDescription')
-          }
-        />
-      );
-    }
-
-    return (
-      <div className="mod-table executable-table" role="table" aria-label={t('app.ui.executables')}>
-        <div className="mod-row executable-row mod-row--head" role="row">
-          <span role="columnheader">{t('app.ui.executable')}</span>
-          <span role="columnheader">{t('app.ui.path')}</span>
-          <span role="columnheader">{t('app.ui.arguments')}</span>
-          <span role="columnheader">{t('app.ui.workingDirectory')}</span>
-          <span role="columnheader">{t('app.ui.actions')}</span>
-        </div>
-        <div className="mod-table__body">
-          {filteredExecutableItems.map((entry) => {
-            const isSelected = entry.id === executablesWorkspace.selectedId;
-            const managedDisplay = managedExecutableDisplay(
-              entry.managedToolKind,
-              selectedProject?.name ?? t('app.ui.build'),
-              appLocale
-            );
-            return (
-              <div
-                className="mod-row executable-row"
-                role="row"
-                data-selected={isSelected}
-                key={entry.id}
-                onClick={() => {
-                  dispatchExecutablesWorkspace({ type: 'selected', id: entry.id });
-                  setExecutableDeleteArmedId(null);
-                }}
-              >
-                <div className="mod-row__main" role="cell">
-                  <strong>{executableTitle(entry, appLocale)}</strong>
-                  <span>{entry.id}</span>
-                  {managedDisplay ? (
-                    <>
-                      <Badge tone="accent">{managedDisplay.badgeLabel}</Badge>
-                      <span>{managedDisplay.outputModName}</span>
-                    </>
-                  ) : null}
-                </div>
-                <span role="cell">{shortPath(entry.executablePath)}</span>
-                <span role="cell">{entry.arguments || '-'}</span>
-                <span role="cell">{entry.workingDirectory
-                  ? shortPath(entry.workingDirectory)
-                  : t('app.ui.executableFolder')}</span>
-                <div className="row-actions mod-actions" role="cell">
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title={t('app.ui.launchExecutable')}
-                    disabled={
-                      !isSelected ||
-                      Boolean(executablesBusyLabel) ||
-                      !executableCapabilities.launchAvailable
-                    }
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void launchExecutable();
-                    }}
-                  >
-                    <Play size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title={
-                      executableDeleteArmedId === entry.id
-                        ? t('app.ui.confirmExecutableDeletion')
-                        : t('app.ui.deleteExecutable')
-                    }
-                    disabled={!isSelected || Boolean(executablesBusyLabel)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void deleteExecutable();
-                    }}
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  const renderExecutablesInspector = () => {
-    const managedDisplay = managedExecutableDisplay(
-      selectedExecutableItem?.managedToolKind,
-      selectedProject?.name ?? t('app.ui.build'),
-      appLocale
-    );
-    return (
-      <aside className="inspector executables-inspector" aria-label={t('app.ui.selectedExecutableDetails')}>
-      <div className="surface-header surface-header--compact">
-        <div>
-          <p className="eyebrow">{t('app.ui.executableEditor')}</p>
-          <h2>{executableTitle(selectedExecutableItem, appLocale)}</h2>
-        </div>
-      </div>
-      {!executableDraft ? (
-        <EmptyState
-          className="empty-state--compact"
-          compact
-          icon={<Play size={18} aria-hidden="true" />}
-          title={t('app.ui.selectExecutable')}
-          description={t('app.ui.selectExecutableDescription')}
-        />
-      ) : (
-        <div className="executable-editor">
-          <label className="field">
-            <span>{t('app.ui.displayName')}</span>
-            <input
-              value={executableDraft.displayName}
-              onChange={(event) =>
-                setExecutableDraft((current) =>
-                  current ? { ...current, displayName: event.target.value } : current
-                )
-              }
-            />
-          </label>
-          <label className="field">
-            <span>{t('app.ui.executablePath')}</span>
-            <div className="path-picker">
-              <input
-                value={executableDraft.executablePath}
-                onChange={(event) =>
-                  setExecutableDraft((current) =>
-                    current ? { ...current, executablePath: event.target.value } : current
-                  )
-                }
-              />
-              <button
-                className="tool-button"
-                type="button"
-                onClick={() => void browseExecutableForDraft()}
-              >
-                <FolderOpen size={16} aria-hidden="true" />
-                {t('app.ui.browse')}
-              </button>
-            </div>
-          </label>
-          <label className="field">
-            <span>{t('app.ui.arguments')}</span>
-            <input
-              value={executableDraft.arguments}
-              onChange={(event) =>
-                setExecutableDraft((current) =>
-                  current ? { ...current, arguments: event.target.value } : current
-                )
-              }
-            />
-          </label>
-          <label className="field">
-            <span>{t('app.ui.workingDirectory')}</span>
-            <div className="path-picker">
-              <input
-                value={executableDraft.workingDirectory}
-                onChange={(event) =>
-                  setExecutableDraft((current) =>
-                    current ? { ...current, workingDirectory: event.target.value } : current
-                  )
-                }
-                placeholder={t('app.ui.executableFolder')}
-              />
-              <button
-                className="tool-button"
-                type="button"
-                onClick={() => void browseExecutableWorkingDirectory()}
-              >
-                <FolderOpen size={16} aria-hidden="true" />
-                {t('app.ui.browse')}
-              </button>
-            </div>
-          </label>
-          <div className="executable-editor__actions">
-            <button
-              className="tool-button"
-              type="button"
-              disabled={Boolean(executablesBusyLabel)}
-              onClick={() => void resolveExecutableIcon()}
-            >
-              <CircleDot size={16} aria-hidden="true" />
-              {t('app.ui.icon')}
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              disabled={Boolean(executablesBusyLabel)}
-              onClick={() => void saveExecutableDraft()}
-            >
-              <CheckCircle2 size={16} aria-hidden="true" />
-              {t('app.ui.save')}
-            </button>
-          </div>
-          <dl className="fact-list">
-            <div>
-              <dt>{t('app.ui.icon')}</dt>
-              <dd>{executableDraft.iconPath
-                ? shortPath(executableDraft.iconPath)
-                : t('app.ui.notResolved')}</dd>
-            </div>
-            <div>
-              <dt>{t('app.ui.profile')}</dt>
-              <dd>{selectedProjectProfileName}</dd>
-            </div>
-            <div>
-              <dt>{t('app.ui.launch')}</dt>
-              <dd>
-                {managedDisplay
-                  ? managedDisplay.badgeLabel
-                  : executableCapabilities.launchAvailable
-                    ? t('app.ui.available')
-                    : t('app.ui.limited')}
-              </dd>
-            </div>
-            {managedDisplay ? (
-              <div>
-                <dt>{t('app.ui.output')}</dt>
-                <dd>
-                  {executableLaunchResult?.outputMod?.displayName ??
-                    managedDisplay.outputModName}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        </div>
-      )}
-      {!executableCapabilities.launchAvailable ? (
-        <div className="plugin-capability-panel">
-          <strong>{t('app.ui.launchCapability')}</strong>
-          <span>{executableCapabilities.launchReason}</span>
-        </div>
-      ) : null}
-      {executableLaunchResult ? (
-        <div className="plugin-capability-panel">
-          <strong>{t('app.ui.lastLaunch')}</strong>
-          <span>
-            {executableLaunchResult.processId
-              ? t('app.ui.processId', { id: executableLaunchResult.processId })
-              : executableLaunchResult.launchTrackingKind}
-          </span>
-          {executableLaunchResult.outputMod ? (
-            <span>{t('app.ui.outputNamed', { name: executableLaunchResult.outputMod.displayName })}</span>
-          ) : null}
-        </div>
-      ) : null}
-      </aside>
-    );
-  };
-
-  const renderExecutablesWorkspace = () => {
-    if (!selectedProject) {
-      return (
-        <section className="center-empty">
-          <FolderOpen size={22} aria-hidden="true" />
-          <h2>{t('app.ui.noBuild')}</h2>
-          <button className="primary-button" type="button" onClick={() => changeRoute('home')}>
-            {t('app.ui.goHome')}
-          </button>
-        </section>
-      );
-    }
-
-    if (!executableCapabilities.bridgeAvailable) {
-      return (
-        <section className="center-empty" aria-label={t('app.ui.executablesCapability')}>
-          <Play size={22} aria-hidden="true" />
-          <h2>{t('app.ui.executablesUnavailable')}</h2>
-          <span>{executableCapabilities.reason}</span>
-        </section>
-      );
-    }
-
-    return (
-      <section className="mods-layout executables-layout" aria-label={t('app.ui.buildExecutablesWorkspace')}>
-        <section className="work-surface mods-surface">
-          <div className="surface-header">
-            <div>
-              <p className="eyebrow">{t('app.ui.executables')}</p>
-              <h2>{selectedProject.name}</h2>
-            </div>
-            <div className="mods-toolbar" aria-label={t('app.ui.executableCommands')}>
-              <button
-                className="icon-button"
-                type="button"
-                title={t('app.ui.refreshExecutables')}
-                disabled={Boolean(executablesBusyLabel)}
-                onClick={() => void loadExecutablesWorkspace(selectedProject)}
-              >
-                <RefreshCw size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="tool-button"
-                type="button"
-                disabled={Boolean(executablesBusyLabel)}
-                onClick={() => void addExecutable()}
-              >
-                <Plus size={16} aria-hidden="true" />
-                {t('app.ui.executable')}
-              </button>
-              <button
-                className="primary-button"
-                type="button"
-                disabled={
-                  !selectedExecutableItem ||
-                  Boolean(executablesBusyLabel) ||
-                  !executableCapabilities.launchAvailable
-                }
-                onClick={() => void launchExecutable()}
-              >
-                <Play size={16} aria-hidden="true" />
-                {t('app.ui.launch')}
-              </button>
-            </div>
-          </div>
-          {executablesBusyLabel ? (
-            <div className="mod-busy-strip" role="status">
-              <RefreshCw size={15} aria-hidden="true" />
-              <span>{executablesBusyLabel}</span>
-            </div>
-          ) : null}
-          {renderExecutableRows()}
-        </section>
-        {renderExecutablesInspector()}
-      </section>
-    );
-  };
 
   const renderBuildPathsInspector = () => (
     <BuildPathsInspector
@@ -16445,6 +15873,7 @@ export const App = () => {
             dispatchExecutablesWorkspace({ type: 'selected', id })
           }
           onLaunch={() => void launchExecutable()}
+          onManageExecutables={() => void openExecutableSettings()}
           onProfileChange={(profileName) => {
             dispatchProfilesWorkspace({ type: 'selected', name: profileName });
             setProfileDraftName(profileName);
@@ -17141,7 +16570,6 @@ export const App = () => {
                 {!isCreateOpen && activeRoute === 'plugins' ? renderPluginsWorkspace() : null}
                 {!isCreateOpen && activeRoute === 'downloads' ? renderDownloadsWorkspace() : null}
                 {!isCreateOpen && activeRoute === 'profiles' ? renderProfilesWorkspace() : null}
-                {!isCreateOpen && activeRoute === 'executables' ? renderExecutablesWorkspace() : null}
                 {!isCreateOpen && activeRoute === 'settings' ? renderSettingsWorkspace() : null}
                 {activeRoute !== 'home' &&
                 activeRoute !== 'build' &&
@@ -17150,7 +16578,6 @@ export const App = () => {
                 activeRoute !== 'plugins' &&
                 activeRoute !== 'downloads' &&
                 activeRoute !== 'profiles' &&
-                activeRoute !== 'executables' &&
                 activeRoute !== 'settings' &&
                 !isCreateOpen
                   ? renderPlaceholder()

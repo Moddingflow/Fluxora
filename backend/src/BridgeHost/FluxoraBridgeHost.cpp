@@ -1745,6 +1745,40 @@ namespace
             });
     }
 
+    std::wstring payloadUpdatePrimaryExecutable(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring configPath = requiredStringField(params, L"configPath");
+        const std::wstring executablePath = requiredStringField(params, L"executablePath");
+        return payloadFromCoreJson(
+            L"core.executablesUpdatePrimaryFailed",
+            [&configPath, &executablePath](wchar_t* buffer, int length)
+            {
+                return fluxora_update_primary_game_executable(
+                    configPath.c_str(),
+                    executablePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadInspectExecutable(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring configPath = requiredStringField(params, L"configPath");
+        const std::wstring executablePath = requiredStringField(params, L"executablePath");
+        return payloadFromCoreJson(
+            L"core.executableInspectFailed",
+            [&configPath, &executablePath](wchar_t* buffer, int length)
+            {
+                return fluxora_inspect_executable(
+                    configPath.c_str(),
+                    executablePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadLaunchExecutable(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -4135,6 +4169,14 @@ namespace
         if (request.method == L"executables.save")
         {
             return payloadSaveExecutables(request);
+        }
+        if (request.method == L"executables.updatePrimary")
+        {
+            return payloadUpdatePrimaryExecutable(request);
+        }
+        if (request.method == L"executables.inspect")
+        {
+            return payloadInspectExecutable(request);
         }
         if (request.method == L"executables.launch")
         {

@@ -26,6 +26,7 @@ import type {
   FluxoraPlacementEditsV2
 } from '../../../shared/fluxora-api';
 import { createVirtualWindow } from '../../ui-performance';
+import { usePointerReorderSession } from '../../hooks/usePointerReorderSession';
 import {
   buildInstallPlacementRows,
   advancePlacementHistory,
@@ -136,16 +137,6 @@ const copyFor = (language: string): PlacementCopy => {
 const rowHeight = 34;
 const visibleRows = 15;
 const overscanRows = 8;
-const dragThreshold = 5;
-
-interface PointerSession {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  active: boolean;
-  selectedKeys: Set<string>;
-}
-
 interface InclusionCheckboxProps {
   row: InstallPlacementRow;
   label: string;
@@ -210,8 +201,6 @@ export function InstallPlacementEditor({
   const treeRef = useRef<HTMLDivElement>(null);
   const rowElementsRef = useRef(new Map<string, HTMLDivElement>());
   const focusRequestedRef = useRef<string | null>(null);
-  const pointerSession = useRef<PointerSession | null>(null);
-  const dropTargetRef = useRef<string | null>(null);
   const dropResultRef = useRef<PlacementEditResult | null>(null);
 
   const rows = useMemo(
@@ -389,98 +378,58 @@ export function InstallPlacementEditor({
     return selected.has(row.key) ? new Set(selected) : new Set([row.key]);
   };
 
+  const clearPointerState = (): void => {
+    dropResultRef.current = null;
+    setDropTarget(null);
+    setDropAllowed(null);
+    setDraggedKeys(new Set());
+  };
+
+  const pointerReorder = usePointerReorderSession<Set<string>, string>({
+    threshold: 5,
+    rowSelector: '[data-placement-key]',
+    scrollContainerRef: treeRef,
+    edgeScrollDistance: 28,
+    edgeScrollStep: rowHeight,
+    resolveTarget: (element) => {
+      const key = element?.dataset.placementKey ?? null;
+      const candidate = key ? rowByKey.get(key) : undefined;
+      return candidate &&
+        !candidate.blocked &&
+        (candidate.kind === 'directory' || candidate.kind === 'system-root')
+        ? candidate.key
+        : null;
+    },
+    onDragStart: ({ payload }) => setDraggedKeys(new Set(payload)),
+    onDragMove: ({ payload, target }) => {
+      const result = target
+        ? movePlacementSelection(preview, edits, payload, target)
+        : null;
+      dropResultRef.current = result;
+      setDropTarget(target);
+      setDropAllowed(result?.accepted ?? false);
+    },
+    onDrop: ({ payload, target }) => {
+      const result = dropResultRef.current ?? (
+        target ? movePlacementSelection(preview, edits, payload, target) : null
+      );
+      clearPointerState();
+      if (result) applyResult(result);
+    },
+    onCancel: () => {
+      clearPointerState();
+      setDropReason('');
+    }
+  });
+
   const beginPointer = (row: InstallPlacementRow, event: ReactPointerEvent<HTMLDivElement>): void => {
     if (disabled || event.button !== 0 || row.blocked || editingKey) return;
     const nextSelection = selectionForPointer(row, event);
     setSelected(nextSelection);
     setSelectionAnchor(row.key);
     if (row.system) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    pointerSession.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      active: false,
-      selectedKeys: nextSelection
-    };
+    pointerReorder.begin(event, { sourceId: row.key, payload: nextSelection });
   };
-
-  const updatePointer = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const session = pointerSession.current;
-    if (!session || session.pointerId !== event.pointerId) return;
-    if (!session.active && Math.hypot(event.clientX - session.startX, event.clientY - session.startY) >= dragThreshold) {
-      session.active = true;
-      setDraggedKeys(new Set(session.selectedKeys));
-    }
-    if (!session.active) return;
-    event.preventDefault();
-    const element = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-placement-key]');
-    const key = element?.dataset.placementKey ?? null;
-    const candidate = key ? rowByKey.get(key) : undefined;
-    const nextDropTarget = candidate && !candidate.blocked && (candidate.kind === 'directory' || candidate.kind === 'system-root')
-      ? candidate.key
-      : null;
-    if (nextDropTarget !== dropTargetRef.current || dropAllowed === null) {
-      const nextDropResult = nextDropTarget
-        ? movePlacementSelection(preview, edits, session.selectedKeys, nextDropTarget)
-        : null;
-      dropTargetRef.current = nextDropTarget;
-      dropResultRef.current = nextDropResult;
-      setDropTarget(nextDropTarget);
-      setDropAllowed(nextDropResult?.accepted ?? false);
-    }
-    const tree = treeRef.current;
-    if (tree) {
-      const bounds = tree.getBoundingClientRect();
-      if (event.clientY < bounds.top + 28) tree.scrollBy({ top: -rowHeight, behavior: 'auto' });
-      if (event.clientY > bounds.bottom - 28) tree.scrollBy({ top: rowHeight, behavior: 'auto' });
-    }
-  };
-
-  const finishPointer = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const session = pointerSession.current;
-    if (!session || session.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    pointerSession.current = null;
-    const result = dropResultRef.current;
-    dropTargetRef.current = null;
-    dropResultRef.current = null;
-    setDropTarget(null);
-    setDropAllowed(null);
-    setDraggedKeys(new Set());
-    if (session.active && result) applyResult(result);
-  };
-
-  const cancelPointer = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    const session = pointerSession.current;
-    if (session?.pointerId === event.pointerId && event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    pointerSession.current = null;
-    dropTargetRef.current = null;
-    dropResultRef.current = null;
-    setDropTarget(null);
-    setDropAllowed(null);
-    setDraggedKeys(new Set());
-  };
-
-  useEffect(() => {
-    const cancel = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && pointerSession.current) {
-        pointerSession.current = null;
-        dropTargetRef.current = null;
-        dropResultRef.current = null;
-        setDropTarget(null);
-        setDropAllowed(null);
-        setDraggedKeys(new Set());
-        setDropReason('');
-      }
-    };
-    window.addEventListener('keydown', cancel);
-    return () => window.removeEventListener('keydown', cancel);
-  }, []);
 
   const toggleCollapsed = (key: string, force?: boolean): void => {
     setCollapsed((current) => {
@@ -707,9 +656,9 @@ export function InstallPlacementEditor({
               }}
               onKeyDown={(event) => rowKeyboard(row, event)}
               onPointerDown={(event) => beginPointer(row, event)}
-              onPointerMove={updatePointer}
-              onPointerUp={finishPointer}
-              onPointerCancel={cancelPointer}
+              onPointerMove={pointerReorder.move}
+              onPointerUp={pointerReorder.finish}
+              onPointerCancel={pointerReorder.cancel}
             >
               {directory ? (
                 <button

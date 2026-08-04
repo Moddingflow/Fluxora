@@ -1597,3 +1597,52 @@ Phase 1 is documentation and contract design, so no product build is required to
 - Bridge version `fluxora.bridge.v1` exists.
 - Full UI parity method list exists and maps to current `CoreBridgeService`/`FluxoraCoreApi`.
 - Windows/Linux/macOS capability differences are explicit.
+
+## Executable launcher and manager contract
+
+Executable management is a local-only, cross-window workflow with explicit ownership:
+
+- C++ owns executable persistence and ordering, primary-entry mutation, Windows PE
+  `VERSIONINFO` inspection, display-name normalization and composition with the existing
+  executable-icon cache. `ExecutableMetadataService` prefers `FileDescription`, then
+  `ProductName`, then the deterministic filename fallback. `ExecutableService::updatePrimaryExecutable`
+  reloads the latest manifest and changes only the primary entry, so Build Settings cannot
+  overwrite custom names, arguments, ids, managed metadata or ordering with a stale renderer snapshot.
+- The Rust shell owns the project-scoped `executable-settings:<stable hash>` window, singleton
+  show/focus behavior, native close interception, cross-window saved events and the narrow
+  executable-icon asset scope. The window starts at `980x700`, has a minimum of `860x620`, and
+  uses a bootstrap snapshot only for the first frame; every open performs an authoritative C++ read.
+  Titlebar Close and Cancel share the same renderer close coordinator. A clean or explicitly
+  discarded draft uses the typed force-close command so the already-resolved decision cannot be
+  intercepted a second time by `closeRequested`; Alt+F4 still uses native close interception.
+- The typed `window.fluxora` facade is the renderer/native boundary. React components do not import
+  Tauri, receive native close-event objects, convert arbitrary filesystem URLs or access the filesystem.
+  Renderer state owns the unsaved draft, selection, form ownership flags, conflict notice and pointer/
+  keyboard reordering only.
+
+The bridge methods are `executables.inspect`, `executables.save` and
+`executables.updatePrimary`. Every mutation or inspection carries an `operationId`; errors preserve
+the same correlation id. `executables.inspect` receives both `configPath` and the configured
+executable path, resolves project-relative values such as `Stock Game\SkyrimSE.exe` in C++, and returns
+`FluxoraExecutableInspection { executablePath, suggestedDisplayName, displayNameSource, iconPath,
+operationId }`, where `displayNameSource` is `file-description`, `product-name` or `file-name`.
+The legacy `executables.getIcon` remains available for compatibility, while new executable UI uses
+inspection plus `executables.toIconUrl` inside the facade.
+
+Successful `executables.save` and `executables.updatePrimary` mutations emit
+`FluxoraExecutablesSavedEvent { configPath, executables, operationId }` from the Rust shell. Main,
+Build Settings and Executable Settings subscribe through `executables.onSaved`. The manager accepts
+its own save event, refreshes a clean draft, and surfaces a reload/keep-draft conflict when an
+unexpected event arrives over dirty local edits. The renderer never synthesizes native success.
+
+MO2 transfer keeps executable locations relative to the Fluxora project when the source game is
+inside the imported build. New and legacy primary entries therefore surface as
+`Stock Game\SkyrimSE.exe` instead of losing the game-directory segment as `SkyrimSE.exe`; external
+game installations remain relative to their configured external game root.
+
+The complete executable metadata and icon path is offline: no runtime network request, telemetry or
+new user-data transfer exists. The asset protocol permits only the existing FOMOD preview scope and
+`$CONFIG/Fluxora/cache/executable-icons/**/*.png`; on Windows `$CONFIG` resolves the roaming configuration
+root that contains the existing `%APPDATA%\Fluxora` cache, without exposing arbitrary AppData or filesystem
+roots. Executable arguments are persisted as domain data but must not be written to UI, bridge or core
+logs. This local-only change does not require a privacy policy or terms update.

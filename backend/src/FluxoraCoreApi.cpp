@@ -13,6 +13,7 @@
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
+#include "FluxoraCore/Services/ExecutableMetadataService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/ExternalConnectionService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
@@ -711,6 +712,38 @@ namespace
             writer.field(L"configurationStatus", result.configurationStatus);
             writer.stringArray(L"warnings", result.warnings);
         }
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring executableDisplayNameSourceName(
+        fluxora::ExecutableDisplayNameSource source)
+    {
+        switch (source)
+        {
+        case fluxora::ExecutableDisplayNameSource::FileDescription:
+            return L"file-description";
+        case fluxora::ExecutableDisplayNameSource::ProductName:
+            return L"product-name";
+        case fluxora::ExecutableDisplayNameSource::FileName:
+            return L"file-name";
+        }
+        return L"file-name";
+    }
+
+    std::wstring serializeExecutableInspection(
+        const fluxora::ExecutableMetadataInspection& inspection,
+        const std::filesystem::path& iconPath,
+        const std::filesystem::path& configuredPath)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"executablePath", configuredPath.wstring());
+        writer.field(L"suggestedDisplayName", inspection.suggestedDisplayName);
+        writer.field(
+            L"displayNameSource",
+            executableDisplayNameSourceName(inspection.displayNameSource));
+        writer.field(L"iconPath", iconPath.wstring());
         writer.endObject();
         return writer.str();
     }
@@ -5839,6 +5872,74 @@ extern "C"
                 "Executables",
                 std::string("Save executable list completed. count=") + std::to_string(executables.size()));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_update_primary_game_executable(
+        const wchar_t* configPath,
+        const wchar_t* executablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(configPath) || isBlank(executablePath))
+            {
+                lastError = L"Build config path and executable path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Executables",
+                std::string("Primary executable update requested. configPath=\"") +
+                    pathForLog(std::filesystem::path(configPath)) + "\"");
+            const std::vector<fluxora::GameExecutable> updated =
+                core().executables().updatePrimaryExecutable(
+                    std::filesystem::path(configPath),
+                    std::filesystem::path(executablePath));
+            return writeToBuffer(
+                serializeGameExecutables(updated),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_inspect_executable(
+        const wchar_t* configPath,
+        const wchar_t* executablePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(configPath) || isBlank(executablePath))
+            {
+                lastError = L"Build config path and executable path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::filesystem::path configuredPath(executablePath);
+            const std::filesystem::path path =
+                core().executables().resolveProjectExecutablePath(
+                    std::filesystem::path(configPath),
+                    configuredPath);
+            const fluxora::ExecutableMetadataInspection inspection =
+                core().executableMetadata().inspect(path);
+            const std::filesystem::path iconPath =
+                core().executableIcons().resolveIconPath(path);
+            return writeToBuffer(
+                serializeExecutableInspection(inspection, iconPath, configuredPath),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

@@ -1,0 +1,365 @@
+.desktop-shell--executable-settings {
+  min-width: 860px;
+  min-height: 620px;
+}
+
+.executable-settings {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-app);
+  color: var(--text);
+}
+
+.executable-settings__heading {
+  display: flex;
+  align-items: center;
+  min-height: 62px;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.executable-settings__heading h1,
+.executable-settings__heading p {
+  margin: 0;
+}
+
+.executable-settings__heading h1 {
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+}
+
+.executable-settings__heading p {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executable-settings__conflict,
+.executable-settings__error {
+  margin: 10px 22px 0;
+  border: 1px solid var(--border-accent);
+  background: rgba(var(--flx-accent-rgb), 0.06);
+  color: var(--text-body);
+  font-size: 12px;
+}
+
+.executable-settings__conflict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 6px 10px;
+}
+
+.executable-settings__conflict > div {
+  display: flex;
+  gap: 6px;
+}
+
+.executable-settings__conflict button,
+.executable-settings__empty button {
+  padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.executable-settings__conflict button:is(:hover, :focus-visible),
+.executable-settings__empty button:is(:hover, :focus-visible) {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.executable-settings__error {
+  padding: 8px 10px;
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--text);
+}
+
+.executable-settings__body {
+  display: grid;
+  grid-template-rows: minmax(186px, 0.9fr) minmax(245px, 1.1fr);
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 22px 12px;
+}
+
+.executable-settings__list-section,
+.executable-settings__editor {
+  min-width: 0;
+  min-height: 0;
+}
+
+.executable-settings__list-section {
+  margin-right: -14px;
+  padding-bottom: 12px;
+}
+
+.executable-settings__editor {
+  overflow-y: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.executable-settings__list,
+.executable-settings__skeleton {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 14px;
+}
+
+.executable-settings__skeleton {
+  gap: 6px;
+}
+
+.executable-settings__skeleton .flx-skeleton {
+  height: 46px;
+  border-radius: var(--radius-sm);
+}
+
+.executable-settings__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-body);
+  cursor: grab;
+  user-select: none;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    opacity var(--motion-fast);
+}
+
+.executable-settings__row:is(:hover, :focus-visible) {
+  background: var(--surface-hover);
+}
+
+.executable-settings__row[aria-selected="true"] {
+  border-color: rgba(var(--flx-accent-rgb), 0.38);
+  background: rgba(var(--flx-accent-rgb), 0.07);
+  color: var(--text);
+}
+
+.executable-settings__row[data-drag-source="true"] {
+  cursor: grabbing;
+  opacity: 0.28;
+}
+
+.executable-settings__row[data-drop-placement]::before {
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 1px;
+  background: var(--accent);
+  content: "";
+}
+
+.executable-settings__row[data-drop-placement="before"]::before {
+  top: -2px;
+}
+
+.executable-settings__row[data-drop-placement="after"]::before {
+  bottom: -2px;
+}
+
+.executable-settings__row .executable-identity__copy > strong {
+  font-size: 12px;
+}
+
+.executable-settings__empty,
+.executable-settings__editor-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.executable-settings__empty {
+  gap: 6px;
+}
+
+.executable-settings__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px 16px;
+  max-width: 900px;
+}
+
+.executable-settings__form > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.executable-settings__form input {
+  min-width: 0;
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.executable-settings__form input:is(:hover, :focus) {
+  border-color: var(--border-hover);
+}
+
+.executable-settings__form input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.executable-settings__field-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.executable-settings__field-action > input {
+  flex: 1 1 auto;
+}
+
+.executable-settings__field-action > button {
+  flex: 0 0 auto;
+}
+
+.executable-settings__drag-preview {
+  position: fixed;
+  z-index: 40;
+  width: min(320px, calc(100vw - 24px));
+  min-height: 46px;
+  padding: 5px 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+  opacity: 0.96;
+  pointer-events: none;
+}
+
+.executable-settings__drag-preview .executable-identity {
+  width: 100%;
+}
+
+.executable-settings__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+}
+
+.executable-settings__footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.executable-settings__dialog-layer {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.executable-settings__dialog-layer > section {
+  width: min(390px, 100%);
+  padding: 18px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.executable-settings__dialog-layer h2,
+.executable-settings__dialog-layer p {
+  margin: 0;
+}
+
+.executable-settings__dialog-layer h2 {
+  font-size: 15px;
+}
+
+.executable-settings__dialog-layer p {
+  margin-top: 8px;
+  color: var(--text-body);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.executable-settings__dialog-layer section > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .executable-settings__row {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .executable-settings__row[aria-selected="true"],
+  .executable-settings__drag-preview,
+  .executable-settings__conflict,
+  .executable-settings__error {
+    border-color: Highlight;
+  }
+
+  .executable-settings__row[data-drop-placement]::before {
+    background: Highlight;
+  }
+}
+
+@media (max-height: 660px) {
+  .executable-settings__heading {
+    min-height: 52px;
+    padding-block: 9px;
+  }
+
+  .executable-settings__body {
+    grid-template-rows: minmax(168px, 0.8fr) minmax(226px, 1.2fr);
+    padding-top: 10px;
+  }
+}

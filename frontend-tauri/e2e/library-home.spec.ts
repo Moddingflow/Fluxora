@@ -1501,6 +1501,8 @@ test.beforeEach(async ({ page }) => {
     const inboundNxmCallbacks = new Set<(event: any) => void>();
     const operationProgressCallbacks = new Set<(event: any) => void>();
     const installProgressCallbacks = new Set<(event: any) => void>();
+    const executableSavedCallbacks = new Set<(event: any) => void>();
+    const closeRequestedCallbacks = new Set<() => boolean | Promise<boolean>>();
     const updateStatusCallbacks = new Set<(event: any) => void>();
     const updateTestMode = new URLSearchParams(window.location.search).get('testUpdate');
     let updateStatus: any = {
@@ -1528,6 +1530,26 @@ test.beforeEach(async ({ page }) => {
     let settleUpdateDownload: ((result: any) => void) | null = null;
     let failUpdateDownload: ((error: Error) => void) | null = null;
     const workspaceDeltaScopes = new Map<string, { revision: string; sequence: number }>();
+    let executableRows = [
+      {
+        id: 'skse',
+        displayName: 'SKSE',
+        executablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
+        arguments: '-forcesteamloader',
+        workingDirectory: 'C:\\Games\\Skyrim',
+        iconPath: ''
+      }
+    ];
+    if (window.localStorage.getItem('fluxora.test.executableManagerRows') === 'two') {
+      executableRows.push({
+        id: 'tool',
+        displayName: 'Patch Tool',
+        executablePath: 'D:\\Tools\\patch-tool.exe',
+        arguments: '',
+        workingDirectory: 'D:\\Tools',
+        iconPath: ''
+      });
+    }
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
       const payload = {
@@ -1579,6 +1601,15 @@ test.beforeEach(async ({ page }) => {
       for (const callback of installProgressCallbacks) {
         callback(event);
       }
+    };
+    (window as any).__emitFluxoraExecutablesSaved = (event: any = {}) => {
+      const payload = {
+        configPath: skyrimProject.configPath,
+        executables: structuredClone(executableRows),
+        operationId: `op_external_executables_${Date.now()}`,
+        ...event
+      };
+      for (const callback of executableSavedCallbacks) callback(payload);
     };
     (window as any).__emitFluxoraUpdateStatus = (event: any) => {
       updateStatus = { ...updateStatus, ...event };
@@ -2578,6 +2609,19 @@ test.beforeEach(async ({ page }) => {
           };
         },
         getIcon: async () => ({ iconPath: '', operationId: 'op_icon' }),
+        inspect: async (configPath: any, executablePath: any, operation: any) => {
+          calls.push({ method: 'executables.inspect', payload: { configPath, executablePath, operation } });
+          const fileName = String(executablePath).split(/[\\/]/).pop() ?? '';
+          return {
+            executablePath,
+            suggestedDisplayName: fileName.toLowerCase() === 'skse64_loader.exe'
+              ? 'SKSE'
+              : fileName.replace(/\.exe$/iu, ''),
+            displayNameSource: 'file-name',
+            iconPath: '',
+            operationId: operation?.operationId ?? 'op_inspect'
+          };
+        },
         launch: async (configPath: any, executableId: any, profileName: any, operation: any) => {
           calls.push({ method: 'executables.launch', payload: { configPath, executableId, operation, profileName } });
           await waitForOperationPaint();
@@ -2693,18 +2737,31 @@ test.beforeEach(async ({ page }) => {
               }
             ];
           }
-          return [
-            {
-              id: 'skse',
-              displayName: 'SKSE',
-              executablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
-              arguments: '-forcesteamloader',
-              workingDirectory: 'C:\\Games\\Skyrim',
-              iconPath: ''
-            }
-          ];
+          return structuredClone(executableRows);
         },
-        save: async () => []
+        onSaved: (callback: (event: any) => void) => {
+          executableSavedCallbacks.add(callback);
+          return () => executableSavedCallbacks.delete(callback);
+        },
+        save: async (configPath: any, executables: any[], operation: any) => {
+          calls.push({ method: 'executables.save', payload: { configPath, executables, operation } });
+          executableRows = structuredClone(executables);
+          const event = {
+            configPath,
+            executables: structuredClone(executableRows),
+            operationId: operation?.operationId ?? 'op_executables_save'
+          };
+          for (const callback of executableSavedCallbacks) callback(event);
+          return structuredClone(executableRows);
+        },
+        toIconUrl: (iconPath: any) => iconPath ? `asset://localhost/${encodeURIComponent(iconPath)}` : '',
+        updatePrimary: async (configPath: any, executablePath: any, operation: any) => {
+          calls.push({
+            method: 'executables.updatePrimary',
+            payload: { configPath, executablePath, operation }
+          });
+          return structuredClone(executableRows);
+        }
       },
       fluxPack: {
         export: async (request: any, operation: any) => {
@@ -3918,11 +3975,29 @@ test.beforeEach(async ({ page }) => {
       },
       windowControls: {
         close: async () => {
+          for (const callback of closeRequestedCallbacks) {
+            if (!(await callback())) {
+              calls.push({ method: 'window.close.prevented' });
+              return undefined;
+            }
+          }
+          calls.push({ method: 'window.close' });
+          return undefined;
+        },
+        forceClose: async () => {
           calls.push({ method: 'window.close' });
           return undefined;
         },
         minimize: async () => undefined,
+        onCloseRequested: async (callback: () => boolean | Promise<boolean>) => {
+          closeRequestedCallbacks.add(callback);
+          return () => closeRequestedCallbacks.delete(callback);
+        },
         openBuildSettings: async () => undefined,
+        openExecutableSettings: async (...args: any[]) => {
+          calls.push({ method: 'window.openExecutableSettings', payload: { args } });
+          return undefined;
+        },
         openFilePreview: async () => undefined,
         openModDetails: async (...args: any[]) => {
           calls.push({ method: 'window.openModDetails', payload: { args } });
@@ -7839,6 +7914,217 @@ test('runs build package, check and launch actions through the facade', async ({
   } | null;
   expect(selectedExportPayload?.request?.packageType).toBe('full');
   expect(selectedExportPayload?.request?.includeGeneratedAssets).toBe(true);
+});
+
+test('shows executable identities and opens the manager through the non-option More action', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const executableSelector = page.getByRole('combobox', { name: 'Executable', exact: true });
+  await executableSelector.focus();
+  await page.keyboard.press('Enter');
+  const more = page.getByRole('button', { name: 'More', exact: true });
+  await expect(executableSelector).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Tab');
+  await expect(more).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(executableSelector).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  const listbox = page.getByRole('listbox', { name: 'Executable' });
+  const option = listbox.getByRole('option', { name: 'SKSE' });
+  await expect(option).toBeVisible();
+  await expect(option.locator('.executable-identity__icon')).toBeVisible();
+
+  await expect(more).toBeVisible();
+  await expect(listbox.getByRole('option', { name: 'More' })).toHaveCount(0);
+  await more.click();
+
+  await expect.poll(() => latestCallPayload(page, 'window.openExecutableSettings'))
+    .toMatchObject({
+      args: [
+        'D:\\Fluxora\\Configs\\skyrim-main.json',
+        'Skyrim graphics overhaul'
+      ]
+    });
+  await expect(page.getByRole('listbox', { name: 'Executable' })).toBeHidden();
+});
+
+test('keeps executable edits local until one successful manager save', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const name = encodeURIComponent('Skyrim graphics overhaul');
+  await page.setViewportSize({ width: 860, height: 620 });
+  await page.goto(`${baseUrl}/?window=executable-settings&project=${project}&name=${name}`);
+
+  await expect(page.getByRole('heading', { name: 'Executables' })).toBeVisible();
+  await expect(page.getByRole('option', { name: /SKSE/ })).toBeVisible();
+  await expect(page.getByLabel('Executable settings')).toBeVisible();
+
+  const nameInput = page.getByRole('textbox', { name: 'Name', exact: true });
+  await nameInput.fill('My SKSE');
+  await expect.poll(() => callMethods(page)).not.toContain('executables.save');
+
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Discard changes?' })).toBeVisible();
+  await expect.poll(() => callMethods(page)).not.toContain('window.close');
+  await page.getByRole('button', { name: 'Keep editing' }).click();
+
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => (await callMethods(page))
+    .filter((method) => method === 'executables.save'))
+    .toHaveLength(1);
+  await expect.poll(() => callMethods(page)).toContain('window.close');
+});
+
+test('auto-detects a new executable without exposing derived settings or overwriting a later manual name', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__fluxoraExecutablePickPath = 'D:\\Fixtures\\skse64_loader.exe';
+  });
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  await page.goto(`${baseUrl}/?window=executable-settings&project=${project}&name=Fixture`);
+
+  await page.getByRole('button', { name: 'Add', exact: true }).last().click();
+  const nameInput = page.getByRole('textbox', { name: 'Name', exact: true });
+  await expect(nameInput).toHaveValue('SKSE');
+  await expect(page.getByRole('textbox', { name: 'Working folder', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Detect automatically', exact: true }))
+    .toHaveCount(0);
+
+  await nameInput.fill('My Script Extender');
+  const executablePath = page.getByRole('textbox', {
+    name: 'Executable file',
+    exact: true
+  });
+  await executablePath.fill('D:\\Other\\replacement_loader.exe');
+  await executablePath.blur();
+  await expect.poll(() => callMethods(page)).toContain('executables.inspect');
+  await expect(nameInput).toHaveValue('My Script Extender');
+
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect.poll(() => callMethods(page)).not.toContain('executables.save');
+  await expect.poll(() => callMethods(page)).toContain('window.close');
+});
+
+test('reorders the executable draft by pointer and persists only on Save', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.executableManagerRows', 'two');
+  });
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  await page.goto(`${baseUrl}/?window=executable-settings&project=${project}&name=Fixture`);
+
+  const rows = page.getByRole('listbox', { name: 'Ordered executables' }).getByRole('option');
+  await expect(rows).toHaveCount(2);
+  await expect(page.locator('.executable-settings__drag-handle')).toHaveCount(0);
+  const listBounds = await page.getByRole('listbox', { name: 'Ordered executables' }).boundingBox();
+  expect(listBounds).not.toBeNull();
+  expect(860 - ((listBounds?.x ?? 0) + (listBounds?.width ?? 0))).toBeLessThanOrEqual(8);
+  const sourceBox = await rows.nth(0).boundingBox();
+  const targetBox = await rows.nth(1).boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  if (!sourceBox || !targetBox) throw new Error('Executable rows are not measurable');
+
+  await page.mouse.move(sourceBox.x + 12, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + 12, targetBox.y + targetBox.height - 2, { steps: 4 });
+  const dragPreview = page.locator('.executable-settings__drag-preview');
+  await expect(dragPreview).toBeVisible();
+  await expect(dragPreview).toContainText('SKSE');
+  await page.mouse.up();
+  await expect(dragPreview).toHaveCount(0);
+
+  await expect(rows.nth(0)).toContainText('Patch Tool');
+  const movedSource = rows.filter({ hasText: 'SKSE' });
+  await movedSource.focus();
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(rows.nth(0)).toContainText('SKSE');
+  await expect(movedSource).toBeFocused();
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(rows.nth(0)).toContainText('Patch Tool');
+  await expect(movedSource).toBeFocused();
+  await expect.poll(() => callMethods(page)).not.toContain('executables.save');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(async () => {
+    const payload = await latestCallPayload(page, 'executables.save') as {
+      executables?: Array<{ id?: string }>;
+    } | null;
+    return payload?.executables?.map((entry) => entry.id) ?? [];
+  }).toEqual(['tool', 'skse']);
+});
+
+test('keeps a dirty manager draft when an external executable save arrives', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  await page.goto(`${baseUrl}/?window=executable-settings&project=${project}&name=Fixture`);
+  const nameInput = page.getByRole('textbox', { name: 'Name', exact: true });
+  await nameInput.fill('Unsaved local name');
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraExecutablesSaved({
+      executables: [{
+        id: 'external',
+        displayName: 'External Tool',
+        executablePath: 'D:\\External\\tool.exe',
+        arguments: '',
+        workingDirectory: 'D:\\External',
+        iconPath: ''
+      }]
+    });
+  });
+
+  await expect(page.getByText('Applications changed in another window.')).toBeVisible();
+  await page.getByRole('button', { name: 'Keep draft' }).click();
+  await expect(nameInput).toHaveValue('Unsaved local name');
+});
+
+test('synchronizes the main executable selector and fallback selection from saved events', async ({ page }) => {
+  await openSkyrimBuild(page);
+  const executableSelector = page.getByRole('combobox', { name: 'Executable', exact: true });
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraExecutablesSaved({
+      executables: [{
+        id: 'external',
+        displayName: 'External Tool',
+        executablePath: 'D:\\External\\tool.exe',
+        arguments: '',
+        workingDirectory: 'D:\\External',
+        iconPath: ''
+      }]
+    });
+  });
+  await expect(executableSelector).toContainText('External Tool');
+  await expect(page.getByRole('button', { name: 'Launch', exact: true })).toBeEnabled();
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraExecutablesSaved({ executables: [] });
+  });
+  await expect(executableSelector).toContainText('No executable');
+  await expect(page.getByRole('button', { name: 'Launch', exact: true })).toBeDisabled();
+});
+
+test('keeps the German manager reachable at minimum size and 200 percent zoom', async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 620 });
+  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  await page.goto(
+    `${baseUrl}/?window=executable-settings&project=${project}&name=Sehr%20langes%20Projekt&testLanguage=de-de`
+  );
+  await page.evaluate(() => {
+    document.body.style.zoom = '2';
+  });
+
+  await expect(page.getByRole('heading', { name: 'Programme' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Programmdatei', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Hinzufügen', exact: true }).last()).toBeVisible();
+  const save = page.getByRole('button', { name: 'Speichern', exact: true });
+  await save.scrollIntoViewIfNeeded();
+  await expect(save).toBeVisible();
+  const saveBounds = await save.boundingBox();
+  expect(saveBounds).not.toBeNull();
+  expect((saveBounds?.y ?? 0) + (saveBounds?.height ?? 0)).toBeLessThanOrEqual(620);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(await page.evaluate(() => document.documentElement.clientWidth * 2 + 1));
 });
 
 test('finalizes managed BodySlide after the last VFS holder exits and refreshes mods', async ({ page }) => {

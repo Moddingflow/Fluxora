@@ -651,6 +651,77 @@ namespace fluxora::tests
         fluxora_core_shutdown();
     }
 
+    TEST(FluxoraCoreApiTests, ExecutableInspectionAndPrimaryUpdateReturnTypedCanonicalPayloads)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path executable = temp.path() / L"skse64_loader.exe";
+        writeTextFile(executable, "MZ executable stub");
+        const std::filesystem::path config = temp.path() / L"Build" / L"build.json";
+        writeTextFile(temp.path() / L"Build" / L"Stock Game" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(
+            config,
+            "{\"schemaVersion\":\"1\",\"name\":\"Build\","
+            "\"templateId\":\"skyrimse\",\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\",\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\",\"launchExecutables\":["
+            "{\"id\":\"custom\",\"displayName\":\"Manual\","
+            "\"executablePath\":\"custom.exe\",\"arguments\":\"--private\","
+            "\"workingDirectory\":\"\"},"
+            "{\"id\":\"game\",\"displayName\":\"Game name\","
+            "\"executablePath\":\"Stock Game\\\\SkyrimSE.exe\",\"arguments\":\"\","
+            "\"workingDirectory\":\"\"}]}"
+        );
+
+        std::array<wchar_t, 8> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_inspect_executable(
+                config.c_str(),
+                executable.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue inspection = JsonReader::parse(copyBufferedApiOutput());
+        ASSERT_NE(inspection.find(L"executablePath"), nullptr);
+        ASSERT_NE(inspection.find(L"suggestedDisplayName"), nullptr);
+        ASSERT_NE(inspection.find(L"displayNameSource"), nullptr);
+        ASSERT_NE(inspection.find(L"iconPath"), nullptr);
+        EXPECT_EQ(inspection.find(L"suggestedDisplayName")->asString(), L"SKSE");
+        EXPECT_EQ(inspection.find(L"displayNameSource")->asString(), L"file-name");
+
+        constexpr const wchar_t* projectRelativeExecutable = L"Stock Game\\SkyrimSE.exe";
+        ASSERT_EQ(
+            fluxora_inspect_executable(
+                config.c_str(),
+                projectRelativeExecutable,
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue projectRelativeInspection = JsonReader::parse(copyBufferedApiOutput());
+        EXPECT_EQ(
+            projectRelativeInspection.find(L"executablePath")->asString(),
+            projectRelativeExecutable);
+
+        const std::filesystem::path nextPrimary = temp.path() / L"New Game" / L"SkyrimSE.exe";
+        ASSERT_EQ(
+            fluxora_update_primary_game_executable(
+                config.c_str(),
+                nextPrimary.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue updated = JsonReader::parse(copyBufferedApiOutput());
+        ASSERT_TRUE(updated.isArray());
+        ASSERT_EQ(updated.asArray().size(), 2u);
+        EXPECT_EQ(updated.asArray()[0].find(L"id")->asString(), L"custom");
+        EXPECT_EQ(updated.asArray()[0].find(L"displayName")->asString(), L"Manual");
+        EXPECT_EQ(updated.asArray()[0].find(L"arguments")->asString(), L"--private");
+        EXPECT_EQ(updated.asArray()[1].find(L"id")->asString(), L"game");
+        EXPECT_EQ(updated.asArray()[1].find(L"executablePath")->asString(), nextPrimary.wstring());
+        fluxora_core_shutdown();
+    }
+
 #if defined(_WIN32) && defined(_WIN64)
     TEST(FluxoraCoreApiTests, BodySlideVfsProbeReadsActiveModAndWritesOnlyManagedOutput)
     {
