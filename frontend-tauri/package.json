@@ -1,6 +1,6 @@
 {
   "name": "fluxora-tauri",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Fluxora Tauri UI shell",
   "private": true,
   "packageManager": "pnpm@11.9.0",
