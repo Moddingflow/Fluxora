@@ -185,7 +185,20 @@ namespace fluxora::installer
             throw std::invalid_argument(
                 "Parent process identifier was reused by a different process.");
         }
-        if (!pathEquals(process->executablePath(), request.applicationPath()))
+        std::filesystem::path executablePath;
+        try
+        {
+            executablePath = process->executablePath();
+        }
+        catch (const std::system_error&)
+        {
+            if (process->hasExited())
+            {
+                return;
+            }
+            throw;
+        }
+        if (!pathEquals(executablePath, request.applicationPath()))
         {
             throw std::invalid_argument(
                 "Parent process executable does not match the Fluxora installation.");

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <system_error>
 #include <thread>
 
 namespace
@@ -20,25 +21,37 @@ namespace
         FakeParentProcess(
             std::uint64_t start,
             std::filesystem::path executable,
-            bool& waited)
+            bool& waited,
+            bool pathUnavailable = false,
+            bool exited = false)
             : start_(start),
               executable_(std::move(executable)),
-              waited_(waited)
+              waited_(waited),
+              pathUnavailable_(pathUnavailable),
+              exited_(exited)
         {
         }
 
         [[nodiscard]] std::uint64_t startFileTime() const override { return start_; }
         [[nodiscard]] std::filesystem::path executablePath() const override
         {
+            if (pathUnavailable_)
+            {
+                throw std::system_error(
+                    std::make_error_code(std::errc::io_error),
+                    "Parent process executable path is unavailable");
+            }
             return executable_;
         }
-        [[nodiscard]] bool hasExited() const override { return false; }
+        [[nodiscard]] bool hasExited() const override { return exited_; }
         void waitForExit() override { waited_ = true; }
 
     private:
         std::uint64_t start_;
         std::filesystem::path executable_;
         bool& waited_;
+        bool pathUnavailable_;
+        bool exited_;
     };
 
     class FakeParentResolver final : public fluxora::installer::IParentProcessResolver
@@ -47,23 +60,34 @@ namespace
         FakeParentResolver(
             std::uint64_t start,
             std::filesystem::path executable,
-            bool& waited)
+            bool& waited,
+            bool pathUnavailable = false,
+            bool exited = false)
             : start_(start),
               executable_(std::move(executable)),
-              waited_(waited)
+              waited_(waited),
+              pathUnavailable_(pathUnavailable),
+              exited_(exited)
         {
         }
 
         [[nodiscard]] std::unique_ptr<fluxora::installer::IParentProcess> resolve(
             std::uint32_t) const override
         {
-            return std::make_unique<FakeParentProcess>(start_, executable_, waited_);
+            return std::make_unique<FakeParentProcess>(
+                start_,
+                executable_,
+                waited_,
+                pathUnavailable_,
+                exited_);
         }
 
     private:
         std::uint64_t start_;
         std::filesystem::path executable_;
         bool& waited_;
+        bool pathUnavailable_;
+        bool exited_;
     };
 }
 
@@ -223,5 +247,45 @@ TEST(ParentProcessWaiterTests, RejectsPidReuseWithoutWaiting)
     EXPECT_THROW(
         fluxora::installer::ParentProcessWaiter(resolver).wait(request),
         std::invalid_argument);
+    EXPECT_FALSE(waited);
+}
+
+TEST(ParentProcessWaiterTests, ContinuesWhenParentExitsDuringExecutablePathRead)
+{
+    fluxora::installer::UpdateWorkflowRequest request;
+    request.parentPid = 1234;
+    request.parentStartFileTime = 50'000'000;
+    request.installDirectory = L"C:\\Fluxora";
+    request.applicationExecutable = L"Fluxora.exe";
+    bool waited = false;
+    FakeParentResolver resolver(
+        request.parentStartFileTime,
+        request.applicationPath(),
+        waited,
+        true,
+        true);
+
+    EXPECT_NO_THROW(fluxora::installer::ParentProcessWaiter(resolver).wait(request));
+    EXPECT_FALSE(waited);
+}
+
+TEST(ParentProcessWaiterTests, PreservesPathFailureWhileParentIsRunning)
+{
+    fluxora::installer::UpdateWorkflowRequest request;
+    request.parentPid = 1234;
+    request.parentStartFileTime = 50'000'000;
+    request.installDirectory = L"C:\\Fluxora";
+    request.applicationExecutable = L"Fluxora.exe";
+    bool waited = false;
+    FakeParentResolver resolver(
+        request.parentStartFileTime,
+        request.applicationPath(),
+        waited,
+        true,
+        false);
+
+    EXPECT_THROW(
+        fluxora::installer::ParentProcessWaiter(resolver).wait(request),
+        std::system_error);
     EXPECT_FALSE(waited);
 }
