@@ -12,7 +12,7 @@ import {
   translate
 } from '../i18n';
 import { InstallerTitlebar } from '../components/InstallerTitlebar';
-import { InstallerProgressPanel } from '../components/InstallerProgressPanel';
+import { UpdateStageProgressPanel } from '../components/UpdateStageProgressPanel';
 import {
   initialUpdaterFlowState,
   updaterFlowReducer
@@ -109,10 +109,6 @@ export function UpdaterApp() {
           target: summary.targetVersion
         })
     : translate(state.language, 'updater.loading');
-  const phase = summary
-    ? translate(state.language, `updater.asset.${summary.assetKind}`)
-    : translate(state.language, 'updater.progress.preparing');
-
   return (
     <div className="updater-shell" data-presentation={summary?.presentation ?? 'compact'}>
       <InstallerTitlebar
@@ -145,20 +141,22 @@ export function UpdaterApp() {
             role={resultFailure || state.result?.outcome === 'failed' ? 'alert' : 'status'}
           >
             <strong>{resultText}</strong>
-            {resultFailure ? <code>{resultFailure.code}</code> : null}
+            {resultFailure ? (
+              <span>{translate(state.language, 'updater.error.recoveryHint')}</span>
+            ) : null}
           </div>
         ) : (
-          <InstallerProgressPanel
-            busy
+          <UpdateStageProgressPanel
             currentVersion={summary?.currentVersion}
-            downloadedBytes={progress?.copiedBytes}
-            language={state.language}
-            phase={progress?.currentItem ?? phase}
-            percent={progress && progress.totalBytes > 0 ? progress.percent : undefined}
+            downloadLabel={translate(state.language, 'updater.stage.download')}
+            downloadMeta={translate(state.language, 'updater.stage.downloadComplete')}
+            downloadPercent={100}
+            installLabel={translate(state.language, 'updater.stage.install')}
+            installMeta={progress?.currentItem ?? translate(state.language, 'updater.stage.installPending')}
+            installPercent={progress?.percent ?? 0}
             status={status}
             targetVersion={summary?.targetVersion}
             title={progressTitle}
-            totalBytes={progress?.totalBytes}
           />
         )}
         {state.noticeKey ? (

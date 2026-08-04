@@ -86,8 +86,11 @@ use speech::{
     fluxora_ai_prepare_voice, fluxora_ai_transcribe_voice, SpeechHostState,
 };
 use update_service::{
-    fluxora_updates_cancel, fluxora_updates_check, fluxora_updates_download_and_install,
-    fluxora_updates_get_status, fluxora_updates_renderer_ready, UpdateRuntimeState,
+    app_update_window_close_is_blocked, fluxora_updates_cancel, fluxora_updates_check,
+    fluxora_updates_dismiss_installer, fluxora_updates_download_and_install,
+    fluxora_updates_get_status, fluxora_updates_installer_window_ready,
+    fluxora_updates_open_installer, fluxora_updates_renderer_ready, UpdateRuntimeState,
+    APP_UPDATE_WINDOW_LABEL,
 };
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
@@ -11546,6 +11549,18 @@ pub fn run() {
             if matches!(event, WindowEvent::Focused(true)) {
                 let _ = window.request_user_attention(None);
             }
+            if window.label() == APP_UPDATE_WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let update_state = window.state::<UpdateRuntimeState>();
+                    if app_update_window_close_is_blocked(&update_state) {
+                        api.prevent_close();
+                        return;
+                    }
+                    if let Some(main) = window.app_handle().get_webview_window(MAIN_WINDOW_LABEL) {
+                        show_activation_window(&main, true);
+                    }
+                }
+            }
             if !matches!(
                 event,
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
@@ -11567,8 +11582,11 @@ pub fn run() {
             fluxora_app_info,
             fluxora_updates_get_status,
             fluxora_updates_check,
+            fluxora_updates_open_installer,
+            fluxora_updates_installer_window_ready,
             fluxora_updates_download_and_install,
             fluxora_updates_cancel,
+            fluxora_updates_dismiss_installer,
             fluxora_updates_renderer_ready,
             fluxora_runtime_paths,
             fluxora_current_executable,

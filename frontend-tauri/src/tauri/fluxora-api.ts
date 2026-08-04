@@ -667,6 +667,16 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     rendererReady: () => invokeTyped<void>(ipc, FluxoraIpcChannels.updatesRendererReady),
     check: async (request?: OperationRequest) =>
       sanitizeUpdateStatus(await invokeTyped<unknown>(ipc, FluxoraIpcChannels.updatesCheck, request)),
+    openInstaller: async (request?: OperationRequest) =>
+      sanitizeUpdateStatus(await invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.updatesOpenInstaller,
+        request
+      )),
+    installerWindowReady: async () => sanitizeUpdateStatus(await invokeTyped<unknown>(
+      ipc,
+      FluxoraIpcChannels.updatesInstallerWindowReady
+    )),
     downloadAndInstall: async (request?: OperationRequest) =>
       sanitizeUpdateStatus(await invokeTyped<unknown>(
         ipc,
@@ -675,6 +685,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       )),
     cancel: (request?: OperationRequest) =>
       invokeTyped<FluxoraUpdateCancelResult>(ipc, FluxoraIpcChannels.updatesCancel, request),
+    dismissInstaller: () => invokeTyped<void>(ipc, FluxoraIpcChannels.updatesDismissInstaller),
     onStatus: (callback: (status: FluxoraUpdateStatus) => void) =>
       listenTyped<unknown>(ipc, FluxoraIpcChannels.updatesStatus, (value) => {
         callback(sanitizeUpdateStatus(value));
@@ -2913,6 +2924,8 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.updatesGetStatus:
       case FluxoraIpcChannels.updatesCheck:
+      case FluxoraIpcChannels.updatesOpenInstaller:
+      case FluxoraIpcChannels.updatesInstallerWindowReady:
       case FluxoraIpcChannels.updatesDownloadAndInstall:
         return {
           state: 'idle',
@@ -2927,6 +2940,7 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
         } satisfies FluxoraUpdateCancelResult;
 
       case FluxoraIpcChannels.updatesRendererReady:
+      case FluxoraIpcChannels.updatesDismissInstaller:
         return undefined;
 
       case FluxoraIpcChannels.securityGetState:
@@ -3311,6 +3325,14 @@ const createTauriInvoker = (): IpcInvoker => ({
           request: requestWithOperationId(args[0], 'updates_check')
         });
 
+      case FluxoraIpcChannels.updatesOpenInstaller:
+        return invoke<FluxoraUpdateStatus>('fluxora_updates_open_installer', {
+          request: requestWithOperationId(args[0], 'updates_install')
+        });
+
+      case FluxoraIpcChannels.updatesInstallerWindowReady:
+        return invoke<FluxoraUpdateStatus>('fluxora_updates_installer_window_ready');
+
       case FluxoraIpcChannels.updatesDownloadAndInstall:
         return invoke<FluxoraUpdateStatus>('fluxora_updates_download_and_install', {
           request: requestWithOperationId(args[0], 'updates_install')
@@ -3320,6 +3342,9 @@ const createTauriInvoker = (): IpcInvoker => ({
         return invoke<FluxoraUpdateCancelResult>('fluxora_updates_cancel', {
           request: requestWithOperationId(args[0], 'updates_cancel')
         });
+
+      case FluxoraIpcChannels.updatesDismissInstaller:
+        return invoke<void>('fluxora_updates_dismiss_installer');
 
       case FluxoraIpcChannels.securityGetState:
         return invoke<FluxoraSecurityState>('fluxora_security_state', {

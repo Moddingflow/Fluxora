@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { LocalizationProvider } from '../src/localization/react';
 import { AppTitlebar } from '../src/renderer/components/chrome/AppTitlebar';
+import { appUpdateToolbarView } from '../src/renderer/features/update/app-update-coordinator';
 
 const noop = () => undefined;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,29 +53,29 @@ describe('app update titlebar control', () => {
     expect(hidden).not.toContain('data-update-control');
   });
 
-  it('reports download progress and waiting state without replacing the toolbar control', () => {
-    const downloading = renderTitlebar({
+  it('hands progress to the dedicated updater window without an inline toolbar bar', () => {
+    const activate = vi.fn();
+    const downloading = appUpdateToolbarView({
       state: 'downloading',
-      version: '2.4.0',
-      progressPercent: 37,
-      onCancel: vi.fn()
-    });
-    const waiting = renderTitlebar({
+      currentVersion: '2.3.0',
+      availableVersion: '2.4.0',
+      downloadedBytes: 37,
+      totalBytes: 100
+    }, true, activate);
+    const waiting = appUpdateToolbarView({
       state: 'waitingForOperations',
-      version: '2.4.0',
-      progressPercent: 100,
-      onCancel: vi.fn()
-    });
-
-    expect(downloading).toContain('aria-label="Загрузка обновления Fluxora 2.4.0: 37%. Отменить"');
-    expect(downloading).toContain('aria-busy="true"');
-    expect(downloading).toContain('data-update-progress="37"');
-    expect(downloading).not.toContain('disabled=""');
-    expect(waiting).toContain(
-      'title="Обновление Fluxora 2.4.0 ожидает завершения операций. Отменить"'
+      currentVersion: '2.3.0',
+      availableVersion: '2.4.0',
+      progressPercent: 100
+    }, true, activate);
+    const componentSource = fs.readFileSync(
+      path.resolve(__dirname, '..', 'src', 'renderer', 'features', 'update', 'AppUpdateToolbarButton.tsx'),
+      'utf8'
     );
-    expect(waiting).toContain('data-update-state="waitingForOperations"');
-    expect(waiting).toContain('class="titlebar__shortcut titlebar__shortcut--update"');
+
+    expect(downloading).toEqual({ state: 'hidden' });
+    expect(waiting).toEqual({ state: 'hidden' });
+    expect(componentSource).not.toContain('titlebar__update-progress');
   });
 
   it('keeps a user-triggered retryable error inline with a useful tooltip', () => {
@@ -114,7 +115,7 @@ describe('app update titlebar control', () => {
     expect(markup).toContain('role="alert"');
   });
 
-  it('uses a fixed 30px target, semantic green status and reduced-motion-safe progress', () => {
+  it('uses a fixed 30px target and semantic green status without inline progress', () => {
     const styles = fs.readFileSync(
       path.resolve(
         __dirname,
@@ -134,8 +135,6 @@ describe('app update titlebar control', () => {
     expect(styles).toMatch(
       /\.titlebar__shortcut\.titlebar__shortcut--update\s*\{[^}]*--flx-update-green:\s*#4ade80;[^}]*color:\s*var\(--flx-update-green\);/s
     );
-    expect(styles).toContain('.titlebar__update-progress > span');
-    expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
-    expect(styles).toContain('transition: none;');
+    expect(styles).not.toContain('.titlebar__update-progress');
   });
 });

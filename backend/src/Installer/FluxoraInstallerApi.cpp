@@ -1199,15 +1199,46 @@ namespace
         const std::filesystem::path& destination,
         std::string_view operation)
     {
+        constexpr int MaximumRenameAttempts = 30;
+        constexpr std::chrono::milliseconds RenameRetryDelay{200};
         std::error_code error;
-        std::filesystem::rename(source, destination, error);
-        if (error)
+        for (int attempt = 1; attempt <= MaximumRenameAttempts; ++attempt)
         {
-            throw std::runtime_error(
-                std::string(operation) + " failed. source=\"" + toUtf8(source.wstring()) +
-                "\", destination=\"" + toUtf8(destination.wstring()) +
-                "\", error=\"" + error.message() + "\"");
+            error.clear();
+            std::filesystem::rename(source, destination, error);
+            if (!error)
+            {
+                return;
+            }
+
+#ifdef _WIN32
+            const bool transientProcessHandle =
+                error.value() == ERROR_ACCESS_DENIED ||
+                error.value() == ERROR_SHARING_VIOLATION ||
+                error.value() == ERROR_LOCK_VIOLATION;
+#else
+            const bool transientProcessHandle =
+                error == std::errc::permission_denied ||
+                error == std::errc::device_or_resource_busy;
+#endif
+            if (!transientProcessHandle || attempt == MaximumRenameAttempts)
+            {
+                break;
+            }
+            if (attempt == 1)
+            {
+                writeLog(
+                    "WARNING",
+                    std::string(operation) +
+                        " is temporarily blocked by a closing process; retrying the directory swap.");
+            }
+            std::this_thread::sleep_for(RenameRetryDelay);
         }
+
+        throw std::runtime_error(
+            std::string(operation) + " failed. source=\"" + toUtf8(source.wstring()) +
+            "\", destination=\"" + toUtf8(destination.wstring()) +
+            "\", error=\"" + error.message() + "\"");
     }
 
     bool transactionPathExistsWithoutReparse(

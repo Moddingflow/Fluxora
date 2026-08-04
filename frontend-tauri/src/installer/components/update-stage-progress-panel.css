@@ -1,0 +1,93 @@
+.update-stage-progress {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.update-stage-progress__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.update-stage-progress__heading h1 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.025em;
+  line-height: var(--lh-tight);
+}
+
+.update-stage-progress__heading p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-ui);
+}
+
+.update-stage-progress__versions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+}
+
+.update-stage-progress__versions span:last-child {
+  color: var(--text-strong);
+}
+
+.update-stage-progress__stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.update-stage-progress__stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.update-stage-progress__stage[data-stage-state='pending'] {
+  opacity: 0.56;
+}
+
+.update-stage-progress__label {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.update-stage-progress__label strong {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.update-stage-progress__label span,
+.update-stage-progress__label output {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-ui);
+}
+
+.update-stage-progress__label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-stage-progress__stage[data-stage-state='active'] .flx-progress__bar,
+.update-stage-progress__stage[data-stage-state='complete'] .flx-progress__bar {
+  background: var(--accent);
+}
+
+@media (forced-colors: active) {
+  .update-stage-progress__stage[data-stage-state='pending'] {
+    opacity: 1;
+  }
+}

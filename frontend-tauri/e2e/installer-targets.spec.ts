@@ -715,7 +715,7 @@ async function installUpdaterMock(
             currentItem: 'bin/Fluxora.exe',
             canCancel: false
           }), 10);
-          await new Promise((resolve) => setTimeout(resolve, 80));
+          await new Promise((resolve) => setTimeout(resolve, 300));
           if (terminalOutcome === 'failed') {
             throw {
               code: 'updater.signatureInvalid',
@@ -748,22 +748,28 @@ async function installUpdaterMock(
 
 for (const outcome of ['succeeded', 'rolled-back', 'failed'] as const) {
   test(`Updater renders ${outcome} terminal state`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width: 560, height: 260 });
+    await page.setViewportSize({ width: 620, height: 360 });
     await installUpdaterMock(page, outcome);
     await page.goto(`${baseUrl}/updater/updater.html`);
     await expect(page.getByText('Updating 2.4.0 to 2.5.0')).toBeVisible();
+    await expect(page.getByRole('progressbar')).toHaveCount(2);
     await expect(page.getByText('bin/Fluxora.exe')).toBeVisible();
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('updater-progress-620x360.png')
+    });
 
     if (outcome === 'succeeded') {
       await expect(page.getByText('Fluxora was updated successfully.')).toBeVisible();
       await page.screenshot({
         animations: 'disabled',
-        path: testInfo.outputPath('updater-success-560x260.png')
+        path: testInfo.outputPath('updater-success-620x360.png')
       });
     } else if (outcome === 'rolled-back') {
       await expect(page.getByText('The previous version was restored safely.')).toBeVisible();
     } else {
-      await expect(page.getByRole('alert')).toContainText('updater.signatureInvalid');
+      await expect(page.getByRole('alert')).toContainText('The update request could not be completed.');
+      await expect(page.getByRole('alert')).not.toContainText('updater.signatureInvalid');
     }
   });
 }

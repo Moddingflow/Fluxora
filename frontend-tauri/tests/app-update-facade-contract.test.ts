@@ -53,20 +53,28 @@ describe('application update facade contract', () => {
     await api.updates.getStatus();
     await api.updates.rendererReady();
     await api.updates.check({ operationId: 'op_update_check' });
+    await api.updates.openInstaller({ operationId: 'op_update_install' });
+    await api.updates.installerWindowReady();
     await api.updates.downloadAndInstall({ operationId: 'op_update_install' });
     await api.updates.cancel({ operationId: 'op_update_cancel' });
+    await api.updates.dismissInstaller();
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_updates_get_status');
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_updates_renderer_ready');
     expect(invokeMock).toHaveBeenNthCalledWith(3, 'fluxora_updates_check', {
       request: { operationId: 'op_update_check' }
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(4, 'fluxora_updates_download_and_install', {
+    expect(invokeMock).toHaveBeenNthCalledWith(4, 'fluxora_updates_open_installer', {
       request: { operationId: 'op_update_install' }
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(5, 'fluxora_updates_cancel', {
+    expect(invokeMock).toHaveBeenNthCalledWith(5, 'fluxora_updates_installer_window_ready');
+    expect(invokeMock).toHaveBeenNthCalledWith(6, 'fluxora_updates_download_and_install', {
+      request: { operationId: 'op_update_install' }
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(7, 'fluxora_updates_cancel', {
       request: { operationId: 'op_update_cancel' }
     });
+    expect(invokeMock).toHaveBeenNthCalledWith(8, 'fluxora_updates_dismiss_installer');
     expect(FluxoraIpcChannels.updatesStatus).toBe('fluxora:updates:status');
   });
 

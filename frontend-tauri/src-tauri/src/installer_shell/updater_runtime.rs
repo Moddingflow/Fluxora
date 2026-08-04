@@ -355,8 +355,8 @@ pub fn run_updater(
                 window.set_min_size(Some(tauri::LogicalSize::new(760.0, 560.0)))?;
             } else {
                 window.set_resizable(false)?;
-                window.set_size(tauri::LogicalSize::new(560.0, 260.0))?;
-                window.set_min_size(Some(tauri::LogicalSize::new(520.0, 240.0)))?;
+                window.set_size(tauri::LogicalSize::new(620.0, 360.0))?;
+                window.set_min_size(Some(tauri::LogicalSize::new(560.0, 330.0)))?;
             }
             window.center()?;
             Ok(())
@@ -420,8 +420,8 @@ mod tests {
 
         let window = &config.app.windows[0];
         assert_eq!(window.label, "updater");
-        assert_eq!(window.width, 560.0);
-        assert_eq!(window.height, 260.0);
+        assert_eq!(window.width, 620.0);
+        assert_eq!(window.height, 360.0);
         assert!(!window.maximized);
         assert!(!window.maximizable);
         assert!(!window.visible);

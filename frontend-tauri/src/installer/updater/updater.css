@@ -90,9 +90,8 @@ body {
   font-weight: var(--fw-medium);
 }
 
-.updater-result code {
-  color: var(--installer-error);
-  font-family: var(--font-mono);
+.updater-result span {
+  color: var(--installer-muted);
   font-size: var(--fs-ui);
 }
 

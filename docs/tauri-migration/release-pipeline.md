@@ -192,6 +192,16 @@ the completed package and every target file, create the canonical file-manifest
 digest, and verify the package by unpacking it into a disposable tree before it
 can become a release asset.
 
+The installed app exposes a verified release only as the compact titlebar
+download action. Activating it opens the isolated two-stage update window before
+product windows are hidden. That window reports download percentage and speed;
+the external updater continues with installation percentage and launches the
+new executable only after the signed transaction succeeds. Native diagnostic
+codes remain in the separated updater logs and are never user-facing text. The
+Windows directory swap retries bounded transient access/sharing/lock failures
+from closing processes; all persistent failures still preserve or restore the
+last verified installation.
+
 The runtime cache uses Fluxora's existing stable per-user data root at
 `%APPDATA%\Fluxora\updates`, resolved by `fluxora_data_dir` rather than an
 install path or mutable Tauri identifier:
@@ -341,16 +351,17 @@ Production mode is fail-closed and non-forceful:
    GitHub manifest is the update authority; the Supabase announcement is only a
    latency hint and clients retain startup, focus and 15-minute GitHub polling.
    Delayed or temporarily unreadable public signals therefore produce an
-   explicit pending-propagation warning after the bounded wait but do not turn a
-   release into a failed build. The release assets were already downloaded from
+   `published, announcement unconfirmed` pending-propagation warning after the
+   bounded wait but do not turn a release into a failed build. The release assets were already downloaded from
    the draft and verified against their signed inventory before publication,
    while the publication step separately proves that GitHub accepted the exact
    tag. All pre-publication gates continue to fail closed. Once
    `gh release edit --draft=false` succeeds (or a probe proves it succeeded),
-   `$releasePublished` makes the result irreversible: diagnostic postflight
-   failures must return success-with-warning, forbid retrying or reusing that
-   SemVer, and direct the owner to observe or repair public propagation rather
-   than falsely reporting an already published release as failed.
+   `$releasePublished` makes the result irreversible and forbids retrying or reusing that SemVer.
+   Diagnostic postflight failures must return
+   success-with-warning and direct the owner to observe or repair public
+   propagation rather than falsely reporting an already published release as
+   failed.
 
 There is no honest single transaction across Git, GitHub Releases and local
 files. Before a push, production mode restores local version edits on failure or

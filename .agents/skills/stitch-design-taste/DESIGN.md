@@ -144,7 +144,7 @@ Never default to:
 ### Buttons and actions
 
 - Use `Button` and `IconButton` before creating feature-specific controls.
-- Application-update discovery has no Settings row or manual check button. Only a native-verified available update may reveal the existing compact titlebar update action; background signal, reconnect, checking, current, and automatic-error states remain visually silent.
+- Application-update discovery has no Settings row or manual check button. Only a native-verified available update may reveal the existing compact titlebar update action; background signal, reconnect, checking, current, and automatic-error states remain visually silent. Activating that action opens the focused `620x360` update window before the product workspace is hidden. Download and install are two explicit flat stages with solid accent progress, one percentage per stage, and download speed beside the download label. Never put progress below the titlebar icon, decorate the window with cards or gradients, or expose native keys such as `updater.workflowFailed` as user copy.
 - Primary buttons use the accent only for the main safe action in the current context.
 - Secondary and ghost actions remain neutral. Destructive actions must be explicit and cannot borrow the premium accent.
 - Icon-only actions require an accessible name and a discoverable tooltip where the meaning is not universal.

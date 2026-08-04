@@ -14,29 +14,10 @@ export function AppUpdateToolbarButton({ update }: AppUpdateToolbarButtonProps) 
     return null;
   }
 
-  const progressPercent = 'progressPercent' in update
-    ? Math.max(0, Math.min(100, Math.round(update.progressPercent)))
-    : undefined;
-  const isBusy = update.state === 'downloading'
-    || update.state === 'waitingForOperations'
-    || update.state === 'readyToInstall'
-    || update.state === 'launchingUpdater';
-  const cancellable = update.state === 'downloading'
-    || update.state === 'waitingForOperations'
-    || update.state === 'readyToInstall';
-  const disabled = update.state === 'launchingUpdater';
   const label = (() => {
     switch (update.state) {
       case 'available':
         return t('update.available', { version: update.version });
-      case 'downloading':
-        return t('update.downloading', { version: update.version, percent: progressPercent ?? 0 });
-      case 'waitingForOperations':
-        return t('update.waiting', { version: update.version });
-      case 'readyToInstall':
-        return t('update.ready', { version: update.version });
-      case 'launchingUpdater':
-        return t('update.launching', { version: update.version });
       case 'error':
         return update.retryable
           ? t('update.errorRetry', { version: update.version, error: update.errorMessage })
@@ -74,27 +55,18 @@ export function AppUpdateToolbarButton({ update }: AppUpdateToolbarButtonProps) 
 
   return (
     <button
-      aria-busy={isBusy || undefined}
       aria-invalid={update.state === 'error' || undefined}
       aria-label={label}
       className="titlebar__shortcut titlebar__shortcut--update"
       data-update-control
-      data-update-progress={progressPercent}
       data-update-state={update.state}
-      disabled={disabled}
       title={tooltip}
       type="button"
       onClick={() => {
-        if (cancellable) void update.onCancel();
-        else if ('onActivate' in update) void update.onActivate();
+        if ('onActivate' in update) void update.onActivate();
       }}
     >
       {icon}
-      {update.state === 'downloading' ? (
-        <span aria-hidden="true" className="titlebar__update-progress">
-          <span style={{ width: `${progressPercent}%` }} />
-        </span>
-      ) : null}
       {update.state !== 'available' ? (
         <span
           aria-live={update.state === 'error' ? 'assertive' : 'polite'}

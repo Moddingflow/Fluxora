@@ -709,13 +709,19 @@ renderer into a network, process or filesystem authority.
   `FluxoraSetup.exe` and has no verified receipt deliberately takes the full
   fallback once; after that successful automatic update, subsequent
   exact-version releases can use file-delta packages.
-- The shell owns checking, cache metadata, bounded downloads, lifecycle drain
-  and launching the updater. The typed `window.fluxora.updates` facade owns only
-  renderer-safe state, check/start/cancel/renderer-ready commands and
-  subscriptions. The renderer owns the icon, keyboard cancellation/retry,
-  polite progress and assertive user-action error announcements. Silent startup
-  failures remain silent. It never receives a release URL, signing key, local
-  update path, raw Tauri command or process handle.
+- The shell owns checking, cache metadata, bounded downloads, lifecycle drain,
+  update-window lifecycle and launching the external updater. The typed
+  `window.fluxora.updates` facade owns only renderer-safe state,
+  check/open-window/start/dismiss/renderer-ready commands and subscriptions.
+  The main renderer owns only the availability icon. Activating it creates a
+  hidden, isolated `app-update` webview; after that renderer reports ready the
+  shell shows it and hides every product webview, so a failed window bootstrap
+  never strands the user without the main app. The isolated renderer presents
+  two explicit download/install stages, speed and percentage, then the external
+  updater continues the same two-stage presentation while applying files.
+  Silent startup failures remain silent. Renderer code never receives a release
+  URL, signing key, local update path, raw Tauri command, process handle or
+  native diagnostic detail, and native reason codes are not rendered as copy.
 - Every user-started download/install attempt has one `operationId`. Before
   exit, one atomic `Open -> Draining -> Sealed` lifecycle gate rejects new
   bridge, AI and speech work, waits for in-flight requests, and then permits
@@ -724,11 +730,14 @@ renderer into a network, process or filesystem authority.
   authoritative download/install queue is terminal before any host shutdown.
   All bridge lanes, AI and speech hosts are then shut down cleanly. A shutdown
   failure reopens the gate and eagerly recovers already stopped hosts.
-  Fluxora remains open if work cannot finish safely or the external updater
-  cannot be started; it does not terminate a mod install, download commit or
-  other native mutation to make an update proceed. The user may cancel while
-  downloading, hashing, draining or preparing handoff; an atomic decision gives
-  cancellation or updater-spawn commit exactly one winner.
+  Product windows remain hidden while the update window is visible, but the
+  native process stays alive until durable work reaches a safe boundary.
+  Fluxora restores the product window if the update fails before handoff and
+  does not terminate a mod install, download commit or other native mutation to
+  make an update proceed. Closing the update window is blocked while work is
+  active through both its custom action and the native window close event; the
+  existing atomic cancellation/spawn decision remains a protocol
+  safeguard rather than an exposed titlebar control.
 - The native directory swap is not treated as application health. The updater
   holds a deterministic per-install `Local\\FluxoraUpdate-<sha256>` single-writer
   mutex on a dedicated owner thread across recovery, apply, health probation and
@@ -834,6 +843,10 @@ backup, pre-swap staging validation and post-rename validation of the actual
 live signed tree. A pre-commit error leaves the live install untouched; a
 post-commit mismatch restores the backup. Watchdog/RunOnce recovery rolls back
 an interrupted unconfirmed transaction even when the live directory is absent.
+On Windows, the directory swap retries only transient access/sharing/lock
+failures for a bounded interval so handles released just after parent shutdown
+do not surface as `updater.workflowFailed`; persistent or non-transient errors
+still fail closed and enter the same rollback path.
 On valid health ACK the backup and staging state are cleaned and the already
 running new `Fluxora.exe` continues automatically. On failure the updater keeps
 or restores the last verified installation and reopens that version only when

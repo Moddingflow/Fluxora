@@ -15,10 +15,19 @@ const LazyTextEditorWindow = React.lazy(async () => {
   return { default: module.TextEditorWindow };
 });
 
+const LazyAppUpdateWindow = React.lazy(async () => {
+  const module = await import('./features/update/AppUpdateWindow');
+  return { default: module.AppUpdateWindow };
+});
+
 installTabFocusNavigation();
 
 const windowMode = new URLSearchParams(window.location.search).get('window');
-const RendererRoot = windowMode === 'text-editor' ? LazyTextEditorWindow : LazyApp;
+const RendererRoot = windowMode === 'text-editor'
+  ? LazyTextEditorWindow
+  : windowMode === 'app-update'
+    ? LazyAppUpdateWindow
+    : LazyApp;
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

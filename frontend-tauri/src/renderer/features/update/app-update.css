@@ -19,11 +19,6 @@
   transform: translateY(1px);
 }
 
-.titlebar__shortcut.titlebar__shortcut--update:disabled {
-  color: var(--flx-update-green);
-  opacity: 1;
-}
-
 .titlebar__shortcut.titlebar__shortcut--update[data-update-state="error"] {
   color: var(--danger);
 }
@@ -41,25 +36,6 @@
   -webkit-mask-size: contain;
 }
 
-.titlebar__update-progress {
-  position: absolute;
-  right: 5px;
-  bottom: 2px;
-  left: 5px;
-  height: 2px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, currentColor 22%, transparent);
-}
-
-.titlebar__update-progress > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: currentColor;
-  transition: width var(--motion-fast);
-}
-
 .titlebar__update-live {
   position: absolute;
   width: 1px;
@@ -75,10 +51,4 @@
 
 :root[data-theme="light"] .titlebar__shortcut.titlebar__shortcut--update {
   --flx-update-green: #147a3d;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .titlebar__update-progress > span {
-    transition: none;
-  }
 }

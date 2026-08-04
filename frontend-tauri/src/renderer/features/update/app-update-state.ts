@@ -6,21 +6,6 @@ export type AppUpdateToolbarViewState =
       onActivate: () => void | Promise<void>;
     }
   | {
-      state: 'downloading' | 'waitingForOperations';
-      version: string;
-      progressPercent: number;
-      onCancel: () => void | Promise<void>;
-    }
-  | {
-      state: 'readyToInstall';
-      version: string;
-      onCancel: () => void | Promise<void>;
-    }
-  | {
-      state: 'launchingUpdater';
-      version: string;
-    }
-  | {
       state: 'error';
       version: string;
       errorMessage: string;

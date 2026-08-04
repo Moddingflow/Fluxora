@@ -3,8 +3,9 @@ use crate::update_manifest::{
     MAX_MANIFEST_BYTES,
 };
 use crate::{
-    ai_host_state, bridge_state, fluxora_data_dir, now_millis, validate_negotiated_protocol,
-    write_log, BridgeLane, OperationRequest, BRIDGE_PROTOCOL_VERSION, BRIDGE_TIMEOUT_MS,
+    ai_host_state, bridge_state, fluxora_data_dir, now_millis, show_activation_window,
+    validate_negotiated_protocol, write_log, BridgeLane, OperationRequest, BRIDGE_PROTOCOL_VERSION,
+    BRIDGE_TIMEOUT_MS,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{SecondsFormat, Utc};
@@ -23,7 +24,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
@@ -62,6 +63,7 @@ static KNOWN_PROJECT_DIRECTORIES: OnceLock<StdMutex<HashSet<String>>> = OnceLock
 const INSTALL_DECISION_OPEN: u8 = 0;
 const INSTALL_DECISION_CANCELLED: u8 = 1;
 const INSTALL_DECISION_COMMITTED: u8 = 2;
+pub(crate) const APP_UPDATE_WINDOW_LABEL: &str = "app-update";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1227,6 +1229,133 @@ fn renderer_window_is_main(label: &str) -> bool {
     label == crate::MAIN_WINDOW_LABEL
 }
 
+fn renderer_window_is_installer(label: &str) -> bool {
+    label == APP_UPDATE_WINDOW_LABEL
+}
+
+fn installer_can_open(status: &FluxoraUpdateStatus) -> bool {
+    status.state == UpdateState::Available
+        || status.state == UpdateState::Error
+            && status.error.as_ref().is_some_and(|error| error.retryable)
+}
+
+fn installer_window_close_is_blocked_for_state(state: UpdateState) -> bool {
+    !matches!(
+        state,
+        UpdateState::Available | UpdateState::UpToDate | UpdateState::Error
+    )
+}
+
+pub(crate) fn app_update_window_close_is_blocked(state: &UpdateRuntimeState) -> bool {
+    state
+        .inner
+        .try_lock()
+        .map(|inner| installer_window_close_is_blocked_for_state(inner.status.state))
+        .unwrap_or(true)
+}
+
+#[tauri::command]
+pub(crate) async fn fluxora_updates_open_installer(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, UpdateRuntimeState>,
+    request: Option<OperationRequest>,
+) -> Result<FluxoraUpdateStatus, String> {
+    if !renderer_window_is_main(window.label()) {
+        return Err("Only the main Fluxora window may open the application updater.".to_string());
+    }
+    let mut status = state.inner.lock().await.status.clone();
+    if is_update_draining() || !installer_can_open(&status) {
+        return Ok(status);
+    }
+    let operation_id = update_operation_id(request.as_ref(), "updates_install");
+    status.operation_id = Some(operation_id.clone());
+    if let Some(installer) = app.get_webview_window(APP_UPDATE_WINDOW_LABEL) {
+        show_activation_window(&installer, true);
+        return Ok(status);
+    }
+
+    let url = format!("/?window=app-update&operationId={operation_id}");
+    WebviewWindowBuilder::new(&app, APP_UPDATE_WINDOW_LABEL, WebviewUrl::App(url.into()))
+        .title("Fluxora Updater")
+        .inner_size(620.0, 360.0)
+        .min_inner_size(560.0, 330.0)
+        .resizable(false)
+        .minimizable(true)
+        .maximizable(false)
+        .decorations(false)
+        .visible(false)
+        .background_color(tauri::window::Color(0x09, 0x0c, 0x11, 0xff))
+        .center()
+        .build()
+        .map_err(|error| format!("The application updater window could not be created: {error}"))?;
+    let _ = write_log(
+        &app,
+        "update",
+        "info",
+        "UpdateWindow",
+        "installerWindowCreated visible=false",
+        Some(&operation_id),
+    )
+    .await;
+    Ok(status)
+}
+
+#[tauri::command]
+pub(crate) async fn fluxora_updates_installer_window_ready(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, UpdateRuntimeState>,
+) -> Result<FluxoraUpdateStatus, String> {
+    if !renderer_window_is_installer(window.label()) {
+        return Err("Only the application updater window may enter updater mode.".to_string());
+    }
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    for (label, product_window) in app.webview_windows() {
+        if label != APP_UPDATE_WINDOW_LABEL {
+            let _ = product_window.hide();
+        }
+    }
+    let status = state.inner.lock().await.status.clone();
+    let _ = write_log(
+        &app,
+        "update",
+        "info",
+        "UpdateWindow",
+        "installerWindowReady productWindowsHidden=true",
+        status.operation_id.as_deref(),
+    )
+    .await;
+    Ok(status)
+}
+
+#[tauri::command]
+pub(crate) async fn fluxora_updates_dismiss_installer(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, UpdateRuntimeState>,
+) -> Result<(), String> {
+    if !renderer_window_is_installer(window.label()) {
+        return Err("Only the application updater window may dismiss updater mode.".to_string());
+    }
+    let status = state.inner.lock().await.status.clone();
+    if matches!(
+        status.state,
+        UpdateState::Downloading
+            | UpdateState::WaitingForOperations
+            | UpdateState::ReadyToInstall
+            | UpdateState::LaunchingUpdater
+    ) {
+        return Err("The application update is still active.".to_string());
+    }
+    let main = app
+        .get_webview_window(crate::MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "The main Fluxora window is unavailable.".to_string())?;
+    show_activation_window(&main, true);
+    window.close().map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub(crate) async fn fluxora_updates_renderer_ready(
     app: AppHandle,
@@ -1257,9 +1386,13 @@ pub(crate) async fn fluxora_updates_check(
 #[tauri::command]
 pub(crate) async fn fluxora_updates_download_and_install(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, UpdateRuntimeState>,
     request: Option<OperationRequest>,
 ) -> Result<FluxoraUpdateStatus, String> {
+    if !renderer_window_is_installer(window.label()) {
+        return Err("Only the application updater window may start installation.".to_string());
+    }
     let operation_id = update_operation_id(request.as_ref(), "updates_install");
     Ok(run_download_and_install(&app, &state, &operation_id).await)
 }
@@ -1818,6 +1951,35 @@ mod tests {
         assert!(super::renderer_window_is_main("main"));
         for label in ["settings", "build-settings:1", "Main", "main:secondary"] {
             assert!(!super::renderer_window_is_main(label), "{label}");
+        }
+    }
+
+    #[test]
+    fn installer_window_commands_accept_only_the_isolated_update_window() {
+        assert!(super::renderer_window_is_installer("app-update"));
+        for label in ["main", "updater", "app-update:secondary", "App-Update"] {
+            assert!(!super::renderer_window_is_installer(label), "{label}");
+        }
+    }
+
+    #[test]
+    fn installer_window_close_is_blocked_until_the_flow_is_dismissible() {
+        for state in [
+            super::UpdateState::Idle,
+            super::UpdateState::Checking,
+            super::UpdateState::Downloading,
+            super::UpdateState::WaitingForOperations,
+            super::UpdateState::ReadyToInstall,
+            super::UpdateState::LaunchingUpdater,
+        ] {
+            assert!(super::installer_window_close_is_blocked_for_state(state));
+        }
+        for state in [
+            super::UpdateState::Available,
+            super::UpdateState::UpToDate,
+            super::UpdateState::Error,
+        ] {
+            assert!(!super::installer_window_close_is_blocked_for_state(state));
         }
     }
 

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <span>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -535,6 +537,32 @@ TEST(UpdateEngineTests, CommitFailureAutomaticallyRestoresThePreviousDirectory)
     EXPECT_EQ("obsolete", fluxora::tests::readTextFile(install / L"data" / L"obsolete.bin"));
     EXPECT_FALSE(std::filesystem::exists(install / L"data" / L"current.bin"));
     EXPECT_EQ("user download", fluxora::tests::readTextFile(install / L"Downloads" / L"kept.bin"));
+}
+
+TEST(UpdateEngineTests, CommitRetriesWhileAClosingProcessStillHoldsTheInstallTree)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path install = temp.path() / L"install";
+    const fluxora::installer::UpdateRequest request = writeSimpleDeltaFixture(temp.path(), install);
+    const HANDLE heldExecutable = CreateFileW(
+        (install / L"Fluxora.exe").c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    ASSERT_NE(INVALID_HANDLE_VALUE, heldExecutable);
+    std::jthread releaseHandle([heldExecutable] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        CloseHandle(heldExecutable);
+    });
+    fluxora::installer::UpdateEngine engine{
+        [](std::span<const std::byte>, std::string_view) { return true; }};
+
+    EXPECT_NO_THROW((void)engine.apply(request));
+    EXPECT_EQ("new executable", fluxora::tests::readTextFile(install / L"Fluxora.exe"));
+    fluxora::installer::detail::finalizePendingApplicationUpdate(install);
 }
 
 TEST(UpdateEngineTests, FullUpdateReplacesAnyApplicationFileAndPreservesDownloads)

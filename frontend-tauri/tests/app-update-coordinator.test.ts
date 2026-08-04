@@ -88,7 +88,7 @@ describe('app update coordinator', () => {
     ).toEqual({ state: 'hidden' });
   });
 
-  it('projects available and in-progress snapshots into one stable toolbar action', () => {
+  it('projects only availability into the toolbar and hands progress to the updater window', () => {
     const activate = vi.fn();
 
     expect(
@@ -109,12 +109,7 @@ describe('app update coordinator', () => {
         true,
         activate
       )
-    ).toEqual({
-      state: 'downloading',
-      version: '2.4.0',
-      progressPercent: 25,
-      onCancel: activate
-    });
+    ).toEqual({ state: 'hidden' });
     expect(
       appUpdateToolbarView(
         {
@@ -125,12 +120,7 @@ describe('app update coordinator', () => {
         true,
         activate
       )
-    ).toEqual({
-      state: 'waitingForOperations',
-      version: '2.4.0',
-      progressPercent: 100,
-      onCancel: activate
-    });
+    ).toEqual({ state: 'hidden' });
   });
 
   it('keeps a user-triggered retryable failure on the same inline control', () => {
@@ -198,7 +188,10 @@ describe('app update coordinator', () => {
         calls.push(`check:${request?.operationId}`);
         return available;
       }),
+      openInstaller: vi.fn(async () => available),
       downloadAndInstall: vi.fn(async () => available),
+      installerWindowReady: vi.fn(async () => available),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel: vi.fn(async () => ({ accepted: true, state: 'downloading' as const, operationId: 'op_cancel' })),
       onStatus: vi.fn(() => {
         calls.push('subscribe');
@@ -232,7 +225,10 @@ describe('app update coordinator', () => {
       getStatus: vi.fn(async () => upToDate),
       rendererReady: vi.fn(async () => undefined),
       check: vi.fn(async () => available),
+      openInstaller: vi.fn(async () => available),
       downloadAndInstall: vi.fn(async () => available),
+      installerWindowReady: vi.fn(async () => available),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel: vi.fn(async () => ({ accepted: true, state: 'checking' as const, operationId: 'op_cancel' })),
       onStatus: vi.fn(() => () => undefined)
     };
@@ -258,7 +254,10 @@ describe('app update coordinator', () => {
       getStatus: vi.fn(async () => upToDate),
       rendererReady: vi.fn(async () => undefined),
       check: vi.fn(() => new Promise<FluxoraUpdateStatus>((resolve) => { finishCheck = resolve; })),
+      openInstaller: vi.fn(async () => upToDate),
       downloadAndInstall: vi.fn(async () => upToDate),
+      installerWindowReady: vi.fn(async () => upToDate),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel: vi.fn(async () => ({ accepted: true, state: 'checking' as const, operationId: 'op_cancel' })),
       onStatus: vi.fn(() => () => undefined)
     };
@@ -277,7 +276,7 @@ describe('app update coordinator', () => {
   });
 
   it('deduplicates repeated activation and preserves one operation id', async () => {
-    let finishDownload: ((status: FluxoraUpdateStatus) => void) | undefined;
+    let finishOpen: ((status: FluxoraUpdateStatus) => void) | undefined;
     const available: FluxoraUpdateStatus = {
       state: 'available',
       currentVersion: '2.3.0',
@@ -287,11 +286,14 @@ describe('app update coordinator', () => {
       getStatus: vi.fn(async () => available),
       rendererReady: vi.fn(async () => undefined),
       check: vi.fn(async () => available),
-      downloadAndInstall: vi.fn(
+      openInstaller: vi.fn(
         () => new Promise<FluxoraUpdateStatus>((resolve) => {
-          finishDownload = resolve;
+          finishOpen = resolve;
         })
       ),
+      downloadAndInstall: vi.fn(async () => available),
+      installerWindowReady: vi.fn(async () => available),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel: vi.fn(async () => ({ accepted: true, state: 'downloading' as const, operationId: 'op_cancel' })),
       onStatus: vi.fn(() => () => undefined)
     };
@@ -305,15 +307,12 @@ describe('app update coordinator', () => {
     const first = coordinator.activate();
     const second = coordinator.activate();
 
-    expect(api.downloadAndInstall).toHaveBeenCalledTimes(1);
-    expect(api.downloadAndInstall).toHaveBeenCalledWith({
+    expect(api.openInstaller).toHaveBeenCalledTimes(1);
+    expect(api.openInstaller).toHaveBeenCalledWith({
       operationId: 'op_app_update_download_install'
     });
-    finishDownload?.({
-      ...available,
-      state: 'launchingUpdater',
-      operationId: 'op_app_update_download_install'
-    });
+    expect(api.downloadAndInstall).not.toHaveBeenCalled();
+    finishOpen?.(available);
     await Promise.all([first, second]);
   });
 
@@ -340,7 +339,10 @@ describe('app update coordinator', () => {
       getStatus: vi.fn(async () => available),
       rendererReady: vi.fn(async () => undefined),
       check: vi.fn(async () => available),
+      openInstaller: vi.fn(async () => available),
       downloadAndInstall: vi.fn(async () => available),
+      installerWindowReady: vi.fn(async () => available),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel,
       onStatus: vi.fn((listener) => {
         emitStatus = listener;
@@ -367,19 +369,19 @@ describe('app update coordinator', () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
-  it('keeps ready-to-install cancellable until updater launch is committed', () => {
+  it('keeps handoff-only states out of the titlebar', () => {
     const activate = vi.fn();
 
     expect(appUpdateToolbarView(
       { ...status('readyToInstall'), availableVersion: '2.4.0' },
       true,
       activate
-    )).toEqual({ state: 'readyToInstall', version: '2.4.0', onCancel: activate });
+    )).toEqual({ state: 'hidden' });
     expect(appUpdateToolbarView(
       { ...status('launchingUpdater'), availableVersion: '2.4.0' },
       true,
       activate
-    )).toEqual({ state: 'launchingUpdater', version: '2.4.0' });
+    )).toEqual({ state: 'hidden' });
   });
 
   it('turns a failed user download into one explicit retry path', async () => {
@@ -393,9 +395,12 @@ describe('app update coordinator', () => {
       getStatus: vi.fn(async () => available),
       rendererReady: vi.fn(async () => undefined),
       check: vi.fn(async () => available),
-      downloadAndInstall: vi.fn()
+      openInstaller: vi.fn()
         .mockRejectedValueOnce(new Error('Соединение прервано'))
         .mockResolvedValueOnce({ ...available, state: 'launchingUpdater' }),
+      downloadAndInstall: vi.fn(async () => available),
+      installerWindowReady: vi.fn(async () => available),
+      dismissInstaller: vi.fn(async () => undefined),
       cancel: vi.fn(async () => ({ accepted: true, state: 'downloading' as const, operationId: 'op_cancel' })),
       onStatus: vi.fn(() => () => undefined)
     };
@@ -416,7 +421,7 @@ describe('app update coordinator', () => {
     );
 
     await coordinator.activate();
-    expect(api.downloadAndInstall).toHaveBeenCalledTimes(2);
+    expect(api.openInstaller).toHaveBeenCalledTimes(2);
     expect(onStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ state: 'launchingUpdater' }),
       true

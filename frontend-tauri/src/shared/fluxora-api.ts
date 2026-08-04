@@ -184,7 +184,10 @@ export const FluxoraIpcChannels = {
   updatesCheck: 'fluxora:updates:check',
   updatesCancel: 'fluxora:updates:cancel',
   updatesDownloadAndInstall: 'fluxora:updates:download-and-install',
+  updatesDismissInstaller: 'fluxora:updates:dismiss-installer',
   updatesGetStatus: 'fluxora:updates:get-status',
+  updatesInstallerWindowReady: 'fluxora:updates:installer-window-ready',
+  updatesOpenInstaller: 'fluxora:updates:open-installer',
   updatesRendererReady: 'fluxora:updates:renderer-ready',
   updatesStatus: 'fluxora:updates:status',
   uiLog: 'fluxora:ui:log',
@@ -2491,8 +2494,11 @@ export interface FluxoraApi {
     getStatus: () => Promise<FluxoraUpdateStatus>;
     rendererReady: () => Promise<void>;
     check: (request?: OperationRequest) => Promise<FluxoraUpdateStatus>;
+    openInstaller: (request?: OperationRequest) => Promise<FluxoraUpdateStatus>;
+    installerWindowReady: () => Promise<FluxoraUpdateStatus>;
     downloadAndInstall: (request?: OperationRequest) => Promise<FluxoraUpdateStatus>;
     cancel: (request?: OperationRequest) => Promise<FluxoraUpdateCancelResult>;
+    dismissInstaller: () => Promise<void>;
     onStatus: (callback: (status: FluxoraUpdateStatus) => void) => () => void;
   };
   apiLimits: {

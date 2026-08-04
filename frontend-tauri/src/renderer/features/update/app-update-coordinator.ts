@@ -178,7 +178,7 @@ export const createAppUpdateCoordinator = ({
       userInitiatedOperation = true;
       let request: Promise<FluxoraUpdateStatus>;
       try {
-        request = api.downloadAndInstall({ operationId });
+        request = api.openInstaller({ operationId });
       } catch (error) {
         request = Promise.reject(error);
       }
@@ -252,13 +252,17 @@ export const appUpdateToolbarView = (
   status: FluxoraUpdateStatus,
   userInitiated: boolean,
   onActivate: () => void | Promise<void>,
-  onCancel: () => void | Promise<void> = onActivate,
+  _onCancel: () => void | Promise<void> = onActivate,
   language?: string | null
 ): AppUpdateToolbarViewState => {
   if (
     status.state === 'idle'
     || status.state === 'checking'
     || status.state === 'upToDate'
+    || status.state === 'downloading'
+    || status.state === 'waitingForOperations'
+    || status.state === 'readyToInstall'
+    || status.state === 'launchingUpdater'
     || (status.state === 'error' && !userInitiated)
   ) {
     return { state: 'hidden' };
@@ -286,29 +290,6 @@ export const appUpdateToolbarView = (
       onActivate
     };
     return { state: 'error', version, errorMessage, retryable: false };
-  }
-
-  if (status.state === 'downloading' || status.state === 'waitingForOperations') {
-    const byteProgress = status.totalBytes && status.totalBytes > 0
-      ? (status.downloadedBytes ?? 0) / status.totalBytes * 100
-      : 0;
-    const progressPercent = Number.isFinite(status.progressPercent)
-      ? status.progressPercent ?? 0
-      : byteProgress;
-    return {
-      state: status.state,
-      version,
-      progressPercent: Math.max(0, Math.min(100, progressPercent)),
-      onCancel
-    };
-  }
-
-  if (status.state === 'readyToInstall') {
-    return { state: status.state, version, onCancel };
-  }
-
-  if (status.state === 'launchingUpdater') {
-    return { state: status.state, version };
   }
 
   return { state: 'hidden' };

@@ -4,6 +4,7 @@
   "description": "Fluxora main and settings webviews",
   "windows": [
     "main",
+    "app-update",
     "settings",
     "build-settings:*",
     "mod-details:*",
