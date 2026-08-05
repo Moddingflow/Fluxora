@@ -12,7 +12,7 @@
     },
     {
       "path": "frontend-tauri/package.json",
-      "sha256": "e8799cdfa65f70459f1b5ce8f19edc6894e1f86037225de9ec3861dc42171479"
+      "sha256": "fa697a36b08a7437b175b18345a0845a48313cdb078279632eaa732d5bc32679"
     },
     {
       "path": "frontend-tauri/pnpm-lock.yaml",
@@ -20,11 +20,11 @@
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.toml",
-      "sha256": "36150e53cdea2dba30dfeec4de644e15bb5bb39e31ef4ec34bb5b7b33a76d37f"
+      "sha256": "2b02d2eb505f47f1746f280e94a2d0e4d36934946884bf71dc120a7c794fed8f"
     },
     {
       "path": "frontend-tauri/src-tauri/Cargo.lock",
-      "sha256": "6fcb138414158c0e6d83d3b49127911b45e93add5e311e1c5c3941a15f1ac707"
+      "sha256": "b98fb4b2b63995402f55f7d04f0bbdaad547c2eff89d8fade2eb366a706d8fdc"
     },
     {
       "path": "Build.ps1",
@@ -32,11 +32,11 @@
     },
     {
       "path": "backend/CMakeLists.txt",
-      "sha256": "e5366ef25db525467b8f5ee2f7f05c3693b5b329ca4172640e241f20636e9f23"
+      "sha256": "b5d1de5ddc57a68dd46df20aec2014db7ede9e13dbd19252193ab7d7c947a8b2"
     },
     {
       "path": "backend/tests/CMakeLists.txt",
-      "sha256": "b6898d6a46ea03eb381200722928d06058d9e26c8f48d408fdd4c459befd5fbc"
+      "sha256": "e21ea53d6ef916aca79d491d3538e9763543b341bf247d4c5a8ecc5fc197b8d6"
     },
     {
       "path": "frontend-tauri/speech/manifest.v1.json",
