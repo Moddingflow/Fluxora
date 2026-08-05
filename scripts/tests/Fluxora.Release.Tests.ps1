@@ -1642,6 +1642,38 @@ Invoke-Case 'post-checkpoint drift allows only tracked Graphify modifications' {
     }
 }
 
+Invoke-Case 'Graphify hook working state stays out of the release working tree' {
+    # The post-commit hook launches a detached rebuild that writes these files at
+    # unpredictable times. Untracked entries abort a production release, so .gitignore
+    # must hide every one of them while keeping the published artifacts tracked.
+    foreach ($transientPath in @(
+        'graphify-out/.pending_changes',
+        'graphify-out/.rebuild.lock',
+        'graphify-out/needs_update',
+        'graphify-out/.graph.tmp.json',
+        'graphify-out/.graphify_python',
+        'graphify-out/.graphify_analysis.json',
+        'graphify-out/manifest.json',
+        'graphify-out/cache')) {
+        & git -C $projectRoot check-ignore --quiet -- $transientPath
+        Assert-Equal $LASTEXITCODE 0 "Graphify working-state path '$transientPath' must be ignored so it cannot block a release."
+    }
+
+    $trackedGraphifyPaths = @(
+        Get-Content -LiteralPath (Join-Path $projectRoot '.gitignore') |
+            Where-Object { $_.StartsWith('!/graphify-out/', [StringComparison]::Ordinal) }
+    )
+    Assert-Equal $trackedGraphifyPaths.Count 4 'Exactly the four published Graphify artifacts may be re-included.'
+    foreach ($publishedPath in @(
+        'graphify-out/.graphify_labels.json',
+        'graphify-out/.graphify_root',
+        'graphify-out/GRAPH_REPORT.md',
+        'graphify-out/graph.json')) {
+        & git -C $projectRoot check-ignore --quiet -- $publishedPath
+        Assert-Equal $LASTEXITCODE 1 "Published Graphify artifact '$publishedPath' must stay tracked."
+    }
+}
+
 Invoke-Case 'release signal public configuration fails before long production work' {
     Assert-FluxoraReleaseSignalPublicConfiguration `
         -SupabaseUrl 'https://tpciohumwahlctpeuduv.supabase.co' `

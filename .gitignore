@@ -59,9 +59,16 @@ logs/
 /.claude/
 /.playwright-mcp/
 
-# Generated Graphify working state (keep graph.json/report tracked)
-/graphify-out/cache/
-/graphify-out/manifest.json
+# Generated Graphify working state. Deny by default: the post-commit hook launches
+# a detached rebuild that drops transient files here (.pending_changes, .rebuild.lock,
+# needs_update, .graph.tmp.json, ...) at unpredictable times, and a production release
+# aborts on any untracked working-tree entry. Only the four published artifacts below
+# are tracked; add another negation here if a new Graphify output should be committed.
+/graphify-out/*
+!/graphify-out/.graphify_labels.json
+!/graphify-out/.graphify_root
+!/graphify-out/GRAPH_REPORT.md
+!/graphify-out/graph.json
 
 # Temporary local workspaces and files
 tmp/
