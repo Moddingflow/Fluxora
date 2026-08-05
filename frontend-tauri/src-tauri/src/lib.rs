@@ -1742,10 +1742,18 @@ fn default_install_root_directory(data_dir: &Path) -> PathBuf {
     }
 }
 
-fn executable_log_dir() -> Option<PathBuf> {
+/// The updater relaunches Fluxora through a canonicalized path, so `current_exe` can report a
+/// Windows verbatim path (`\\?\C:\...`). Everything derived from it — the app root handed to the
+/// native bridge, the log directory — must use the ordinary spelling.
+fn executable_directory() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join("logs")))
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .map(crate::update_shared::without_verbatim_prefix)
+}
+
+fn executable_log_dir() -> Option<PathBuf> {
+    executable_directory().map(|directory| directory.join("logs"))
 }
 
 static LOG_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
@@ -2444,12 +2452,7 @@ fn fluxora_app_root() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
 
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("Fluxora executable path is unavailable: {error}"))?;
-    executable
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "Fluxora executable directory is unavailable.".to_string())
+    executable_directory().ok_or_else(|| "Fluxora executable directory is unavailable.".to_string())
 }
 
 impl BridgeProcess {

@@ -206,6 +206,28 @@ namespace fluxora::tests
     }
 
 #ifdef _WIN32
+    TEST(PathSafetyServiceTests, ExtendedLengthPrefixedPathsStayOrdinaryWindowsPaths)
+    {
+        TempDirectory temp;
+        const std::filesystem::path installRoot = temp.path() / L"Fluxora";
+        std::filesystem::create_directories(installRoot);
+
+        const std::filesystem::path plain = installRoot / L"Downloads" / L"skyrimse";
+        const std::filesystem::path prefixed =
+            std::filesystem::path(L"\\\\?\\" + installRoot.wstring()) / L"Downloads" / L"skyrimse";
+
+        const PathSafetyService safety;
+        const PathSafetyResult result = safety.validateDirectoryWriteRoot(prefixed);
+
+        EXPECT_TRUE(result.safe()) << result.message();
+        EXPECT_FALSE(hasIssue(result, PathSafetyIssueCode::UnknownRoot));
+        EXPECT_FALSE(hasIssue(result, PathSafetyIssueCode::UnsafeCharacter));
+        EXPECT_EQ(safety.canonicalize(prefixed), safety.canonicalize(plain));
+        EXPECT_TRUE(safety.isSameOrInside(prefixed, installRoot));
+        EXPECT_TRUE(safety.isSameOrInside(plain, std::filesystem::path(
+            L"\\\\?\\" + installRoot.wstring())));
+    }
+
     TEST(PathSafetyServiceTests, DirectoryWriteRootBlocksWindowsSystemFolders)
     {
         std::wstring windows(MAX_PATH, L'\0');
@@ -221,6 +243,34 @@ namespace fluxora::tests
 
         EXPECT_FALSE(result.safe());
         EXPECT_TRUE(hasIssue(result, PathSafetyIssueCode::SystemPath));
+
+        const PathSafetyResult prefixed = PathSafetyService().validateDirectoryWriteRoot(
+            std::filesystem::path(L"\\\\?\\" + windows));
+
+        EXPECT_FALSE(prefixed.safe());
+        EXPECT_TRUE(hasIssue(prefixed, PathSafetyIssueCode::SystemPath));
+
+        // A volume GUID spells the same directory without a drive letter; the guard has to
+        // recognise it through canonicalization rather than through the literal text.
+        const std::filesystem::path windowsRoot =
+            std::filesystem::path(windows).root_path();
+        std::wstring volumeName(64, L'\0');
+        if (GetVolumeNameForVolumeMountPointW(
+                windowsRoot.wstring().c_str(),
+                volumeName.data(),
+                static_cast<DWORD>(volumeName.size())))
+        {
+            volumeName.resize(std::wcslen(volumeName.c_str()));
+            const std::filesystem::path viaVolume =
+                std::filesystem::path(volumeName) /
+                std::filesystem::path(windows).lexically_relative(windowsRoot);
+            const PathSafetyResult volumeResult =
+                PathSafetyService().validateDirectoryWriteRoot(viaVolume);
+
+            EXPECT_FALSE(volumeResult.safe()) << viaVolume.wstring();
+            EXPECT_TRUE(hasIssue(volumeResult, PathSafetyIssueCode::SystemPath))
+                << viaVolume.wstring() << L" -> " << volumeResult.message();
+        }
     }
 #endif
 }

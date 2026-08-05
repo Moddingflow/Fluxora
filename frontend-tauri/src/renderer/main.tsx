@@ -28,6 +28,7 @@ const LazyExecutableSettingsWindow = React.lazy(async () => {
 installTabFocusNavigation();
 
 const windowMode = new URLSearchParams(window.location.search).get('window');
+document.documentElement.dataset.window = windowMode ?? 'main';
 const RendererRoot = windowMode === 'text-editor'
   ? LazyTextEditorWindow
   : windowMode === 'executable-settings'

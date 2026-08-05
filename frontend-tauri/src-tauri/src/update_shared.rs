@@ -1080,6 +1080,34 @@ pub(crate) fn generate_handoff_nonce() -> Result<String, UpdateServiceError> {
     Ok(nonce)
 }
 
+/// `std::fs::canonicalize` returns Windows verbatim paths (`\\?\C:\...`). Handing one to
+/// `CreateProcessW` makes the launched process report it from `GetModuleFileNameW`, so the
+/// prefix spreads into every path the relaunched Fluxora derives from its own executable.
+/// Canonicalize for identity checks, then hand the ordinary spelling onwards.
+pub(crate) fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            let mut characters = rest.chars();
+            let drive = characters.next();
+            if drive.is_some_and(|value| value.is_ascii_alphabetic())
+                && characters.next() == Some(':')
+            {
+                return PathBuf::from(rest.to_string());
+            }
+        }
+    }
+    path
+}
+
+fn canonicalize_native(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(without_verbatim_prefix)
+}
+
 fn is_reparse_or_link(metadata: &std::fs::Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
@@ -1123,14 +1151,14 @@ fn trusted_installed_file(
             false,
         ));
     }
-    let canonical_install = std::fs::canonicalize(install_directory).map_err(|_| {
+    let canonical_install = canonicalize_native(install_directory).map_err(|_| {
         UpdateServiceError::new(
             "install-directory-unavailable",
             "The installed application directory is unavailable.",
             false,
         )
     })?;
-    let canonical_source = std::fs::canonicalize(source).map_err(|_| {
+    let canonical_source = canonicalize_native(source).map_err(|_| {
         UpdateServiceError::new(
             "updater-resource-untrusted",
             "The installed updater could not be trusted.",
@@ -1201,14 +1229,14 @@ pub(crate) async fn prepare_updater_handoff(
     input: HandoffInput<'_>,
 ) -> Result<PreparedUpdaterLaunch, UpdateServiceError> {
     let updater_source = trusted_installed_file(input.install_directory, input.updater_source)?;
-    let canonical_install = std::fs::canonicalize(input.install_directory).map_err(|_| {
+    let canonical_install = canonicalize_native(input.install_directory).map_err(|_| {
         UpdateServiceError::new(
             "install-directory-unavailable",
             "The installed application directory is unavailable.",
             false,
         )
     })?;
-    let canonical_application = std::fs::canonicalize(input.application_path).map_err(|_| {
+    let canonical_application = canonicalize_native(input.application_path).map_err(|_| {
         UpdateServiceError::new(
             "application-path-unavailable",
             "The installed application executable is unavailable.",
@@ -1241,13 +1269,16 @@ pub(crate) async fn prepare_updater_handoff(
             true,
         )
     })?;
-    let canonical_root = fs::canonicalize(&runtime_root).await.map_err(|_| {
-        UpdateServiceError::new(
-            "updater-stage-failed",
-            "The application updater could not be staged.",
-            true,
-        )
-    })?;
+    let canonical_root = fs::canonicalize(&runtime_root)
+        .await
+        .map(without_verbatim_prefix)
+        .map_err(|_| {
+            UpdateServiceError::new(
+                "updater-stage-failed",
+                "The application updater could not be staged.",
+                true,
+            )
+        })?;
     if canonical_root.starts_with(&canonical_install) {
         return Err(UpdateServiceError::new(
             "updater-runtime-inside-install",
@@ -1411,6 +1442,24 @@ mod tests {
         assert!(component.starts_with("operation-"));
         assert_eq!(component.len(), "operation-".len() + 32);
         assert!(!component.contains("private"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_prefixes_are_folded_away_before_a_path_leaves_the_updater_handoff() {
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\C:\Users\Someone\AppData\Local\Fluxora")),
+            PathBuf::from(r"C:\Users\Someone\AppData\Local\Fluxora")
+        );
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\Fluxora")),
+            PathBuf::from(r"\\server\share\Fluxora")
+        );
+        // Volume GUID paths have no ordinary spelling, so they must survive untouched.
+        let volume = PathBuf::from(r"\\?\Volume{d0e51d0e-0000-0000-0000-100000000000}\Fluxora");
+        assert_eq!(without_verbatim_prefix(volume.clone()), volume);
+        let plain = PathBuf::from(r"C:\Fluxora");
+        assert_eq!(without_verbatim_prefix(plain.clone()), plain);
     }
 
     fn asset(kind: UpdateAssetKind) -> UpdateAsset {

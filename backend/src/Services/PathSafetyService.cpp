@@ -38,6 +38,50 @@ namespace fluxora
             return value;
         }
 
+        [[nodiscard]] bool isSeparator(wchar_t character) noexcept
+        {
+            return character == L'\\' || character == L'/';
+        }
+
+        // Win32 accepts \\?\C:\... and \\?\UNC\server\share spellings of ordinary paths, and
+        // hands them back from APIs such as GetModuleFileNameW when a process was launched
+        // through one. std::filesystem parses the \\?\ marker as the root name, which leaves
+        // the drive letter in a regular component whose colon reads as an unsafe character and
+        // leaves a root path that cannot be inspected. Fold the marker away before anything
+        // else looks at the path.
+        [[nodiscard]] std::filesystem::path withoutExtendedLengthPrefix(
+            const std::filesystem::path& path)
+        {
+#ifdef _WIN32
+            const std::wstring value = path.wstring();
+            if (value.size() < 4 ||
+                !isSeparator(value[0]) ||
+                !isSeparator(value[1]) ||
+                value[2] != L'?' ||
+                !isSeparator(value[3]))
+            {
+                return path;
+            }
+
+            const std::wstring remainder = value.substr(4);
+            if (remainder.size() > 4 &&
+                toLower(remainder.substr(0, 3)) == L"unc" &&
+                isSeparator(remainder[3]))
+            {
+                return std::filesystem::path(L"\\\\" + remainder.substr(4));
+            }
+
+            if (remainder.size() >= 2 && remainder[1] == L':' && std::iswalpha(remainder[0]))
+            {
+                return std::filesystem::path(remainder);
+            }
+
+            return path;
+#else
+            return path;
+#endif
+        }
+
         [[nodiscard]] std::wstring trimWhitespace(std::wstring value)
         {
             const auto first = value.find_first_not_of(L" \t\r\n");
@@ -243,11 +287,12 @@ namespace fluxora
 
         [[nodiscard]] std::filesystem::path absoluteOrLexical(const std::filesystem::path& path)
         {
+            const std::filesystem::path native = withoutExtendedLengthPrefix(path);
             std::error_code error;
-            const std::filesystem::path absolute = path.is_absolute()
-                ? path
-                : std::filesystem::absolute(path, error);
-            return error ? path.lexically_normal() : absolute.lexically_normal();
+            const std::filesystem::path absolute = native.is_absolute()
+                ? native
+                : std::filesystem::absolute(native, error);
+            return error ? native.lexically_normal() : absolute.lexically_normal();
         }
 
         [[nodiscard]] std::filesystem::path nearestExistingPath(std::filesystem::path path)
@@ -275,7 +320,7 @@ namespace fluxora
 
         [[nodiscard]] std::wstring comparisonKey(const std::filesystem::path& path)
         {
-            std::wstring key = path.lexically_normal().wstring();
+            std::wstring key = withoutExtendedLengthPrefix(path).lexically_normal().wstring();
             std::replace(key.begin(), key.end(), L'/', L'\\');
             while (key.size() > 1 && (key.back() == L'\\' || key.back() == L'/'))
             {
@@ -312,6 +357,37 @@ namespace fluxora
                 candidateKey.compare(0, rootKey.size(), rootKey) == 0;
         }
 
+        // The smallest part of an absolute path that names a real filesystem object: the drive
+        // root for local paths, the share directory for UNC paths, because \\server on its own
+        // cannot be inspected.
+        [[nodiscard]] std::filesystem::path inspectableRoot(const std::filesystem::path& path)
+        {
+            const std::filesystem::path root = path.root_path();
+            if (root.empty())
+            {
+                return {};
+            }
+
+#ifdef _WIN32
+            const std::wstring rootName = path.root_name().wstring();
+            const bool isUncRoot = rootName.size() > 2 &&
+                isSeparator(rootName[0]) &&
+                isSeparator(rootName[1]);
+            if (isUncRoot)
+            {
+                const std::filesystem::path relative = path.lexically_relative(root);
+                if (relative.empty() || relative == L".")
+                {
+                    return {};
+                }
+
+                return root / *relative.begin();
+            }
+#endif
+
+            return root;
+        }
+
         [[nodiscard]] bool hasKnownRoot(const std::filesystem::path& path)
         {
             if (!path.is_absolute())
@@ -319,7 +395,7 @@ namespace fluxora
                 return false;
             }
 
-            const std::filesystem::path root = path.root_path();
+            const std::filesystem::path root = inspectableRoot(path);
             if (root.empty())
             {
                 return false;
@@ -684,7 +760,8 @@ namespace fluxora
         validateAbsolutePath(result, absoluteCandidate, *this, false);
 
         std::error_code rootError;
-        const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(absoluteRoot, rootError);
+        const std::filesystem::path canonicalRoot = withoutExtendedLengthPrefix(
+            std::filesystem::weakly_canonical(absoluteRoot, rootError));
         if (rootError)
         {
             addIssue(
@@ -790,7 +867,9 @@ namespace fluxora
         const std::filesystem::path absolute = absoluteOrLexical(path);
         std::error_code error;
         const std::filesystem::path canonical = std::filesystem::weakly_canonical(absolute, error);
-        return error ? absolute.lexically_normal() : canonical.lexically_normal();
+        return error
+            ? absolute.lexically_normal()
+            : withoutExtendedLengthPrefix(canonical).lexically_normal();
     }
 
     bool PathSafetyService::isSameOrInside(
