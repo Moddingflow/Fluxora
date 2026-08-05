@@ -1,6 +1,7 @@
 import type {
   FluxoraAiQuotaAvailability,
-  FluxoraAiQuotaSnapshot
+  FluxoraAiQuotaSnapshot,
+  FluxoraAiQuotaTier
 } from '../../../shared/fluxora-api';
 import {
   normalizeAppLocale,
@@ -12,6 +13,7 @@ import {
 interface AiQuotaIndicatorProps {
   language: string;
   quota?: FluxoraAiQuotaSnapshot | null;
+  onOpenBilling?: () => void;
 }
 
 type QuantitativeAvailability = Extract<
@@ -30,13 +32,21 @@ const isQuantitativeAvailability = (
   || availability === 'searchQuotaExhausted'
 );
 
+// The rail fills as the monthly allowance is consumed, so a nearly full bar
+// always reads as "almost out" regardless of plan size.
 const quotaLevel = (
   availability: QuantitativeAvailability,
-  remainingPercent: number
+  usedPercent: number
 ) => {
-  if (availability === 'quotaExhausted' || remainingPercent <= 10) return 'critical';
-  if (availability !== 'available' || remainingPercent <= 25) return 'warning';
+  if (availability === 'quotaExhausted' || usedPercent >= 90) return 'critical';
+  if (availability !== 'available' || usedPercent >= 75) return 'warning';
   return 'healthy';
+};
+
+const planKey = (tier: FluxoraAiQuotaTier): TranslationKey => {
+  if (tier === 'free') return 'ai.quota.plan.free';
+  if (tier === 'premium') return 'ai.quota.plan.premium';
+  return 'ai.quota.agentLimit';
 };
 
 const resetTime = (locale: AppLocale, value: string | null) => {
@@ -51,7 +61,7 @@ const resetTime = (locale: AppLocale, value: string | null) => {
   }).format(parsed);
 };
 
-export function AiQuotaIndicator({ language, quota }: AiQuotaIndicatorProps) {
+export function AiQuotaIndicator({ language, quota, onOpenBilling }: AiQuotaIndicatorProps) {
   if (!quota) return null;
 
   const locale = normalizeAppLocale(language);
@@ -59,16 +69,18 @@ export function AiQuotaIndicator({ language, quota }: AiQuotaIndicatorProps) {
     agentLimit: translateForLanguage(language, 'ai.quota.agentLimit'),
     byokDetail: translateForLanguage(language, 'ai.quota.byokDetail'),
     byokTitle: translateForLanguage(language, 'ai.quota.byokTitle'),
-    remaining: translateForLanguage(language, 'ai.quota.remaining'),
     resets: translateForLanguage(language, 'ai.quota.resets'),
     search: translateForLanguage(language, 'ai.quota.search'),
-    section: translateForLanguage(language, 'ai.quota.section')
+    section: translateForLanguage(language, 'ai.quota.section'),
+    upgrade: translateForLanguage(language, 'ai.quota.upgrade'),
+    used: translateForLanguage(language, 'ai.quota.used')
   };
   const stateCopy = (availability: FluxoraAiQuotaAvailability) => translateForLanguage(
     language,
     `ai.quota.state.${availability}` as TranslationKey
   );
   const formattedReset = resetTime(locale, quota.resetAt);
+  const planLabel = translateForLanguage(language, planKey(quota.tier));
 
   if (quota.availability === 'byok') {
     return (
@@ -107,11 +119,13 @@ export function AiQuotaIndicator({ language, quota }: AiQuotaIndicatorProps) {
     );
   }
 
-  const remainingPercent = clampPercent(quota.remaining / quota.limit * 100);
+  // Reserved cost belongs to requests already in flight, so it counts as spent
+  // until the run settles. Otherwise the rail would jump backwards mid-run.
+  const usedPercent = clampPercent((quota.used + quota.reserved) / quota.limit * 100);
   const progressLabel = translateForLanguage(language, 'ai.quota.progress', {
-    limit: copy.agentLimit,
-    percent: remainingPercent,
-    remaining: copy.remaining
+    percent: usedPercent,
+    plan: planLabel,
+    used: copy.used
   });
   const stateMessage = quota.availability === 'available'
     ? null
@@ -121,26 +135,27 @@ export function AiQuotaIndicator({ language, quota }: AiQuotaIndicatorProps) {
     <section
       aria-label={copy.section}
       className="ai-quota-usage"
-      data-level={quotaLevel(quota.availability, remainingPercent)}
+      data-level={quotaLevel(quota.availability, usedPercent)}
       data-state={quota.availability}
+      data-tier={quota.tier}
     >
       <span className="ai-quota-usage__primary">
         <span className="ai-quota-usage__heading">
-          <span>{copy.agentLimit}</span>
-          <strong>{remainingPercent}% {copy.remaining}</strong>
+          <span>{planLabel}</span>
+          <strong>{usedPercent}% {copy.used}</strong>
         </span>
         <span
           aria-label={progressLabel}
           aria-valuemax={100}
           aria-valuemin={0}
-          aria-valuenow={remainingPercent}
+          aria-valuenow={usedPercent}
           className="ai-quota-usage__track"
           role="progressbar"
         >
           <span
             aria-hidden="true"
             className="ai-quota-usage__track-fill"
-            style={{ transform: `scaleX(${remainingPercent / 100})` }}
+            style={{ transform: `scaleX(${usedPercent / 100})` }}
           />
         </span>
       </span>
@@ -152,6 +167,15 @@ export function AiQuotaIndicator({ language, quota }: AiQuotaIndicatorProps) {
         ) : null}
         {formattedReset ? (
           <time dateTime={quota.resetAt ?? undefined}>{copy.resets} {formattedReset}</time>
+        ) : null}
+        {quota.tier === 'free' && onOpenBilling ? (
+          <button
+            className="ai-quota-usage__upgrade"
+            onClick={onOpenBilling}
+            type="button"
+          >
+            {copy.upgrade}
+          </button>
         ) : null}
       </span>
     </section>

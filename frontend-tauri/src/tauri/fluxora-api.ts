@@ -27,6 +27,7 @@ import type {
   FluxoraLaunchProcessWatchRequest,
   FluxoraManagedLaunchCompletion,
   FluxoraIpcChannel,
+  FluxoraGameInstallDiscoverySnapshot,
   FluxoraGameTemplate,
   FluxoraAnalyzeContentLayoutRequest,
   FluxoraAnalyzeFomodContentLayoutRequest,
@@ -2305,6 +2306,14 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         request
       )
   },
+  gameInstalls: {
+    discover: (request?: OperationRequest) =>
+      invokeTyped<FluxoraGameInstallDiscoverySnapshot>(
+        ipc,
+        FluxoraIpcChannels.gameInstallsDiscover,
+        request
+      )
+  },
   security: {
     getState: () =>
       invokeTyped<FluxoraSecurityState>(ipc, FluxoraIpcChannels.securityGetState)
@@ -2845,6 +2854,7 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
       available: false,
       eligibility: false,
       reason: 'browser-preview',
+      tier: 'unknown',
       periodStart: null,
       resetAt: null,
       rollover: false,
@@ -2855,7 +2865,8 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
       remainingInputTokenEquivalent: 0,
       search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
       model: 'gemini-3.1-flash-lite',
-      priceVersion: null
+      priceVersion: null,
+      signalTopic: null
     },
     error: {
       code: 'ai.host.browser-preview',
@@ -3172,6 +3183,14 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           defaultInstallRootDirectory: '',
           operationId: operationIdOf(request, 'projects_list')
         } satisfies FluxoraProjectCatalog;
+      }
+
+      case FluxoraIpcChannels.gameInstallsDiscover: {
+        const request = requestWithOperationId(args[0], 'game_installs_discover');
+        return {
+          installs: [],
+          operationId: operationIdOf(request, 'game_installs_discover')
+        } satisfies FluxoraGameInstallDiscoverySnapshot;
       }
 
       case FluxoraIpcChannels.templatesList:
@@ -4090,6 +4109,13 @@ const createTauriInvoker = (): IpcInvoker => ({
           defaultInstallRootDirectory: paths.defaultInstallRootDirectory,
           operationId: operationIdOf(request, 'projects_list')
         } satisfies FluxoraProjectCatalog;
+      }
+
+      case FluxoraIpcChannels.gameInstallsDiscover: {
+        const request = requestWithOperationId(args[0], 'game_installs_discover');
+        return invoke<FluxoraGameInstallDiscoverySnapshot>('fluxora_game_installs_discover', {
+          request
+        });
       }
 
       case FluxoraIpcChannels.projectsOpenConfig: {

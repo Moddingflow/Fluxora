@@ -73,6 +73,16 @@ namespace fluxora::vfs
         [[nodiscard]] const std::wstring& whiteoutRoot() const noexcept { return whiteoutRoot_; }
         [[nodiscard]] bool isBuilt() const noexcept { return built_; }
 
+        // True when `relLower` names a file the mount source owns. Owned files
+        // bypass the overwrite overlay in both directions, so the source copy
+        // can never be shadowed by a stale fork written during an earlier run.
+        [[nodiscard]] bool isOwnedFile(const std::wstring& relLower) const;
+
+        // Absolute path an owned file resolves to: the highest-priority source
+        // that declares it, otherwise the last source (where it is created).
+        // Empty when the path is not owned or the mount has no source.
+        [[nodiscard]] std::wstring ownedFilePath(const std::wstring& rel) const;
+
         // Pure lookup: classify a path (relative to the mount target, backslashes,
         // "" = the data directory itself). The hooks turn this into a concrete
         // open/redirect decision and perform any disk side effects themselves.
@@ -131,6 +141,7 @@ namespace fluxora::vfs
             bool overrideExisting,
             bool sourceIsReal,
             bool applyRootExclusions,
+            bool skipOwnedFiles,
             std::unordered_map<std::wstring, DirChild>& children,
             std::unordered_set<std::wstring>* overlayChildNamesLower) const;
         DirNode& ensureDir(const std::wstring& relLower) const;
@@ -149,6 +160,7 @@ namespace fluxora::vfs
         std::wstring whiteoutRoot_;
         std::vector<std::wstring> mods_;
         std::vector<std::wstring> excludedRootNames_;
+        std::unordered_set<std::wstring> ownedFilesLower_;
 
         mutable std::mutex cacheMutex_;
         // rel(lower) -> winning backing file path. Populated on demand.

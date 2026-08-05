@@ -24,18 +24,43 @@ game root, Documents, Local AppData, and Roaming AppData are expressed by mount 
 game-specific path logic in the VFS service. Schema 1 definitions are adapted in memory; new or
 edited definitions use schema 2.
 
-## Runtime descriptor schema 4
+## Runtime descriptor schema 5
 
-The launch planner writes a schema 4 descriptor for the injected VFS. Every mount includes its
-target, ordered sources, overwrite root, and `whiteoutRoot`. The descriptor also carries an
-`operationId` and launch preparation duration. The injected layer chooses the most-specific mount
-target, compares paths case-insensitively, supports relative NT handles, merges directory listings,
-and redirects mutations to overwrite storage.
+The launch planner writes a schema 5 descriptor for the injected VFS. Every mount includes its
+target, ordered sources, overwrite root, `whiteoutRoot`, and `ownedFiles`. The descriptor also
+carries an `operationId` and launch preparation duration. The injected layer chooses the
+most-specific mount target, compares paths case-insensitively, supports relative NT handles, merges
+directory listings, and redirects mutations to overwrite storage.
 
 Deleting or renaming a lower-layer path creates a whiteout; recreating that path clears the
 whiteout. Copy-on-write applies to normal writes, truncation, rename/replace, delete,
 delete-on-close, and child processes injected by the launcher. VFS logs contain session/prelaunch
 summaries and counters, not per-read or per-enumeration traces.
+
+## Source-owned state files
+
+Copy-on-write is wrong for files the manager itself maintains. Once the game or an external tool
+writes such a file, the resulting fork sits in the highest-priority layer and shadows the managed
+copy on every later launch: the game keeps loading the forked state while Fluxora keeps editing —
+and displaying — the file behind it. The profile plugin list is the case that matters, because the
+divergence surfaces as plugins that read enabled in Fluxora but are absent, or report missing
+content, in game.
+
+A mount therefore declares `ownedFiles`, relative paths whose source copy is authoritative:
+
+- reads resolve from the mount source only, ignoring both the overwrite overlay and any whiteout;
+- writes, renames onto the path, and deletes act on the source file, never on a fork;
+- merged directory listings show the source entry, so enumeration and lookup agree.
+
+The profile-settings mounts own the game definition's `pluginRules.profileFiles`, compiled into
+`GameVfsRules::profileStateFileNames`. Launch preparation quarantines any fork left by an older
+build under `.flow/vfs/superseded-profile-state/<profile>/<mount id>/` — outside every mount, so it
+is never projected back into the target — rather than deleting it, so profiles that already diverged
+are repaired on the next launch.
+
+The manager keeps the activation list and the load-order file in step whenever either is rewritten:
+external tools read one or the other, and a load order that omits an active plugin produces the same
+missing-content failure as a stale fork.
 
 ## Materialized launch cache manifest schema 2
 

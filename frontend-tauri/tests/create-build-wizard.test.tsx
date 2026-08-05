@@ -6,7 +6,14 @@ import {
   CREATE_BUILD_STEPS,
   CreateBuildWizard
 } from '../src/renderer/features/library/CreateBuildWizard';
-import type { FluxoraGameTemplate } from '../src/shared/fluxora-api';
+import {
+  discoveredGamePathSelection,
+  refreshDiscoveredGamePathSelection
+} from '../src/renderer/features/library/useCreateBuildWizard';
+import type {
+  FluxoraGameInstallDiscoverySnapshot,
+  FluxoraGameTemplate
+} from '../src/shared/fluxora-api';
 
 const template: FluxoraGameTemplate = {
   id: 'skyrimse',
@@ -30,6 +37,15 @@ const template: FluxoraGameTemplate = {
 
 const noop = () => undefined;
 const acceptExecutable = async () => true;
+const discovered: FluxoraGameInstallDiscoverySnapshot = {
+  installs: [{
+    templateId: template.id,
+    resolution: 'found',
+    primaryExecutablePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+    providerId: 'steam'
+  }],
+  operationId: 'op_discovery'
+};
 
 const renderWizard = (stepIndex: number, overrides: Record<string, unknown> = {}) =>
   renderToStaticMarkup(
@@ -95,5 +111,32 @@ describe('CreateBuildWizard', () => {
     expect(markup).toContain('SkyrimSE.exe');
     expect(markup).toContain('readOnly=""');
     expect(markup).toContain('Choose SkyrimSE.exe');
+  });
+
+  it('resolves the discovered primary executable synchronously without browsing', () => {
+    expect(discoveredGamePathSelection(template.id, [template], discovered)).toEqual({
+      path: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+      origin: 'auto'
+    });
+    expect(discoveredGamePathSelection('another-game', [template], discovered)).toEqual({
+      path: '',
+      origin: 'empty'
+    });
+    expect(discoveredGamePathSelection(template.id, [template], {
+      ...discovered,
+      installs: [{
+        ...discovered.installs[0],
+        primaryExecutablePath: 'C:\\Games\\Skyrim\\SkyrimSELauncher.exe'
+      }]
+    })).toEqual({ path: '', origin: 'empty' });
+  });
+
+  it('does not overwrite a manual executable during a late discovery refresh', () => {
+    expect(refreshDiscoveredGamePathSelection(
+      { path: 'D:\\Manual\\SkyrimSE.exe', origin: 'manual' },
+      template.id,
+      [template],
+      discovered
+    )).toEqual({ path: 'D:\\Manual\\SkyrimSE.exe', origin: 'manual' });
   });
 });

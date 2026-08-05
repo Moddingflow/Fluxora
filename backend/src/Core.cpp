@@ -1,5 +1,7 @@
 #include "FluxoraCore/Core.hpp"
 
+#include "FluxoraCore/GameSupport/GameInstallDiscoveryService.hpp"
+#include "FluxoraCore/GameSupport/GameSupportRegistry.hpp"
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
@@ -68,6 +70,10 @@ namespace fluxora
               *logger_,
               *templates_,
               bodySlideIntegration_.get())),
+          gameInstallDiscovery_(std::make_unique<GameInstallDiscoveryService>(
+              logger_.get(),
+              GameSupportRegistry::embedded(),
+              createDefaultGameInstallDiscoveryProviders(*projects_))),
           fluxPacks_(std::make_unique<FluxPackService>(*logger_, *projects_, *downloads_, *buildPathSettings_)),
           modOrganizerImport_(std::make_unique<ModOrganizerImportService>(*logger_, *templates_, *projects_, *buildPathSettings_)),
           virtualFileSystem_(std::make_unique<VirtualFileSystemService>(
@@ -332,6 +338,11 @@ namespace fluxora
     ProjectService& Core::projects() noexcept
     {
         return *projects_;
+    }
+
+    GameInstallDiscoveryService& Core::gameInstallDiscovery() noexcept
+    {
+        return *gameInstallDiscovery_;
     }
 
     TemplateService& Core::templates() noexcept

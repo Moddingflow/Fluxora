@@ -550,6 +550,22 @@ namespace fluxora
                 std::filesystem::path(rules.activePluginsFileName);
         }
 
+        std::filesystem::path loadOrderFilePath(
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& context,
+            std::wstring_view profileName)
+        {
+            const PluginSupportRules& rules = context.rulesProvider->pluginRules();
+            if (rules.loadOrderFileName.empty())
+            {
+                return {};
+            }
+
+            return profileDirectory(pathSettings, projectDirectory, context, profileName) /
+                std::filesystem::path(rules.loadOrderFileName);
+        }
+
         std::string toUtf8(const std::wstring& value)
         {
 #ifdef _WIN32
@@ -1121,6 +1137,50 @@ namespace fluxora
             return toUtf8(text);
         }
 
+        // The load-order file carries the same sequence without activation
+        // markers. Games and external tools read one file or the other, so the
+        // two must never be allowed to describe different load orders.
+        std::string serializeLoadOrder(const std::vector<StoredPlugin>& plugins)
+        {
+            std::wstring text;
+            for (const StoredPlugin& plugin : plugins)
+            {
+                text.append(plugin.name);
+                text.push_back(L'\n');
+            }
+
+            return toUtf8(text);
+        }
+
+        // Both profile plugin files are rewritten together: an activation list
+        // whose companion load order still lists a different sequence is exactly
+        // the divergence the game resolves by dropping plugins.
+        void writePluginStateFiles(
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& context,
+            std::wstring_view profileName,
+            const std::filesystem::path& pluginsPath,
+            const std::vector<StoredPlugin>& plugins)
+        {
+            writePluginStateFile(pluginsPath, serializeStoredPlugins(plugins));
+
+            const std::filesystem::path loadOrderPath =
+                loadOrderFilePath(pathSettings, projectDirectory, context, profileName);
+            if (loadOrderPath.empty())
+            {
+                return;
+            }
+
+            const std::string desiredLoadOrder = serializeLoadOrder(plugins);
+            if (serializeLoadOrder(readStoredPlugins(loadOrderPath)) == desiredLoadOrder)
+            {
+                return;
+            }
+
+            writePluginStateFile(loadOrderPath, desiredLoadOrder);
+        }
+
         std::map<std::wstring, DetectedPlugin> detectInstalledPlugins(
             const BuildPathSettingsService& pathSettings,
             const std::filesystem::path& projectDirectory,
@@ -1358,7 +1418,13 @@ namespace fluxora
 
             if (serializeStoredPlugins(stored) != serializeStoredPlugins(reconciled))
             {
-                writePluginStateFile(pluginsPath, serializeStoredPlugins(reconciled));
+                writePluginStateFiles(
+                    pathSettings,
+                    projectDirectory,
+                    context,
+                    profileName,
+                    pluginsPath,
+                    reconciled);
             }
 
             return reconciled;
@@ -1431,9 +1497,38 @@ namespace fluxora
             std::wstring_view profileName,
             const std::vector<StoredPlugin>& plugins)
         {
-            writePluginStateFile(
+            writePluginStateFiles(
+                pathSettings,
+                projectDirectory,
+                context,
+                profileName,
                 pluginsFilePath(pathSettings, projectDirectory, context, profileName),
-                serializeStoredPlugins(plugins));
+                plugins);
+        }
+
+        // Repairs the load-order file on its own for profiles seeded before it
+        // was kept in sync, without rewriting an already correct activation list.
+        void writeLoadOrderIfChanged(
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& context,
+            std::wstring_view profileName,
+            const std::vector<StoredPlugin>& plugins)
+        {
+            const std::filesystem::path loadOrderPath =
+                loadOrderFilePath(pathSettings, projectDirectory, context, profileName);
+            if (loadOrderPath.empty())
+            {
+                return;
+            }
+
+            const std::string desiredLoadOrder = serializeLoadOrder(plugins);
+            if (serializeLoadOrder(readStoredPlugins(loadOrderPath)) == desiredLoadOrder)
+            {
+                return;
+            }
+
+            writePluginStateFile(loadOrderPath, desiredLoadOrder);
         }
 
         void writeStoredPluginsIfChanged(
@@ -1446,6 +1541,15 @@ namespace fluxora
         {
             if (serializeStoredPlugins(currentPlugins) == serializeStoredPlugins(desiredPlugins))
             {
+                // The activation list already matches, but the load-order file
+                // can still be stale from a profile created before it was kept
+                // in sync, so reconcile that file on its own.
+                writeLoadOrderIfChanged(
+                    pathSettings,
+                    projectDirectory,
+                    context,
+                    profileName,
+                    desiredPlugins);
                 return;
             }
 

@@ -402,12 +402,25 @@ export const startHostAiRun = (
   };
 };
 
+// Latin text averages about four characters per token and Cyrillic about two,
+// matching the AI host's own estimator so the live meter and the counted value
+// do not disagree while the user types.
+const approximateDraftTokens = (draft: string): number => {
+  let ascii = 0;
+  let wide = 0;
+  for (const character of draft) {
+    if (character.charCodeAt(0) < 128) ascii += 1;
+    else wide += 1;
+  }
+  return Math.ceil(ascii / 4) + Math.ceil(wide / 2);
+};
+
 export const approximateAiContextUsage = (
   usage: FluxoraAiContextUsage | null,
   draft: string
 ): FluxoraAiContextUsage | null => {
   if (!usage || !draft.trim()) return usage;
-  const currentContextTokens = usage.currentContextTokens + Math.ceil(draft.length / 4);
+  const currentContextTokens = usage.currentContextTokens + approximateDraftTokens(draft);
   return {
     ...usage,
     currentContextTokens,

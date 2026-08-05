@@ -226,6 +226,7 @@ namespace fluxora::vfs
             whiteoutRoot_ = std::move(other.whiteoutRoot_);
             mods_ = std::move(other.mods_);
             excludedRootNames_ = std::move(other.excludedRootNames_);
+            ownedFilesLower_ = std::move(other.ownedFilesLower_);
             fileMap_ = std::move(other.fileMap_);
             dirMap_ = std::move(other.dirMap_);
             overlayMissRevisions_ = std::move(other.overlayMissRevisions_);
@@ -239,6 +240,7 @@ namespace fluxora::vfs
             other.whiteoutRoot_.clear();
             other.mods_.clear();
             other.excludedRootNames_.clear();
+            other.ownedFilesLower_.clear();
             other.fileMap_.clear();
             other.dirMap_.clear();
             other.overlayMissRevisions_.clear();
@@ -361,6 +363,7 @@ namespace fluxora::vfs
         bool overrideExisting,
         bool sourceIsReal,
         bool applyRootExclusions,
+        bool skipOwnedFiles,
         std::unordered_map<std::wstring, DirChild>& children,
         std::unordered_set<std::wstring>* overlayChildNamesLower) const
     {
@@ -387,6 +390,14 @@ namespace fluxora::vfs
             const std::wstring fullChild = joinPath(directory, name);
             DirChild child = childFromFindData(fullChild, data);
             const std::wstring key = child.nameLower;
+            if (skipOwnedFiles &&
+                ownedFilesLower_.contains(relLower.empty() ? key : relLower + L"\\" + key))
+            {
+                // An overwrite fork of an owned file must stay invisible, in
+                // enumeration as well as in lookups, so the source copy remains
+                // the one the game reads.
+                continue;
+            }
             if (child.isDirectory)
             {
                 child.realExists = sourceIsReal;
@@ -525,6 +536,24 @@ namespace fluxora::vfs
             return {};
         };
 
+        // A source-owned file is resolved from its source alone. Skipping the
+        // overwrite probe and the whiteout check is what keeps an earlier
+        // copy-on-write fork (or an in-game delete) from outranking the file the
+        // manager maintains.
+        if (ownedFilesLower_.contains(relLower))
+        {
+            for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+            {
+                if (PathLookup lookup = probe(joinPath(*it, rel));
+                    lookup.kind != PathInfo::Kind::Unknown)
+                {
+                    return lookup;
+                }
+            }
+
+            return {};
+        }
+
         if (!isExcludedRelativePath(relLower))
         {
             if (!overwrite_.empty())
@@ -612,6 +641,7 @@ namespace fluxora::vfs
                 /*overrideExisting=*/false,
                 /*sourceIsReal=*/true,
                 /*applyRootExclusions=*/false,
+                /*skipOwnedFiles=*/false,
                 children,
                 nullptr);
         }
@@ -635,6 +665,7 @@ namespace fluxora::vfs
                     /*overrideExisting=*/true,
                     /*sourceIsReal=*/false,
                     applyRootExclusions,
+                    /*skipOwnedFiles=*/false,
                     children,
                     &overlayChildNamesLower);
             }
@@ -652,6 +683,7 @@ namespace fluxora::vfs
                         /*overrideExisting=*/true,
                         /*sourceIsReal=*/false,
                         applyRootExclusions,
+                        /*skipOwnedFiles=*/true,
                         children,
                         &overlayChildNamesLower);
                 }
@@ -723,6 +755,16 @@ namespace fluxora::vfs
             }
         }
 
+        ownedFilesLower_.clear();
+        for (const std::wstring& ownedFile : config.ownedFiles)
+        {
+            const std::wstring normalized = normalizeRel(ownedFile);
+            if (!normalized.empty())
+            {
+                ownedFilesLower_.insert(toLower(normalized));
+            }
+        }
+
         fileMap_.clear();
         dirMap_.clear();
         overlayMissRevisions_.clear();
@@ -735,6 +777,46 @@ namespace fluxora::vfs
             L"VfsTree initialized lazily: %zu overlay roots, target=%s",
             mods_.size() + (overwrite_.empty() ? 0 : 1),
             target_.c_str());
+    }
+
+    bool VfsTree::isOwnedFile(const std::wstring& relLower) const
+    {
+        if (relLower.empty())
+        {
+            return false;
+        }
+
+        std::scoped_lock lock(cacheMutex_);
+        return ownedFilesLower_.contains(toLower(normalizeRel(relLower)));
+    }
+
+    std::wstring VfsTree::ownedFilePath(const std::wstring& rel) const
+    {
+        const std::wstring normalized = normalizeRel(rel);
+        if (normalized.empty())
+        {
+            return {};
+        }
+
+        std::scoped_lock lock(cacheMutex_);
+        if (!ownedFilesLower_.contains(toLower(normalized)) || mods_.empty())
+        {
+            return {};
+        }
+
+        for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+        {
+            const std::wstring candidate = joinPath(*it, normalized);
+            DWORD attributes = INVALID_FILE_ATTRIBUTES;
+            if (readAttributes(candidate, attributes) &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+            {
+                return candidate;
+            }
+        }
+
+        // Not created yet: the highest-priority source is where it belongs.
+        return joinPath(mods_.back(), normalized);
     }
 
     bool VfsTree::isVirtualDir(const std::wstring& relLower) const

@@ -9,7 +9,8 @@ use tokio::time::Duration;
 const AUTHORIZATION_ENDPOINT: &str = "https://moddingflow.com/oauth/authorize";
 const AUTHORIZATION_PREFIX: &str = "https://moddingflow.com/oauth/authorize?";
 const PUBLIC_CLIENT_ID: &str = "desktop_mod_manager";
-const REQUIRED_SCOPES: &str = "openid profile:read mods:read files:download install_plans:resolve";
+const REQUIRED_SCOPES: &str =
+    "openid profile:read mods:read files:download install_plans:resolve agent:run";
 const DEFAULT_INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_AUTHORIZATION_URL_BYTES: usize = 16 * 1024;
 const MAX_OPAQUE_PARAMETER_BYTES: usize = 512;
@@ -852,6 +853,32 @@ mod tests {
                 "accepted invalid authorization URL"
             );
         }
+    }
+
+    #[test]
+    fn accepts_the_native_production_scope_with_managed_ai_access() {
+        let redirect_uri = "http://127.0.0.1:49152/oauth/fluxora/callback";
+        let authorization_url = authorization_url_from_pairs(
+            redirect_uri,
+            &[
+                ("client_id", PUBLIC_CLIENT_ID),
+                ("redirect_uri", redirect_uri),
+                ("response_type", "code"),
+                (
+                    "scope",
+                    "openid profile:read mods:read files:download install_plans:resolve agent:run",
+                ),
+                ("code_challenge", CHALLENGE),
+                ("code_challenge_method", "S256"),
+                ("state", STATE),
+                ("nonce", NONCE),
+            ],
+        );
+
+        assert_eq!(
+            validate_authorization_url(&authorization_url, redirect_uri),
+            Ok(())
+        );
     }
 
     #[test]

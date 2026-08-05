@@ -760,6 +760,29 @@ try {
         throw "Failed to create persisted plugin protocol fixture: $($createProjectResponse | ConvertTo-Json -Depth 10 -Compress)"
     }
 
+    $gameDiscoveryResponse = Invoke-BridgeHostRequest `
+        -EnvironmentVariables $fixtureEnvironment `
+        -Request @{
+            jsonrpc = '2.0'
+            id = 'game_installs_discover'
+            method = 'gameInstalls.discover'
+            params = @{
+                buildConfigsDirectory = (Join-Path $appDataDirectory 'Fluxora\Builds')
+            }
+            meta = $requestMeta
+        }
+    $skyrimDiscovery = @($gameDiscoveryResponse.result.data.installs) | Where-Object {
+        $_.templateId -eq 'skyrimse'
+    } | Select-Object -First 1
+    if ($gameDiscoveryResponse.result.ok -ne $true -or
+        $gameDiscoveryResponse.result.data.operationId -ne 'op_bridge_protocol_test' -or
+        $null -eq $skyrimDiscovery -or
+        $skyrimDiscovery.resolution -ne 'found' -or
+        $skyrimDiscovery.providerId -ne 'fluxora' -or
+        [System.IO.Path]::GetFileName($skyrimDiscovery.primaryExecutablePath) -ne 'SkyrimSE.exe') {
+        throw "Expected typed gameInstalls.discover success on the main bridge lane, received: $($gameDiscoveryResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
     $projectDirectory = Join-Path $installRoot $projectName
     $modUpdatesResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
         jsonrpc = '2.0'

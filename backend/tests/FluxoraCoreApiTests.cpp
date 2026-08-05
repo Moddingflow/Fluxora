@@ -581,6 +581,52 @@ namespace fluxora::tests
         fluxora_core_shutdown();
     }
 
+    TEST(FluxoraCoreApiTests, DiscoverGameInstallsCarriesOperationIdentityAndValidatedFluxoraPath)
+    {
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path catalogDirectory = temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path installRoot = temp.path() / L"Fluxora Builds";
+        const std::filesystem::path projectDirectory = installRoot / L"Discovery Build";
+        const std::filesystem::path gameDirectory = projectDirectory / L"Game";
+        const std::filesystem::path configPath = catalogDirectory / L"Discovery Build.json";
+
+        writeTextFile(gameDirectory / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(gameDirectory / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(configPath, catalogProjectManifestWithLaunchExecutables(projectDirectory, installRoot));
+
+        std::array<wchar_t, 64> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_discover_game_installs(
+                catalogDirectory.c_str(),
+                L"op_discovery_api",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring json = copyBufferedApiOutput();
+
+        EXPECT_NE(json.find(L"\"operationId\":\"op_discovery_api\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"templateId\":\"skyrimse\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"resolution\":\"found\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"providerId\":\"fluxora\""), std::wstring::npos);
+        EXPECT_NE(json.find((gameDirectory / L"SkyrimSE.exe").filename().wstring()), std::wstring::npos);
+
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, DiscoverGameInstallsRejectsMissingTrustedInputs)
+    {
+        std::array<wchar_t, 64> buffer{};
+        EXPECT_EQ(
+            fluxora_discover_game_installs(L"", L"op_discovery_api", buffer.data(), 64),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_EQ(
+            fluxora_discover_game_installs(L"C:\\Fluxora\\Builds", L"", buffer.data(), 64),
+            FluxoraCoreResultInvalidArgument);
+    }
+
     TEST(FluxoraCoreApiTests, ManagedExecutableDtoIsAdditiveAndCompletionErrorsStayTyped)
     {
         fluxora_core_shutdown();
@@ -1073,6 +1119,27 @@ namespace fluxora::tests
             project / L"profiles" / L"Default" / profileIniName,
             "[General]\nsLanguage=RUSSIAN\n");
 
+        wchar_t localAppDataPath[MAX_PATH]{};
+        ASSERT_TRUE(SUCCEEDED(SHGetFolderPathW(
+            nullptr,
+            CSIDL_LOCAL_APPDATA,
+            nullptr,
+            SHGFP_TYPE_CURRENT,
+            localAppDataPath)));
+        // plugins.txt is a profile-owned state file: the game reads and rewrites
+        // it at the Local AppData path while Fluxora maintains the profile copy.
+        const std::filesystem::path ownedProfileStateFile =
+            std::filesystem::path(localAppDataPath) /
+            L"Skyrim Special Edition" /
+            L"plugins.txt";
+        const std::filesystem::path profilePluginsFile =
+            project / L"profiles" / L"Default" / L"plugins.txt";
+        const std::filesystem::path profileStateFork =
+            project / L".flow/vfs/profile-overwrite/Default/local-appdata/plugins.txt";
+        // A fork left behind by an older Fluxora build must lose to the profile
+        // copy and be quarantined instead of silently shadowing it.
+        writeTextFile(profileStateFork, "*Stale.esp\n");
+
         ASSERT_EQ(
             fluxora_create_empty_mod(
                 project.c_str(),
@@ -1118,7 +1185,8 @@ namespace fluxora::tests
                     L"arguments",
                     L"\"" + (game / L"Data").wstring() + L"\" \"" +
                         game.wstring() + L"\" \"" + status.wstring() + L"\" \"" +
-                        profileApiIni.wstring() + L"\"")
+                        profileApiIni.wstring() + L"\" \"" +
+                        ownedProfileStateFile.wstring() + L"\"")
                 .field(L"workingDirectory", game.wstring())
                 .field(L"iconPath", L"")
             .endObject()
@@ -1131,6 +1199,11 @@ namespace fluxora::tests
                 static_cast<int>(smallBuffer.size())),
             FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
         static_cast<void>(copyBufferedApiOutput());
+
+        // Seeded last so no plugin sync can drop the marker the probe requires
+        // before it is willing to write through the mount.
+        const std::string ownedProfileStateSeed = "# fluxora-owned-state-probe\n*Skyrim.esm\n";
+        writeTextFile(profilePluginsFile, ownedProfileStateSeed);
 
         ASSERT_EQ(
             fluxora_launch_game_executable(
@@ -1196,6 +1269,15 @@ namespace fluxora::tests
         EXPECT_NE(vfsLog.find("errors=0"), std::string::npos);
         EXPECT_EQ(vfsLog.find("operationId=<none>"), std::string::npos);
         EXPECT_FALSE(std::filesystem::exists(game / L"Data/NovelSubsystem"));
+
+        // The game's rewrite landed in the profile Fluxora reads, and the stale
+        // fork was quarantined instead of shadowing it for every later launch.
+        EXPECT_EQ(
+            readTextFile(profilePluginsFile),
+            ownedProfileStateSeed + "*ProbeWritten.esp\n");
+        EXPECT_FALSE(std::filesystem::exists(profileStateFork));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            project / L".flow/vfs/superseded-profile-state/Default/local-appdata/plugins.txt"));
         fluxora_core_shutdown();
     }
 

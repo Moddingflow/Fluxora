@@ -152,6 +152,16 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Discovers validated primary game executables from local metadata only.
+    // The result is:
+    //   { "installs": [ { "templateId", "resolution",
+    //       "primaryExecutablePath"?, "providerId"? } ], "operationId" }
+    FLUXORA_CORE_API int fluxora_discover_game_installs(
+        const wchar_t* buildConfigsDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Opens an existing build from a Fluxora build config and returns a JSON
     // descriptor:
     //   { "id", "name", "gameName", "gamePath", "installRootDirectory",

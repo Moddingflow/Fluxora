@@ -178,16 +178,99 @@ describe('project catalog service', () => {
           operationIds.push(request?.operationId ?? '');
           return [template];
         })
-      } as unknown as FluxoraApi['templates']
+      } as unknown as FluxoraApi['templates'],
+      gameInstalls: {
+        discover: vi.fn(async (request?: OperationRequest) => {
+          operationIds.push(request?.operationId ?? '');
+          return {
+            installs: [{
+              templateId: template.id,
+              resolution: 'found' as const,
+              primaryExecutablePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+              providerId: 'steam' as const
+            }],
+            operationId: request?.operationId ?? ''
+          };
+        })
+      }
     });
 
     const result = await loadProjectCatalog();
 
     expect(result.catalog).toBe(catalog);
     expect(result.templates).toEqual([template]);
-    expect(operationIds).toHaveLength(2);
+    expect(result.gameInstalls.installs[0]?.primaryExecutablePath).toBe(
+      'C:\\Games\\Skyrim\\SkyrimSE.exe'
+    );
+    expect(operationIds).toHaveLength(3);
     expect(operationIds[0]).toBe(operationIds[1]);
+    expect(operationIds[1]).toBe(operationIds[2]);
     expect(operationIds[0]).toContain('_projects_list_');
+  });
+
+  it('fails soft when install discovery is unavailable', async () => {
+    setFluxoraApi({
+      projects: {
+        list: vi.fn(async () => ({
+          projects: [],
+          buildConfigsDirectory: 'C:\\Fluxora\\Builds',
+          defaultInstallRootDirectory: 'C:\\Fluxora Projects',
+          operationId: 'op_native'
+        }))
+      } as unknown as FluxoraApi['projects'],
+      templates: {
+        list: vi.fn(async () => [template])
+      } as unknown as FluxoraApi['templates'],
+      gameInstalls: {
+        discover: vi.fn(async () => Promise.reject(new Error('provider unavailable')))
+      }
+    });
+
+    const result = await loadProjectCatalog();
+
+    expect(result.gameInstalls.installs).toEqual([{
+      templateId: template.id,
+      resolution: 'notFound'
+    }]);
+  });
+
+  it('does not complete the library bootstrap before discovery is ready', async () => {
+    let resolveDiscovery!: (value: {
+      installs: [];
+      operationId: string;
+    }) => void;
+    const discovery = new Promise<{ installs: []; operationId: string }>((resolve) => {
+      resolveDiscovery = resolve;
+    });
+    setFluxoraApi({
+      projects: {
+        list: vi.fn(async () => ({
+          projects: [],
+          buildConfigsDirectory: 'C:\\Fluxora\\Builds',
+          defaultInstallRootDirectory: 'C:\\Fluxora Projects',
+          operationId: 'op_native'
+        }))
+      } as unknown as FluxoraApi['projects'],
+      templates: {
+        list: vi.fn(async () => [template])
+      } as unknown as FluxoraApi['templates'],
+      gameInstalls: {
+        discover: vi.fn(async () => discovery)
+      }
+    });
+    let completed = false;
+    const bootstrap = loadProjectCatalog().then((result) => {
+      completed = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    resolveDiscovery({ installs: [], operationId: 'op_discovery' });
+    await bootstrap;
+    expect(completed).toBe(true);
   });
 
   it('creates projects from trimmed renderer draft fields', async () => {

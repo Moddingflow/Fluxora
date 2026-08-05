@@ -24,12 +24,14 @@ import type {
 import aiMicIcon from '../../../../../icons/ai-mic.svg';
 import type { AiProviderDiagnostic } from './ai-chat-settings';
 import type { AiChatState } from './ai-chat-state';
+import { approximateAiContextUsage } from './ai-chat-runtime';
 import { formatVoiceDuration } from './ai-voice-state';
 import { buildVoiceContextHints } from './ai-voice-context';
 import { useAiVoiceInput } from './use-ai-voice-input';
 import { AiMicrophonePermissionDialog } from './AiMicrophonePermissionDialog';
 import { AiFileDiffPreviewDialog } from './AiFileDiffPreviewDialog';
 import { AiAccountGate } from './AiAccountGate';
+import { AiContextGauge } from './AiContextGauge';
 import { AiQuotaIndicator } from './AiQuotaIndicator';
 import { AiVoiceProcessingIndicator } from './AiVoiceProcessingIndicator';
 import { useLocalization } from '../../../localization/react';
@@ -50,6 +52,7 @@ export interface AiChatPanelProps {
   onCreateAccount: () => void | Promise<void>;
   onCreateChat: () => void;
   onDraftChange: (value: string) => void;
+  onOpenBilling?: () => void;
   onOpenSource: (url: string) => void;
   onOpenFileChange: (change: FluxoraAiFileChange, firstChangedLine: number, changeSet: FluxoraAiFileChangeSet) => void;
   onRevealFileChange?: (change: FluxoraAiFileChange, changeSet: FluxoraAiFileChangeSet) => void;
@@ -63,30 +66,8 @@ export interface AiChatPanelProps {
 
 const rejectVoiceSend = () => false;
 
-const ContextUsage = ({ state }: { state: AiChatState }) => {
-  const { t, locale } = useLocalization();
-  const tokenNumber = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
-  const chat = state.chats.find((candidate) => candidate.id === state.activeChatId);
-  const usage = chat?.contextUsage;
-  if (!usage) {
-    return <span className="ai-context-usage" data-state={chat?.contextEstimateState}>{t('ai.context.none')}</span>;
-  }
-  return (
-    <span
-      className="ai-context-usage"
-      data-level={usage.level}
-      title={t('ai.context.tooltip', {
-        limit: tokenNumber.format(usage.modelOutputTokenLimit ?? 0),
-        precision: usage.precision
-      })}
-    >
-      {t('ai.context.usage', {
-        current: tokenNumber.format(usage.currentContextTokens),
-        total: tokenNumber.format(usage.contextWindowTokens)
-      })}
-    </span>
-  );
-};
+const activeAiChat = (state: AiChatState) =>
+  state.chats.find((candidate) => candidate.id === state.activeChatId);
 
 const SourceList = ({ sources, onOpen }: {
   sources: FluxoraAiCitation[];
@@ -255,6 +236,7 @@ export function AiChatPanel({
   onCreateAccount,
   onCreateChat,
   onDraftChange,
+  onOpenBilling,
   onOpenSource,
   onOpenFileChange,
   onRevealFileChange = () => undefined,
@@ -328,6 +310,10 @@ export function AiChatPanel({
     );
   }
 
+  const activeChat = activeAiChat(state);
+  // The ring answers "how much room is left before this chat compresses", so it
+  // counts the message being typed as well as the counted context.
+  const draftContextUsage = approximateAiContextUsage(activeChat?.contextUsage ?? null, state.draft);
   const canSend = Boolean(state.draft.trim()) && hostReady && !providerDiagnostic && !state.isRunning;
   const voiceCaptureActive = ['preparing', 'recording', 'transcribing'].includes(voice.state.phase);
   const accountRequired = quota?.availability === 'connectionRequired';
@@ -421,8 +407,7 @@ export function AiChatPanel({
           <button className="ai-chat-tabs__new" type="button" aria-label={t('ai.chat.new')} title={t('ai.chat.newShort')} onClick={onCreateChat}><Plus size={14} /></button>
         </div>
 
-        <ContextUsage state={state} />
-        <AiQuotaIndicator language={language} quota={quota} />
+        <AiQuotaIndicator language={language} onOpenBilling={onOpenBilling} quota={quota} />
 
         {providerDiagnostic ? (
           <div className="ai-chat-diagnostic" data-level={providerDiagnostic.level} role="alert">
@@ -584,11 +569,17 @@ export function AiChatPanel({
                   >
                     <img src={aiMicIcon} alt="" aria-hidden="true" />
                   </button>
-                  {state.isRunning ? (
-                    <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label={t('ai.run.stop')} onClick={onCancel}><Square size={14} /></button>
-                  ) : (
-                    <button className="ai-chat-send-button" type="button" aria-label={t('ai.message.send')} disabled={!canSend} onClick={onSend}><Send size={15} /></button>
-                  )}
+                  <div className="ai-chat-input__trailing-actions">
+                    <AiContextGauge
+                      estimateState={activeChat?.contextEstimateState}
+                      usage={draftContextUsage}
+                    />
+                    {state.isRunning ? (
+                      <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label={t('ai.run.stop')} onClick={onCancel}><Square size={14} /></button>
+                    ) : (
+                      <button className="ai-chat-send-button" type="button" aria-label={t('ai.message.send')} disabled={!canSend} onClick={onSend}><Send size={15} /></button>
+                    )}
+                  </div>
                 </div>
               </>
             )}

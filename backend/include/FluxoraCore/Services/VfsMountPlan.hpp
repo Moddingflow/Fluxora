@@ -35,6 +35,10 @@ namespace fluxora
         std::vector<std::wstring> excludedRootNames;
         std::vector<VfsMountSourceRoot> modSources;
         std::filesystem::path whiteoutRoot;
+        // Relative paths whose source copy is authoritative. Copy-on-write is
+        // disabled for them so the game reads and updates the very file the
+        // manager maintains instead of a shadow copy in `overwrite`.
+        std::vector<std::wstring> ownedFiles;
     };
 
     struct VfsGameRootMountPlan

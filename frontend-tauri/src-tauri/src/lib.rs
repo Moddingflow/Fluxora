@@ -102,6 +102,7 @@ const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 10 * 60 * 1_000 + 30_000;
 const PRIVATE_NEXUS_API_AUTH_HEADER_METHOD: &str = "nexus.getApiAuthHeader";
+const TRUSTED_PATH_BRIDGE_METHODS: [&str; 1] = ["gameInstalls.discover"];
 const PRIVATE_MODDINGFLOW_NATIVE_METHODS: [&str; 7] = [
     "connections.beginConnect",
     "connections.completeConnect",
@@ -3640,6 +3641,8 @@ fn ai_quota_from_error(error: &Value) -> Value {
         "available": false,
         "eligibility": false,
         "reason": code,
+        "tier": "unknown",
+        "signalTopic": null,
         "periodStart": null,
         "resetAt": null,
         "rollover": false,
@@ -7902,6 +7905,7 @@ fn bridge_queue_performance_message(method: &str, queue_wait_us: u128, lane: Bri
 fn validate_public_bridge_method(method: &str) -> Result<(), &'static str> {
     if method == PRIVATE_NEXUS_API_AUTH_HEADER_METHOD
         || PRIVATE_MODDINGFLOW_NATIVE_METHODS.contains(&method)
+        || TRUSTED_PATH_BRIDGE_METHODS.contains(&method)
     {
         return Err("Unsupported bridge method.");
     }
@@ -7963,6 +7967,27 @@ async fn fluxora_bridge_request(
         request,
         timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS),
         None,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn fluxora_game_installs_discover(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let runtime_paths = fluxora_runtime_paths(app.clone());
+    let method = "gameInstalls.discover";
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, method)),
+    });
+    execute_bridge_request(
+        app,
+        method.to_string(),
+        json!({ "buildConfigsDirectory": runtime_paths.build_configs_directory }),
+        request,
+        BRIDGE_TIMEOUT_MS,
+        Some(BridgeLane::Main),
     )
     .await
 }
@@ -11697,6 +11722,7 @@ pub fn run() {
             fluxora_ai_file_get_rollback_states,
             fluxora_ai_file_reset_rollback_checkpoints,
             fluxora_bridge_request,
+            fluxora_game_installs_discover,
             fluxora_moddingflow_connection_status,
             fluxora_moddingflow_restore_connection,
             fluxora_moddingflow_connect,
@@ -12715,6 +12741,7 @@ mod tests {
             "moddingflow.getManagedAiAccessToken",
             "moddingflow.lookupArtifactPreview",
             "moddingflow.previewActivationPlan",
+            "gameInstalls.discover",
         ] {
             assert_eq!(
                 validate_public_bridge_method(method),
@@ -12856,6 +12883,7 @@ mod tests {
             ("projects.previewDirectory", BridgeLane::Main),
             ("projects.create", BridgeLane::Main),
             ("projects.listConfigs", BridgeLane::Main),
+            ("gameInstalls.discover", BridgeLane::Main),
             ("projects.openConfig", BridgeLane::Main),
             ("projects.rename", BridgeLane::Main),
             ("projects.delete", BridgeLane::Main),

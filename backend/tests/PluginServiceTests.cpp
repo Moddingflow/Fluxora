@@ -551,6 +551,58 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, LoadOrderFileTracksEveryActivationListRewrite)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Load Order Sync Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path firstMod = mods / L"First Mod";
+        const std::filesystem::path secondMod = mods / L"Second Mod";
+        const std::filesystem::path profile = project / L"profiles" / L"Default";
+        const std::filesystem::path pluginState = profile / L"enabled.dat";
+        const std::filesystem::path loadOrderState = profile / L"order.dat";
+        writeTextFile(firstMod / L"AddOns" / L"First.ABC", "plugin");
+        writeTextFile(secondMod / L"AddOns" / L"Second.ABC", "plugin");
+        writeTextFile(pluginState, "*Base.master\n*First.ABC\n");
+        // Seeded by a build that only ever rewrote the activation list, so it
+        // still describes an order the activation list no longer has.
+        writeTextFile(loadOrderState, "Base.master\n");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{firstMod, L"First Mod", {}, true, {}},
+                InstalledModImportRecord{secondMod, L"Second Mod", {}, false, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+
+        static_cast<void>(plugins.listPlugins(project, context, L"Default"));
+        EXPECT_EQ(readTextFile(loadOrderState), "Base.master\nFirst.ABC\n");
+
+        // Re-enabling a mod must extend both files, not just the one Fluxora
+        // renders from: a load order that omits the plugin is what makes the
+        // game treat it as missing content while the checkbox reads enabled.
+        InstanceMetadataStore::setInstalledModEnabled(project, secondMod, true);
+        plugins.syncPluginsForInstalledMods(project, context, L"Default", true);
+
+        const std::string activation = readTextFile(pluginState);
+        EXPECT_NE(activation.find("*Second.ABC\n"), std::string::npos) << activation;
+        EXPECT_EQ(readTextFile(loadOrderState), "Base.master\nFirst.ABC\nSecond.ABC\n");
+#endif
+    }
+
     TEST(PluginServiceTests, PluginEntriesReportMissingMasterFiles)
     {
 #ifndef _WIN32

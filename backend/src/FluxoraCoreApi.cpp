@@ -3,6 +3,7 @@
 #include "FluxoraCore/Core.hpp"
 #include "FluxoraCore/GameSupport/GameDetectionService.hpp"
 #include "FluxoraCore/GameSupport/GameHealthCheckService.hpp"
+#include "FluxoraCore/GameSupport/GameInstallDiscoveryService.hpp"
 #include "FluxoraCore/GameSupport/GameSupportRegistry.hpp"
 #include "FluxoraCore/GameSupport/ProjectFingerprint.hpp"
 #include "FluxoraCore/Services/AppSettingsService.hpp"
@@ -1079,6 +1080,33 @@ namespace
         writer.field(L"clientId", status.clientId);
         writer.field(L"redirectUri", status.redirectUri);
         writer.field(L"requiresReauth", status.requiresReauth);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeGameInstallDiscoverySnapshot(
+        const fluxora::GameInstallDiscoverySnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"installs").beginArray();
+        for (const fluxora::GameInstallResolution& install : snapshot.installs)
+        {
+            writer.beginObject();
+            writer.field(L"templateId", install.templateId);
+            writer.field(L"resolution", fluxora::GameInstallDiscoveryService::resolutionName(install.resolution));
+            if (install.resolution == fluxora::GameInstallResolutionKind::Found &&
+                install.primaryExecutablePath.has_value() && install.providerId.has_value())
+            {
+                writer.field(L"primaryExecutablePath", install.primaryExecutablePath->wstring());
+                writer.field(
+                    L"providerId",
+                    fluxora::gameInstallDiscoveryProviderIdName(install.providerId.value()));
+            }
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.field(L"operationId", snapshot.operationId);
         writer.endObject();
         return writer.str();
     }
@@ -5352,6 +5380,36 @@ extern "C"
         catch (...)
         {
             return mapUnknownException("delete project");
+        }
+    }
+
+    int fluxora_discover_game_installs(
+        const wchar_t* buildConfigsDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(buildConfigsDirectory) || isBlank(operationId))
+            {
+                lastError = L"Build configs directory and operation id are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const fluxora::GameInstallDiscoverySnapshot snapshot =
+                core().gameInstallDiscovery().discover(fluxora::GameInstallDiscoveryRequest{
+                    std::filesystem::path(buildConfigsDirectory),
+                    operationId
+                });
+            return writeToBuffer(
+                serializeGameInstallDiscoverySnapshot(snapshot),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
         }
     }
 

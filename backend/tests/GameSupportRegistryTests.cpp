@@ -161,6 +161,24 @@ namespace fluxora::tests
                 vfsRules.rules.materializedLaunchCacheDirectories.end(),
                 L"DLLPlugins"),
             vfsRules.rules.materializedLaunchCacheDirectories.end());
+        // The profile plugin files are the mount's source-owned state: the VFS
+        // keeps them out of copy-on-write so the game cannot end up reading a
+        // forked plugin list while Fluxora edits the profile copy.
+        EXPECT_EQ(
+            vfsRules.rules.profileStateFileNames,
+            components.pluginRulesProvider->pluginRules().profileFiles);
+        EXPECT_NE(
+            std::find(
+                vfsRules.rules.profileStateFileNames.begin(),
+                vfsRules.rules.profileStateFileNames.end(),
+                L"plugins.txt"),
+            vfsRules.rules.profileStateFileNames.end());
+        EXPECT_NE(
+            std::find(
+                vfsRules.rules.profileStateFileNames.begin(),
+                vfsRules.rules.profileStateFileNames.end(),
+                L"loadorder.txt"),
+            vfsRules.rules.profileStateFileNames.end());
     }
 
     TEST(GameSupportRegistryTests, UnknownLookupsReturnExplicitUnsupportedWithoutSkyrimFallback)

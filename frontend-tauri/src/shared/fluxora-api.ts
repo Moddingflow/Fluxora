@@ -160,6 +160,7 @@ export const FluxoraIpcChannels = {
   fluxPackPlanInstall: 'fluxora:flux-pack:plan-install',
   fluxPackInstall: 'fluxora:flux-pack:install',
   grassCacheGenerate: 'fluxora:grass-cache:generate',
+  gameInstallsDiscover: 'fluxora:game-installs:discover',
   projectsCreate: 'fluxora:projects:create',
   projectsDelete: 'fluxora:projects:delete',
   projectsList: 'fluxora:projects:list',
@@ -369,12 +370,20 @@ export type FluxoraAiQuotaAvailability =
   | 'disabled'
   | 'byok';
 
+/**
+ * `free` is the small monthly test allowance every connected ModdingFlow
+ * account receives; `premium` is the funded subscription allowance. `unknown`
+ * covers BYOK and every state resolved without reaching the managed gateway.
+ */
+export type FluxoraAiQuotaTier = 'free' | 'premium' | 'unknown';
+
 export interface FluxoraAiQuotaSnapshot {
   schema: 'fluxora.ai.quota.v1';
   availability: FluxoraAiQuotaAvailability;
   available: boolean;
   eligibility: boolean;
   reason: string;
+  tier: FluxoraAiQuotaTier;
   periodStart: string | null;
   resetAt: string | null;
   rollover: false;
@@ -391,6 +400,12 @@ export interface FluxoraAiQuotaSnapshot {
   };
   model: typeof FLUXORA_AI_MODEL_ID;
   priceVersion: string | null;
+  /**
+   * Opaque per-account Supabase Realtime topic. It carries no quota values:
+   * a message only means the account's allowance may have changed and the
+   * authenticated status call should run again.
+   */
+  signalTopic: string | null;
 }
 
 export interface FluxoraAiHostStatus {
@@ -936,6 +951,21 @@ export interface FluxoraGameTemplate {
   contentLayoutSummary?: Record<string, unknown>;
   executableDisplayMetadata?: FluxoraExecutableDisplayMetadata[];
   launchTrackingMetadata?: unknown;
+}
+
+export type FluxoraGameInstallResolution = 'found' | 'notFound' | 'indeterminate';
+export type FluxoraGameInstallProviderId = 'fluxora' | 'steam' | 'gog' | 'epic' | 'windows';
+
+export interface FluxoraGameInstallResolutionSnapshot {
+  templateId: string;
+  resolution: FluxoraGameInstallResolution;
+  primaryExecutablePath?: string;
+  providerId?: FluxoraGameInstallProviderId;
+}
+
+export interface FluxoraGameInstallDiscoverySnapshot {
+  installs: FluxoraGameInstallResolutionSnapshot[];
+  operationId: string;
 }
 
 export interface FluxoraExecutable {
@@ -3243,6 +3273,9 @@ export interface FluxoraApi {
       configPath: string,
       request?: OperationRequest
     ) => Promise<DeleteFluxoraProjectResult>;
+  };
+  gameInstalls: {
+    discover: (request?: OperationRequest) => Promise<FluxoraGameInstallDiscoverySnapshot>;
   };
   security: {
     getState: () => Promise<FluxoraSecurityState>;

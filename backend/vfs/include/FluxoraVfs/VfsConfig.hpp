@@ -13,6 +13,9 @@ namespace fluxora::vfs
         std::vector<std::wstring> mods; // load order ascending (last wins)
         std::vector<std::wstring> excludedRootNames;
         std::wstring whiteoutRoot;
+        // Relative paths the mount source owns: never copied into overwrite,
+        // always read from and written back to the source itself.
+        std::vector<std::wstring> ownedFiles;
 
         [[nodiscard]] bool isValid() const noexcept
         {

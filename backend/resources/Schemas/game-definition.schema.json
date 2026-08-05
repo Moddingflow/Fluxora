@@ -44,6 +44,9 @@
     "installFolderAliases": {
       "$ref": "#/$defs/nonEmptyStringArray"
     },
+    "installDiscovery": {
+      "$ref": "#/$defs/installDiscovery"
+    },
     "defaultProfileName": {
       "type": "string"
     },
@@ -307,6 +310,60 @@
           ]
         }
       }
+    },
+    "installDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providers"],
+      "properties": {
+        "providers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/installDiscoveryProvider"
+          }
+        }
+      }
+    },
+    "installDiscoveryProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "productIds"],
+      "properties": {
+        "id": {
+          "enum": ["fluxora", "steam", "gog", "epic", "windows"]
+        },
+        "productIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {"enum": ["steam", "gog", "epic"]}
+            }
+          },
+          "then": {
+            "properties": {
+              "productIds": {"minItems": 1}
+            }
+          },
+          "else": {
+            "properties": {
+              "productIds": {"maxItems": 0}
+            }
+          }
+        }
+      ]
     },
     "vfsMountRule": {
       "type": "object",

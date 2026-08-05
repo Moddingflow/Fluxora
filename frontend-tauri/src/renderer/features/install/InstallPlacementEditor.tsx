@@ -28,6 +28,7 @@ import type {
 import { createVirtualWindow } from '../../ui-performance';
 import { usePointerReorderSession } from '../../hooks/usePointerReorderSession';
 import {
+  applyPlacementDirectoryKeyMoves,
   buildInstallPlacementRows,
   advancePlacementHistory,
   createPlacementDirectory,
@@ -201,6 +202,8 @@ export function InstallPlacementEditor({
   const treeRef = useRef<HTMLDivElement>(null);
   const rowElementsRef = useRef(new Map<string, HTMLDivElement>());
   const focusRequestedRef = useRef<string | null>(null);
+  const revealRequestedRef = useRef<string | null>(null);
+  const nameSelectedKeyRef = useRef<string | null>(null);
   const dropResultRef = useRef<PlacementEditResult | null>(null);
 
   const rows = useMemo(
@@ -260,22 +263,36 @@ export function InstallPlacementEditor({
     });
   };
 
+  const scrollRowIntoView = (index: number): void => {
+    const tree = treeRef.current;
+    if (!tree) return;
+    const rowTop = index * rowHeight;
+    const rowBottom = rowTop + rowHeight;
+    if (rowTop < tree.scrollTop) tree.scrollTop = rowTop;
+    else if (rowBottom > tree.scrollTop + tree.clientHeight) {
+      tree.scrollTop = Math.max(0, rowBottom - tree.clientHeight);
+    }
+    setScrollTop(tree.scrollTop);
+  };
+
   const focusRow = (key: string): void => {
     const index = rows.findIndex((row) => row.key === key);
     if (index < 0) return;
     focusRequestedRef.current = key;
     setFocusedKey(key);
-    const tree = treeRef.current;
-    if (tree) {
-      const rowTop = index * rowHeight;
-      const rowBottom = rowTop + rowHeight;
-      if (rowTop < tree.scrollTop) tree.scrollTop = rowTop;
-      else if (rowBottom > tree.scrollTop + tree.clientHeight) {
-        tree.scrollTop = Math.max(0, rowBottom - tree.clientHeight);
-      }
-      setScrollTop(tree.scrollTop);
-    }
+    scrollRowIntoView(index);
   };
+
+  // A row an edit creates or moves only exists once the new `edits` come back from the parent and
+  // the tree is rebuilt, so revealing it has to wait for those rows rather than run with the edit.
+  useEffect(() => {
+    const requested = revealRequestedRef.current;
+    if (!requested) return;
+    const index = rows.findIndex((row) => row.key === requested);
+    if (index < 0) return;
+    revealRequestedRef.current = null;
+    scrollRowIntoView(index);
+  }, [rows]);
 
   useEffect(() => {
     const requested = focusRequestedRef.current;
@@ -332,6 +349,9 @@ export function InstallPlacementEditor({
       return;
     }
     commit(result.edits);
+    if (result.directoryKeyMoves?.length) {
+      setCollapsed((current) => applyPlacementDirectoryKeyMoves(current, result.directoryKeyMoves));
+    }
     const nextSelection = result.selectionKeys ?? (result.focusKey ? [result.focusKey] : null);
     if (nextSelection) {
       setSelected(new Set(nextSelection));
@@ -339,6 +359,7 @@ export function InstallPlacementEditor({
       setSelectionAnchor(nextFocusKey);
       if (nextFocusKey) {
         focusRequestedRef.current = nextFocusKey;
+        revealRequestedRef.current = nextFocusKey;
         setFocusedKey(nextFocusKey);
       }
     }
@@ -464,11 +485,23 @@ export function InstallPlacementEditor({
     setSelectionAnchor(row.key);
   };
 
+  const startEditing = (key: string, value: string): void => {
+    // Cleared so the input preselects its name again even when the same row is edited twice.
+    nameSelectedKeyRef.current = null;
+    setEditingKey(key);
+    setEditingValue(value);
+    setEditingError('');
+  };
+
+  const stopEditing = (): void => {
+    nameSelectedKeyRef.current = null;
+    setEditingKey(null);
+    setEditingError('');
+  };
+
   const startRename = (row: InstallPlacementRow): void => {
     if (row.kind !== 'directory' || row.system) return;
-    setEditingKey(row.key);
-    setEditingValue(row.name);
-    setEditingError('');
+    startEditing(row.key, row.name);
     setRowContextMenu(null);
   };
 
@@ -479,8 +512,7 @@ export function InstallPlacementEditor({
       setEditingError(copy.reason[result.reason] ?? result.reason);
       return;
     }
-    setEditingKey(null);
-    setEditingError('');
+    stopEditing();
     applyResult(result);
   };
 
@@ -498,8 +530,10 @@ export function InstallPlacementEditor({
     }
     applyResult(result);
     if (result.accepted && result.focusKey) {
-      setEditingKey(result.focusKey);
-      setEditingValue(index === 1 ? copy.newFolder : `${copy.newFolder} ${index}`);
+      // The new row lives inside its parent branch, and both revealing it and renaming it inline
+      // need that branch rendered.
+      toggleCollapsed(destinationKey, false);
+      startEditing(result.focusKey, index === 1 ? copy.newFolder : `${copy.newFolder} ${index}`);
     }
   };
 
@@ -682,7 +716,14 @@ export function InstallPlacementEditor({
               {isEditing ? (
                 <span className="install-placement-inline-edit">
                   <input
-                    autoFocus
+                    ref={(element) => {
+                      if (!element || nameSelectedKeyRef.current === row.key) return;
+                      nameSelectedKeyRef.current = row.key;
+                      element.focus();
+                      // Preselected so a placeholder folder name can be typed over instead of
+                      // being cleared by hand.
+                      element.select();
+                    }}
                     value={editingValue}
                     aria-invalid={Boolean(editingError)}
                     aria-describedby={editingError ? `${row.key}-error` : undefined}
@@ -691,7 +732,7 @@ export function InstallPlacementEditor({
                     onKeyDown={(event) => {
                       event.stopPropagation();
                       if (event.key === 'Enter') saveRename();
-                      if (event.key === 'Escape') { setEditingKey(null); setEditingError(''); }
+                      if (event.key === 'Escape') stopEditing();
                     }}
                     onBlur={() => { if (!editingError) saveRename(); }}
                   />

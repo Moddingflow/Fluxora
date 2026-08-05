@@ -158,6 +158,10 @@ namespace fluxora
             };
             rules.launch = LaunchSupportRules{definition.launchRules};
             rules.vfs = VfsSupportRules{definition.vfsRules};
+            // The profile plugin state files are declared once, under the plugin
+            // rules, and mirrored into the VFS rules so launch planning does not
+            // need a second, game-specific list of file names.
+            rules.vfs.rules.profileStateFileNames = definition.pluginRules.profileFiles;
             rules.contentLayout = ContentLayoutSupportRules{
                 definition.contentLayoutRules.dataFolder.empty()
                     ? definition.dataFolder

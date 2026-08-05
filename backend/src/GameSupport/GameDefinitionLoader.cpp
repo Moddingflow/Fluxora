@@ -301,6 +301,93 @@ namespace fluxora
             return result;
         }
 
+        [[nodiscard]] GameInstallDiscoveryRules readInstallDiscoveryRules(
+            const JsonValue& object)
+        {
+            const JsonValue* discovery = object.find(L"installDiscovery");
+            if (discovery == nullptr || discovery->isNull())
+            {
+                return {};
+            }
+
+            validateAllowedFields(*discovery, {L"providers"}, L"installDiscovery");
+            const JsonValue& providersValue = requireField(
+                *discovery,
+                L"providers",
+                L"installDiscovery");
+            if (!providersValue.isArray() || providersValue.asArray().empty())
+            {
+                throw std::runtime_error(
+                    "installDiscovery.providers must be a non-empty array.");
+            }
+            if (providersValue.asArray().size() > 5U)
+            {
+                throw std::runtime_error(
+                    "installDiscovery.providers cannot contain more than five providers.");
+            }
+
+            GameInstallDiscoveryRules result;
+            std::set<GameInstallDiscoveryProviderId> providerIds;
+            for (const JsonValue& item : providersValue.asArray())
+            {
+                validateAllowedFields(
+                    item,
+                    {L"id", L"productIds"},
+                    L"installDiscovery.provider");
+                const std::wstring idText = readRequiredString(
+                    item,
+                    L"id",
+                    L"installDiscovery.provider");
+                const std::optional<GameInstallDiscoveryProviderId> id =
+                    parseGameInstallDiscoveryProviderId(idText);
+                if (!id.has_value())
+                {
+                    throw std::runtime_error(
+                        "installDiscovery.provider.id is not a supported canonical provider id.");
+                }
+                if (!providerIds.insert(*id).second)
+                {
+                    throw std::runtime_error(
+                        "installDiscovery.providers contains a duplicate provider.");
+                }
+
+                std::vector<std::wstring> productIds = readStringArray(
+                    item,
+                    L"productIds",
+                    true,
+                    L"installDiscovery.provider");
+                const bool isStoreProvider =
+                    *id == GameInstallDiscoveryProviderId::Steam ||
+                    *id == GameInstallDiscoveryProviderId::Gog ||
+                    *id == GameInstallDiscoveryProviderId::Epic;
+                if (isStoreProvider != !productIds.empty())
+                {
+                    throw std::runtime_error(
+                        isStoreProvider
+                            ? "Store install discovery providers require productIds."
+                            : "Metadata install discovery providers cannot declare productIds.");
+                }
+
+                std::set<std::wstring> uniqueProductIds;
+                for (const std::wstring& productId : productIds)
+                {
+                    if (!isCanonicalGameInstallProductId(productId) ||
+                        !uniqueProductIds.insert(productId).second)
+                    {
+                        throw std::runtime_error(
+                            "installDiscovery.provider.productIds must be unique canonical ids.");
+                    }
+                }
+
+                result.providers.push_back(GameInstallDiscoveryProviderDefinition{
+                    *id,
+                    std::move(productIds)
+                });
+            }
+
+            return result;
+        }
+
         [[nodiscard]] std::vector<NormalizedExtension> readExtensionArray(
             const JsonValue& object,
             std::wstring_view field)
@@ -1252,6 +1339,7 @@ namespace fluxora
                 L"domains",
                 L"externalProviderGameSlugs",
                 L"installFolderAliases",
+                L"installDiscovery",
                 L"defaultProfileName",
                 L"dataFolder",
                 L"requiredFiles",
@@ -1292,6 +1380,7 @@ namespace fluxora
         }
         definition.externalProviderGameSlugs = readExternalProviderGameSlugs(root);
         definition.installFolderAliases = readStringArray(root, L"installFolderAliases", false, L"definition");
+        definition.installDiscovery = readInstallDiscoveryRules(root);
         definition.defaultProfileName = readOptionalString(root, L"defaultProfileName", L"definition");
         definition.dataFolder = readOptionalString(root, L"dataFolder", L"definition");
         definition.requiredFiles = readStringArray(root, L"requiredFiles", true, L"definition");

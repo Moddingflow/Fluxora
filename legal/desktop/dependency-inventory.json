@@ -32,11 +32,11 @@
     },
     {
       "path": "backend/CMakeLists.txt",
-      "sha256": "48c88cfcefce4aeb336b3e4f58d000a2996714fc80e57894a5b4d20e256487d7"
+      "sha256": "e5366ef25db525467b8f5ee2f7f05c3693b5b329ca4172640e241f20636e9f23"
     },
     {
       "path": "backend/tests/CMakeLists.txt",
-      "sha256": "e45adae1a3ead46e8d4854d4cdd836ed9562e96f8920fa4bc2401ce91d185565"
+      "sha256": "b6898d6a46ea03eb381200722928d06058d9e26c8f48d408fdd4c459befd5fbc"
     },
     {
       "path": "frontend-tauri/speech/manifest.v1.json",

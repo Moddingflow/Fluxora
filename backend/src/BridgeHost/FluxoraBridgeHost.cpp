@@ -1336,6 +1336,33 @@ namespace
             });
     }
 
+    std::wstring payloadDiscoverGameInstalls(const BridgeRequest& request)
+    {
+        if (request.params == nullptr || !request.params->isObject())
+        {
+            throw BridgeError{
+                L"bridge.invalidParams",
+                L"gameInstalls.discover params object is required.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+
+        const std::wstring buildConfigsDirectory =
+            requiredStringField(*request.params, L"buildConfigsDirectory");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.gameInstallDiscoveryFailed",
+            [&buildConfigsDirectory, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_discover_game_installs(
+                    buildConfigsDirectory.c_str(),
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadOpenProjectConfig(const BridgeRequest& request)
     {
         if (request.params == nullptr || !request.params->isObject())
@@ -4093,6 +4120,10 @@ namespace
         if (request.method == L"projects.listConfigs")
         {
             return payloadListProjectConfigs(request);
+        }
+        if (request.method == L"gameInstalls.discover")
+        {
+            return payloadDiscoverGameInstalls(request);
         }
         if (request.method == L"projects.openConfig")
         {

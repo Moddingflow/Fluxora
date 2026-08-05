@@ -199,11 +199,47 @@ Gateway protocol v3:
 - atomically reserves the maximum cost before Gemini and settles actual
   input/output/thinking/Search usage afterward;
 - returns a typed normalized quota snapshot and stable server failure codes;
+- labels the resolved allowance as `free` or `premium` in that snapshot;
 - performs exactly one Tauri-owned refresh/retry on 401, with no direct-Gemini,
   legacy-gateway, or publishable-key fallback.
 
 BYOK remains a separate direct Gemini path funded by the user's provider
 account and never consumes the managed Premium quota.
+
+## Allowances And Realtime Limit Changes
+
+Every connected ModdingFlow account resolves to exactly one monthly allowance;
+there is no weekly, daily, or per-run limit and no rollover. A signed-in account
+without effective Premium receives a small free test allowance on the calendar
+month, unprorated, with no Google Search budget. Effective Premium — confirmed
+Stripe funding, a reference entitlement, or admin inclusion — receives the paid
+allowance on the Stripe service period, so it resets when the subscription
+renews rather than on the first of the month.
+
+Allowances are recomputed by the server on every status call, so subscribing,
+renewing, lapsing, and refunding take effect immediately: a new subscription
+raises the allowance, a lapsed period expires it, and a refund or chargeback
+revokes the funded period and drops the account back to the free allowance in
+the same call.
+
+The desktop learns *when* to ask again through a Supabase Realtime channel. The
+gateway status response carries an opaque per-account topic; the renderer
+subscribes to it with the ModdingFlow publishable key while the AI panel is
+open. Messages on that topic are content-free by contract — they never carry a
+budget, tier, or token count — so the panel always re-reads the authenticated
+status call for the actual numbers. Refreshes are rate limited, and window
+focus, panel open, and run completion remain independent refresh triggers if
+the channel is unavailable.
+
+A missing Google Search allowance is not terminal. Host-owned
+`local.execution.research_web` converts an exhausted search budget into an
+explicit unavailable tool result so the run continues from local build
+evidence; other gateway failures stay terminal.
+
+The AI panel renders the resolved plan name, the consumed share of the monthly
+allowance (in-flight reservations count as consumed), the remaining Search
+queries, and the reset date. The free tier additionally offers an upgrade action
+that opens the ModdingFlow billing page through the typed external-link facade.
 
 ## Gemini Conversation Loop
 
@@ -222,8 +258,33 @@ The goal contract maps `repair` to compatible `kind=action` and
 `local-required`; `answer` and `inspect` map to compatible `kind=answer` with
 read-only authority. A natural description of an unwanted build state is an
 implicit repair unless the user explicitly limits the request to explanation or
-diagnosis. Tool-session schema `fluxora.ai.tool-session.v3` carries mode, origin,
-requested outcome, allowed risk, and continuation state through every round.
+diagnosis. A request for advice, review, or recommendations about the build's
+current state is `inspect`, because it can only be answered from that build's
+own files; `answer` is reserved for a conceptual question that does not depend
+on the selected build. Tool-session schema `fluxora.ai.tool-session.v3` carries
+mode, origin, requested outcome, allowed risk, and continuation state through
+every round.
+
+## Selected-Build Grounding
+
+Fluxora always runs inside one selected build, so the build is the subject of
+every request. The goal round and every execution round carry the same bounded
+Fluxora-owned build facts — label, game, profile, and mod/plugin/download counts
+from the workspace envelope — as host system instruction, stripped of control
+characters and truncated per fact. They are stated as Fluxora data, never as
+dialogue content, and they never widen tool authority.
+
+The same instruction forbids reinterpreting build vocabulary — stability,
+crashes, freezes, stutter, performance, load order, conflicts, requirements — as
+an operating-system, driver, hardware, or network question, forbids answering a
+build request with a menu of unrelated interpretations, and requires a vague
+request to be resolved from the build's own read-only evidence before answering.
+Clarification is allowed only when that evidence cannot decide the outcome, and
+then as exactly one concrete question about the build.
+
+One skill is selected per run from the user's request plus the build's game and
+then reused unchanged for every later round, so a correction or tool round
+cannot swap the instructions mid-run and the provider prefix stays cacheable.
 
 Every Gemini 3 request uses `temperature: 1.0`. Goal declaration always uses
 `thinkingConfig.thinkingLevel=high`; validated repair and inspect rounds remain
@@ -348,22 +409,42 @@ not replaced with a fake local provider response.
 
 ## Context Accounting And Compression
 
-The displayed metric is the prepared provider input, for example
-`Использовано контекста: 2 107 / 1 048 576 токенов`. The percentage denominator
-is the model input limit. The output limit is descriptive metadata, not part of
-that percentage.
+The displayed metric is the prepared provider input. The composer shows it as
+one ring left of the send button, filling as the window fills, with the exact
+numbers, share, and precision in its accessible label and tooltip; the ring also
+counts the message currently being typed. The percentage denominator is the
+model input limit. The output limit is descriptive metadata, not part of that
+percentage.
 
-The host calls `countTokens` with the actual prepared request: system and safety
-instructions, automatically selected skill text, tool declarations, current
-summary, retained messages, function history, and current request. If the
-provider counter is unavailable, the same shape is estimated and marked
-`estimated`; an estimate is never presented as exact.
+The counted shape is the actual prepared request: system, build-context and
+safety instructions, selected skill text, tool declarations, current summary,
+retained messages, function history, and current request. Counting it costs a
+second billable gateway round trip, and the result only changes a decision near
+the window, so `countTokens` runs only when the local estimate reaches 60% of
+the input limit. Below that the host uses its own estimate — four characters per
+token for ASCII, two for other scripts, so a Russian or German dialogue is not
+under-reported — and marks it `estimated`. After generation the provider's
+`usageMetadata.promptTokenCount` replaces it and is marked `exact`, so the
+displayed value becomes provider-counted without paying for a separate request.
+An estimate is never presented as exact.
 
 At 90% of the input limit the same Gemini model creates or updates one
 structured summary for the old eligible history. Goals, decisions, verified
 facts, opaque file refs, operation/rollback facts, and unresolved questions are
 retained. Recent messages and the current turn remain verbatim. The host then
-runs `countTokens` again before generation.
+recounts the compressed request before generation.
+
+## Generation Budgets
+
+The gateway reserves the declared maximum generation cost before Gemini runs and
+settles the real usage afterwards, so an unconditional 65,536-token output
+ceiling would reserve a full long answer for every round, including a one-call
+classification. Each phase therefore declares the output it can actually need:
+8,192 tokens for goal declaration, continuation summaries, and web research;
+16,384 for an answer turn; 32,768 for a tool round, which also carries typed
+call arguments. If a response still finishes on `MAX_TOKENS` with no text and no
+function call, the same request is retried exactly once with the model's full
+output window, so a budget can never turn into an empty answer.
 
 `providerHistoryStartIndex` advances only across the newly summarized segment.
 A later compression updates the existing summary with newly eligible messages;

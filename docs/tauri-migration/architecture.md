@@ -1,6 +1,6 @@
 # Fluxora Tauri + C++ bridge architecture
 
-Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16; automatic application update contract: 2026-07-30; Realtime release signal contract: 2026-08-02; cross-window locale synchronization: 2026-08-04
+Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13; global Downloads catalog update: 2026-07-16; automatic application update contract: 2026-07-30; Realtime release signal contract: 2026-08-02; cross-window locale synchronization and game-install discovery: 2026-08-04
 
 Статус: Phase 14 Bridge/API surface and cross-platform capability model implemented on top of the Phase 1 decision. This document is the bridge/source-of-truth companion to `docs/tauri-migration/wpf-ui-inventory.md` and `docs/tauri-migration/cross-platform-support.md`.
 
@@ -48,6 +48,10 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 - On Windows, `defaultInstallRootDirectory` is `<SystemDrive>\Fluxora Builds`; `projects.previewDirectory` and `projects.create` append the normalized build name below that root.
 - `features/library/CreateBuildWizard.tsx` renders the semantic form and shared `WizardStepper`; `useCreateBuildWizard.ts` owns reached-step state, native picker orchestration and preview state. Enter invokes the current primary action, and untouched future steps never report completion.
 - Project mutations still create an `operationId` in renderer/main and flow through the bridge request metadata into the C++ operation context.
+- `GameInstallDiscoveryService` is the only owner of automatic game-install discovery. Game definitions declare ordered canonical `installDiscovery.providers[]` entries and store product IDs; the C++ provider adapters read only existing Fluxora build configs, Steam/GOG/Epic metadata and Windows Uninstall Registry. They never perform recursive drive traversal, Windows Search or network access. Every candidate is rechecked through `GameDetectionService` and `GameHealthCheckService`, and `ProjectService::createProject` retains its authoritative pre-create validation.
+- `window.fluxora.gameInstalls.discover()` uses the dedicated Tauri command and the bridge method `gameInstalls.discover`. Rust injects `buildConfigsDirectory` from trusted runtime paths and calls the existing Main lane; the generic renderer bridge command rejects this method, so renderer input cannot substitute an arbitrary directory or start a second host. The response is `{ installs: [{ templateId, resolution, primaryExecutablePath?, providerId? }], operationId }`; path/provider fields exist only for `found`.
+- Catalog, templates and the discovery snapshot share one renderer bootstrap `operationId` and start in parallel. The Create Build entry remains gated until all three settle. A discovery-only transport/provider failure becomes a local `notFound` snapshot and cannot block manual build creation. The wizard stores `empty | auto | manual` path provenance: a template selection applies the already-ready snapshot synchronously, Browse always wins, a template change drops the previous path, and a later snapshot never replaces a manual choice.
+- Discovery adds no renderer loading/error surface, splash, spinner, button, automatic step transition, CSS or layout change. The existing read-only executable field, Next/Enter confirmation and Browse fallback remain the complete UI. Provider logs contain provider, game id, outcome, candidate count and duration only; discovered absolute paths are not logged. All processing is local and ephemeral, so this addition does not change privacy-policy or terms requirements.
 
 ## Phase 6 Workspace Mods MVP
 
@@ -265,6 +269,7 @@ Implemented MVP methods:
 - `settings.setTheme`
 - `templates.list`
 - `templates.resolve`
+- `gameInstalls.discover`
 - `projects.previewDirectory`
 - `projects.create`
 - `projects.openConfig`
@@ -1196,6 +1201,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `settings.setTheme`
 - `templates.list`
 - `templates.resolve`
+- `gameInstalls.discover`
 
 ### Projects and build paths
 

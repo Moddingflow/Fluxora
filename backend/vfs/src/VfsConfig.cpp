@@ -126,6 +126,7 @@ namespace fluxora::vfs
             mount.mods = readStringArray(value, protocol::fields::mods);
             mount.excludedRootNames = readStringArray(value, protocol::fields::excludedRootNames);
             mount.whiteoutRoot = readString(value, protocol::fields::whiteoutRoot);
+            mount.ownedFiles = readStringArray(value, protocol::fields::ownedFiles);
             return mount;
         }
     }
@@ -193,6 +194,7 @@ namespace fluxora::vfs
                     config.target,
                     config.overwrite,
                     config.mods,
+                    {},
                     {},
                     {}
                 });

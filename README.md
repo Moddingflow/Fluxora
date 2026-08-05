@@ -1,3 +1,9 @@
+
+
+https://github.com/user-attachments/assets/0b86cd60-5b97-4c37-b05d-1429bf1faec2
+
+
+
 <div align="center">
   <img src="Icons/Fluxora.png" alt="Fluxora logo" width="104" />
 

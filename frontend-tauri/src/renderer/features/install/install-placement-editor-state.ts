@@ -28,12 +28,19 @@ export interface InstallPlacementRow {
   problemCount: number;
 }
 
+export interface PlacementDirectoryKeyMove {
+  from: string;
+  to: string;
+}
+
 export interface PlacementEditResult {
   accepted: boolean;
   edits: FluxoraPlacementEditsV2;
   reason: string;
   focusKey?: string;
   selectionKeys?: string[];
+  /** Directory rows whose key changed, because a directory key carries its path. */
+  directoryKeyMoves?: PlacementDirectoryKeyMove[];
 }
 
 interface MutableNode extends InstallPlacementRow {
@@ -94,6 +101,24 @@ export const validatePlacementFolderName = (value: string): string => {
 };
 
 const targetKey = (target: string, path: string): string => `${target}|${pathKey(path)}`;
+
+const directoryRowKey = (target: string, path: string): string => `dir:${target}:${pathKey(path)}`;
+
+/**
+ * Rewrites row keys that a move or rename relocated, including the keys of the branch below the
+ * moved directory. View state keyed by row key (collapsed branches) would otherwise fall back to
+ * its default the moment a directory changes path.
+ */
+export const applyPlacementDirectoryKeyMoves = (
+  keys: ReadonlySet<string>,
+  moves: readonly PlacementDirectoryKeyMove[] | undefined
+): Set<string> => {
+  if (!moves || moves.length === 0) return new Set(keys);
+  return new Set([...keys].map((key) => {
+    const move = moves.find(({ from }) => key === from || key.startsWith(`${from}/`));
+    return move ? `${move.to}${key.slice(move.from.length)}` : key;
+  }));
+};
 
 const effectiveAssignment = (
   entry: FluxoraContentLayoutPreviewEntry,
@@ -203,7 +228,7 @@ export const buildInstallPlacementRows = (
     let built = '';
     for (const part of normalized.split('/').filter(Boolean)) {
       built = joinPath(built, part);
-      const key = `dir:${target}:${pathKey(built)}`;
+      const key = directoryRowKey(target, built);
       let node = nodeByKey.get(key);
       if (!node) {
         node = mutableNode(key, parent.key, 'directory', part, parent.depth + 1, target, built);
@@ -377,6 +402,7 @@ export const movePlacementSelection = (
 
   const next = clonePlacementEdits(edits);
   const files = assignmentMap(next);
+  const directoryKeyMoves: PlacementDirectoryKeyMove[] = [];
   const selectedSourcePaths = new Set(actionableMoveRoots.flatMap((row) => row.sourcePaths).map((path) => path.toLocaleLowerCase()));
   for (const sourcePathKey of selectedSourcePaths) {
     const entry = preview.entries.find((candidate) => candidate.sourcePath.toLocaleLowerCase() === sourcePathKey);
@@ -398,6 +424,7 @@ export const movePlacementSelection = (
     }
 
     const movedBase = joinPath(destination.targetRelativePath, row.name);
+    directoryKeyMoves.push({ from: row.key, to: directoryRowKey(target, movedBase) });
     for (const sourcePath of row.sourcePaths) {
       const entry = fileEntry(preview, sourcePath);
       if (!entry) return failed(edits, 'drop.source.missing');
@@ -422,14 +449,15 @@ export const movePlacementSelection = (
   if (validation) return failed(edits, validation);
   const selectionKeys = moveRoots.map((row) => {
     if (row.parentKey === destination.key || row.kind === 'file') return row.key;
-    return `dir:${target}:${pathKey(joinPath(destination.targetRelativePath, row.name))}`;
+    return directoryRowKey(target, joinPath(destination.targetRelativePath, row.name));
   });
   return {
     accepted: true,
     edits: next,
     reason: '',
     focusKey: selectionKeys[0],
-    selectionKeys
+    selectionKeys,
+    directoryKeyMoves
   };
 };
 
@@ -487,7 +515,7 @@ export const createPlacementDirectory = (
         accepted: true,
         edits: next,
         reason: '',
-        focusKey: `dir:${directory.target}:${pathKey(directory.targetRelativePath)}`
+        focusKey: directoryRowKey(directory.target, directory.targetRelativePath)
       };
 };
 
@@ -532,7 +560,8 @@ export const renamePlacementDirectory = (
         accepted: true,
         edits: next,
         reason: '',
-        focusKey: `dir:${row.target}:${pathKey(renamedBase)}`
+        focusKey: directoryRowKey(row.target, renamedBase),
+        directoryKeyMoves: [{ from: row.key, to: directoryRowKey(row.target, renamedBase) }]
       };
 };
 

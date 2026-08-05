@@ -623,7 +623,10 @@ test('keeps AI out of Home and runs one persisted Gemini chat inside the selecte
     )
     .toBe(true);
   await page.getByRole('button', { name: 'Send message' }).click();
-  await expect(page.locator('.ai-context-usage')).toContainText(/12.345.*1.048.576/);
+  await expect(page.locator('.ai-chat-input__toolbar .ai-context-usage')).toHaveAttribute(
+    'aria-label',
+    /12.345.*1.048.576/
+  );
   await expect(page.locator('.ai-chat-message[data-role="user"]')).toContainText('Проверь Community Shaders');
   await expect(page.locator('.ai-run-events')).toContainText('Gemini is checking the selected build.');
   await resolvePendingAiResponse(page);

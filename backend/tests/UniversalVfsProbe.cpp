@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -208,8 +209,8 @@ int wmain(int argc, wchar_t** argv)
     {
         return readOnlyComparisonMode(argc, argv);
     }
-    if (argc != 5 || argv[1] == nullptr || argv[2] == nullptr || argv[3] == nullptr ||
-        argv[4] == nullptr)
+    if (argc != 6 || argv[1] == nullptr || argv[2] == nullptr || argv[3] == nullptr ||
+        argv[4] == nullptr || argv[5] == nullptr)
     {
         return 10;
     }
@@ -218,6 +219,7 @@ int wmain(int argc, wchar_t** argv)
     const std::filesystem::path gameRoot(argv[2]);
     const std::filesystem::path status(argv[3]);
     const std::filesystem::path profileApiIni(argv[4]);
+    const std::filesystem::path ownedProfileStateFile(argv[5]);
     const auto fail = [&status](int code, const std::string& detail)
     {
         return finish(status, code, detail + ";win32=" + std::to_string(GetLastError()));
@@ -408,6 +410,28 @@ int wmain(int argc, wchar_t** argv)
             "child-vfs-wait=" + std::to_string(wait) +
                 "-exit=" + std::to_string(childExit) +
                 "-status=" + childStatusValue);
+    }
+
+    // The game rewrites its plugin list at the path the profile mount owns. The
+    // marker proves the read came from the managed profile copy and not from the
+    // real user directory, so the following write can never touch a real game
+    // installation if virtualization is not actually in effect.
+    constexpr std::string_view ownedStateMarker = "# fluxora-owned-state-probe\n";
+    const std::string ownedStateBefore = readFile(ownedProfileStateFile);
+    if (ownedStateBefore.rfind(ownedStateMarker, 0) != 0)
+    {
+        return fail(29, "owned-state-read=" + std::to_string(ownedStateBefore.size()));
+    }
+    if (!writeFile(
+            ownedProfileStateFile,
+            ownedStateBefore + "*ProbeWritten.esp\n",
+            CREATE_ALWAYS))
+    {
+        return fail(30, "owned-state-write");
+    }
+    if (readFile(ownedProfileStateFile) != ownedStateBefore + "*ProbeWritten.esp\n")
+    {
+        return fail(31, "owned-state-readback");
     }
 
     return finish(status, 0, "ok");

@@ -838,12 +838,11 @@ button:disabled {
   display: grid;
   grid-template-areas:
     "tabs"
-    "context"
     "quota"
     "diagnostic"
     "messages"
     "input";
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
 }
@@ -1144,14 +1143,39 @@ button:disabled {
 }
 
 .ai-context-usage {
-  grid-area: context;
-  display: block;
-  min-width: 0;
-  padding: 7px 12px;
-  color: var(--text-subtle);
-  font-size: 11px;
-  line-height: 1.4;
-  border-bottom: 1px solid var(--line-soft);
+  --ai-context-tone: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  cursor: default;
+}
+
+.ai-context-usage svg {
+  /* Fill clockwise from the top, the way a remaining-capacity dial reads. */
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.ai-context-usage circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.ai-context-usage__track {
+  stroke: color-mix(in srgb, var(--text-subtle) 24%, transparent);
+}
+
+.ai-context-usage__fill {
+  stroke: var(--ai-context-tone);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--motion-medium, 220ms) ease;
+}
+
+.ai-context-usage[data-state="counting"] {
+  opacity: 0.55;
 }
 
 .ai-quota-usage {
@@ -1241,6 +1265,35 @@ button:disabled {
   font-weight: 700;
 }
 
+.ai-quota-usage__upgrade {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--flx-accent-bright) 46%, transparent);
+  border-radius: 999px;
+  color: var(--flx-accent-bright);
+  font: inherit;
+  font-weight: 760;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--flx-accent-bright) 12%, transparent);
+  cursor: pointer;
+  transition: background-color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.ai-quota-usage__upgrade:hover {
+  border-color: color-mix(in srgb, var(--flx-accent-bright) 68%, transparent);
+  background: color-mix(in srgb, var(--flx-accent-bright) 20%, transparent);
+}
+
+.ai-quota-usage__upgrade:focus-visible {
+  outline: 2px solid var(--flx-accent-bright);
+  outline-offset: 2px;
+}
+
+/* The free allowance is a taster, so its rail stays visually secondary until
+   it actually runs low and the level tone takes over. */
+.ai-quota-usage[data-tier="free"][data-level="healthy"] {
+  --ai-quota-tone: var(--text-subtle);
+}
+
 .ai-quota-usage[data-level="warning"] {
   --ai-quota-tone: var(--warning);
 }
@@ -1291,10 +1344,17 @@ button:disabled {
   background: var(--text-subtle);
 }
 
-.ai-context-usage[data-level="warning"],
+.ai-context-usage[data-level="moderate"] {
+  --ai-context-tone: var(--text);
+}
+
+.ai-context-usage[data-level="warning"] {
+  --ai-context-tone: var(--warning);
+}
+
 .ai-context-usage[data-level="critical"],
 .ai-context-usage[data-level="almost-full"] {
-  color: var(--warning);
+  --ai-context-tone: var(--danger);
 }
 
 .ai-chat-diagnostic[data-level="error"] {
@@ -5786,6 +5846,15 @@ body.row-reorder-active.row-reorder-blocked * {
 .mod-row[data-separator="true"][data-collapsed="true"],
 .mod-list-row--separator[data-collapsed="true"] {
   background: rgba(var(--flx-accent-rgb), 0.065);
+}
+
+/* Separator rows paint their own tinted background, which is as specific as the
+   generic selected-row rule above. Without these the selection highlight loses
+   the cascade and a multi-selected separator looks unselected, so range and
+   toggle selections over separators appear to do nothing. */
+.mod-row[data-separator="true"][data-selected="true"],
+.mod-row[data-separator="true"][data-collapsed="true"][data-selected="true"] {
+  background: rgba(var(--flx-accent-rgb), 0.11);
 }
 
 .mod-list-row--separator {

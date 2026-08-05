@@ -21,6 +21,7 @@ namespace fluxora
     class ExternalConnectionService;
     class FluxPackService;
     class GrassCacheService;
+    class GameInstallDiscoveryService;
     class VirtualFileSystemService;
     class AppSettingsService;
     class BuildPathSettingsService;
@@ -73,6 +74,7 @@ namespace fluxora
         [[nodiscard]] NexusModsAuthService& nexusModsAuth() noexcept;
         [[nodiscard]] NexusUpdateApi& nexusUpdateApi() noexcept;
         [[nodiscard]] ProjectService& projects() noexcept;
+        [[nodiscard]] GameInstallDiscoveryService& gameInstallDiscovery() noexcept;
         [[nodiscard]] TemplateService& templates() noexcept;
         [[nodiscard]] AppSettingsService& settings() noexcept;
         [[nodiscard]] BuildPathSettingsService& buildPathSettings() noexcept;
@@ -105,6 +107,7 @@ namespace fluxora
         std::unique_ptr<LodGeneratorIntegrationService> lodGeneratorIntegration_;
         std::unique_ptr<TemplateService> templates_;
         std::unique_ptr<ProjectService> projects_;
+        std::unique_ptr<GameInstallDiscoveryService> gameInstallDiscovery_;
         std::unique_ptr<FluxPackService> fluxPacks_;
         std::unique_ptr<ModOrganizerImportService> modOrganizerImport_;
         std::unique_ptr<VirtualFileSystemService> virtualFileSystem_;

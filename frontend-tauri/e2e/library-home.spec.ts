@@ -2060,6 +2060,24 @@ test.beforeEach(async ({ page }) => {
           if (redundantData) {
             preview.entries[0].targetRelativePath = 'Data/SkyUI.esp';
           }
+          if (window.localStorage.getItem('fluxora.test.longArchiveLayout') === 'true') {
+            // Enough branches to push a newly created folder past the virtualized row window.
+            const template = preview.entries[1];
+            for (let branch = 0; branch < 12; branch += 1) {
+              for (let asset = 0; asset < 3; asset += 1) {
+                const relativePath = `branch${String(branch).padStart(2, '0')}/asset${asset}.dds`;
+                preview.entries.push({
+                  ...template,
+                  sourcePath: `Data/${relativePath}`,
+                  targetRelativePath: relativePath,
+                  classification: 'gameData',
+                  explanation: 'Asset goes to Data.'
+                });
+              }
+            }
+            preview.summary.totalEntries = preview.entries.length;
+            preview.summary.gameDataEntries = preview.entries.length - 1;
+          }
           for (const edit of edits.files ?? []) {
             const entry = preview.entries.find((candidate: any) => candidate.sourcePath === edit.sourcePath);
             if (entry) {
@@ -3845,6 +3863,29 @@ test.beforeEach(async ({ page }) => {
         delete: async () => [],
         list: async () => ['Default'],
         rename: async () => []
+      },
+      gameInstalls: {
+        discover: async (operation: any) => {
+          calls.push({ method: 'gameInstalls.discover', payload: { operation } });
+          const found = testParameters.get('testDiscovery') !== 'notFound';
+          const snapshot = {
+            installs: [{
+              templateId: 'skyrim-special-edition',
+              resolution: found ? 'found' : 'notFound',
+              ...(found ? {
+                primaryExecutablePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+                providerId: 'steam'
+              } : {})
+            }],
+            operationId: operation?.operationId ?? 'op_game_installs_discover'
+          };
+          if (testParameters.get('testDiscovery') === 'deferred') {
+            return new Promise((resolve) => {
+              (window as any).__fluxoraResolveGameInstallDiscovery = () => resolve(snapshot);
+            });
+          }
+          return snapshot;
+        }
       },
       projects: {
         create: async (request: any, operation: any) => {
@@ -5675,13 +5716,12 @@ test('selects, opens and creates builds from the redesigned library home', async
   await gameTemplate.press('Enter');
 
   await expect(page.getByRole('heading', { name: 'Game executable' })).toBeVisible();
-  await page.evaluate(() => {
-    (window as any).__fluxoraExecutablePickPath = 'C:\\Games\\Skyrim\\SkyrimSE.exe';
-  });
-  await page.getByRole('button', { name: 'Choose SkyrimSE.exe' }).click();
   const executableInput = page.getByRole('textbox', { name: 'Official game executable' });
   await expect(executableInput).toHaveAttribute('readonly', '');
   await expect(executableInput).toHaveValue('C:\\Games\\Skyrim\\SkyrimSE.exe');
+  await expect
+    .poll(() => latestCallPayload(page, 'dialogs.pickExecutable'))
+    .toBeNull();
   await executableInput.press('Enter');
 
   await expect(page.getByRole('heading', { name: 'Install location' })).toBeVisible();
@@ -5712,8 +5752,22 @@ test('selects, opens and creates builds from the redesigned library home', async
   await expect(skyrimSummary.getByText('248', { exact: true })).toBeVisible();
 });
 
+test('keeps the create wizard gated until discovery is ready', async ({ page }) => {
+  await page.goto(`${baseUrl}?testDiscovery=deferred`);
+  const newBuild = page.getByRole('button', { name: 'New build' }).first();
+
+  await expect(newBuild).toBeDisabled();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.evaluate(() => (window as any).__fluxoraResolveGameInstallDiscovery());
+  await expect(newBuild).toBeEnabled();
+  await newBuild.click();
+
+  await expect(page.locator('.create-build-wizard')).toBeVisible();
+  await expect(page.getByRole('dialog').locator('[role="progressbar"], .spinner')).toHaveCount(0);
+});
+
 test('rejects a launcher in the official executable picker', async ({ page }) => {
-  await page.goto(baseUrl);
+  await page.goto(`${baseUrl}?testDiscovery=notFound`);
   await page.getByRole('button', { name: 'New build' }).first().click();
   const buildNameInput = page.getByPlaceholder('My Skyrim build');
   await buildNameInput.fill('Launcher rejection');
@@ -5734,6 +5788,25 @@ test('rejects a launcher in the official executable picker', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Game executable' })).toBeVisible();
 });
 
+test('keeps a manual executable override over the discovered path', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.getByRole('button', { name: 'New build' }).first().click();
+  await page.getByPlaceholder('My Skyrim build').fill('Manual override');
+  await page.getByPlaceholder('My Skyrim build').press('Enter');
+  const gameTemplate = page.getByRole('radio', { name: 'Skyrim Special Edition' });
+  await gameTemplate.click();
+  await gameTemplate.press('Enter');
+
+  const executableInput = page.getByRole('textbox', { name: 'Official game executable' });
+  await expect(executableInput).toHaveValue('C:\\Games\\Skyrim\\SkyrimSE.exe');
+  await page.evaluate(() => {
+    (window as any).__fluxoraExecutablePickPath = 'D:\\Manual\\SkyrimSE.exe';
+  });
+  await page.getByRole('button', { name: 'Choose SkyrimSE.exe' }).click();
+
+  await expect(executableInput).toHaveValue('D:\\Manual\\SkyrimSE.exe');
+});
+
 test('keeps the create-build wizard compact at supported desktop sizes', async ({ page }, testInfo) => {
   const sizes = [
     { width: 860, height: 620 },
@@ -5745,6 +5818,7 @@ test('keeps the create-build wizard compact at supported desktop sizes', async (
     await page.goto(baseUrl);
     await page.getByRole('button', { name: 'New build' }).first().click();
     await expect(page.locator('.create-build-wizard')).toBeVisible();
+    await expect(page.getByRole('dialog').locator('[role="progressbar"], .spinner')).toHaveCount(0);
     await expectNoDocumentHorizontalOverflow(page);
 
     const nameInput = page.getByPlaceholder('My Skyrim build');
@@ -6442,9 +6516,45 @@ test('edits standard archive placement with pointer, keyboard history, and V2 di
   await expect(interfaceFolder).toHaveAttribute('data-selected', 'true');
   await expect(rootInterfaceFolder).toHaveCount(0);
 
+  await interfaceFolder.getByRole('button', { name: 'Collapse' }).click();
+  await expect(interfaceFolder).toHaveAttribute('aria-expanded', 'false');
+  await expect(interfaceFile).toHaveCount(0);
+  const collapsedFrom = await interfaceFolder.boundingBox();
+  const collapsedTo = await gameRoot.boundingBox();
+  expect(collapsedFrom).not.toBeNull();
+  expect(collapsedTo).not.toBeNull();
+  await page.mouse.move(collapsedFrom!.x + 70, collapsedFrom!.y + collapsedFrom!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(collapsedFrom!.x + 82, collapsedFrom!.y + collapsedFrom!.height / 2);
+  await page.mouse.move(collapsedTo!.x + 70, collapsedTo!.y + collapsedTo!.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(rootInterfaceFolder).toBeVisible();
+  await expect(rootInterfaceFolder).toHaveAttribute('aria-expanded', 'false');
+  await expect(interfaceFile).toHaveCount(0);
+  await rootInterfaceFolder.getByRole('button', { name: 'Expand' }).click();
+  await expect(interfaceFile).toBeVisible();
+
+  const restoreFrom = await rootInterfaceFolder.boundingBox();
+  const restoreTo = await dataRoot.boundingBox();
+  expect(restoreFrom).not.toBeNull();
+  expect(restoreTo).not.toBeNull();
+  await page.mouse.move(restoreFrom!.x + 140, restoreFrom!.y + restoreFrom!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(restoreFrom!.x + 152, restoreFrom!.y + restoreFrom!.height / 2);
+  await page.mouse.move(restoreTo!.x + 70, restoreTo!.y + restoreTo!.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(interfaceFolder).toBeVisible();
+  await expect(rootInterfaceFolder).toHaveCount(0);
+
   await dialog.locator('[data-placement-key="root:data"]').click();
   await dialog.getByRole('button', { name: 'New folder', exact: true }).click();
   const folderName = dialog.locator('.install-placement-inline-edit input');
+  await expect(folderName).toBeFocused();
+  expect(await folderName.evaluate((element: HTMLInputElement) => ({
+    end: element.selectionEnd,
+    start: element.selectionStart,
+    value: element.value
+  }))).toEqual({ end: 'New folder'.length, start: 0, value: 'New folder' });
   await folderName.fill('Generated');
   await folderName.press('Enter');
   await expect(dialog.locator('[data-placement-key="dir:data:generated"]')).toBeVisible();
@@ -6482,6 +6592,47 @@ test('edits standard archive placement with pointer, keyboard history, and V2 di
   });
   expect(persistedEdits.files.some((file: any) => file.target === 'gameRoot')).toBe(true);
   expect(persistedEdits.excludedSourcePaths).toContain('readme.txt');
+});
+
+test('scrolls a new placement folder into view instead of leaving it below the fold', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.longArchiveLayout', 'true'));
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Downloads/ }).click();
+  await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
+
+  const dialog = page.locator('.install-modal-layout[role="dialog"]');
+  await expect(dialog).toHaveAttribute('aria-busy', 'false');
+  await dialog.getByRole('button', { name: 'Details' }).click();
+  const tree = dialog.locator('.install-placement-tree');
+  await expect(dialog.locator('[data-placement-key="dir:data:branch00"]')).toBeVisible();
+
+  // The new folder sorts behind every branch subtree, so it starts outside the rendered window.
+  await tree.evaluate((element) => { element.scrollTop = 0; });
+  await dialog.locator('[data-placement-key="root:data"]').click();
+  await dialog.getByRole('button', { name: 'New folder', exact: true }).click();
+
+  const inlineEdit = dialog.locator('.install-placement-inline-edit');
+  await expect(inlineEdit).toBeVisible();
+  const folderName = inlineEdit.locator('input');
+  await expect(folderName).toBeFocused();
+  expect(await folderName.evaluate((element: HTMLInputElement) => ({
+    end: element.selectionEnd,
+    start: element.selectionStart,
+    value: element.value
+  }))).toEqual({ end: 'New folder'.length, start: 0, value: 'New folder' });
+
+  expect(await tree.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const treeBox = await tree.boundingBox();
+  const inlineBox = await inlineEdit.boundingBox();
+  expect(treeBox).not.toBeNull();
+  expect(inlineBox).not.toBeNull();
+  expect(inlineBox!.y).toBeGreaterThanOrEqual(treeBox!.y - 1);
+  expect(inlineBox!.y + inlineBox!.height).toBeLessThanOrEqual(treeBox!.y + treeBox!.height + 1);
+
+  await folderName.fill('Generated');
+  await folderName.press('Enter');
+  await expect(dialog.locator('[data-placement-key="dir:data:generated"]')).toBeVisible();
 });
 
 test('repairs redundant Data placement from blocked to ready without hiding the tree', async ({ page }) => {

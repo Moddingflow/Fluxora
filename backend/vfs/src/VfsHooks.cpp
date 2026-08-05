@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,9 @@ namespace fluxora::vfs
             std::wstring overwrite;
             std::wstring whiteoutRoot;
             std::vector<std::wstring> excludedRootNames;
+            // Mirrors the tree's owned-file set so the per-open check is a plain
+            // hash lookup instead of a locked normalize on the hot path.
+            std::unordered_set<std::wstring> ownedFilesLower;
         };
 
         std::vector<RuntimeMount> g_mounts;
@@ -408,6 +412,25 @@ namespace fluxora::vfs
             return excluded;
         }
 
+        std::unordered_set<std::wstring> normalizedOwnedFiles(const std::vector<std::wstring>& names)
+        {
+            std::unordered_set<std::wstring> owned;
+            owned.reserve(names.size());
+            for (const std::wstring& name : names)
+            {
+                if (const std::wstring normalized = VfsTree::normalizeRel(name); !normalized.empty())
+                {
+                    owned.insert(VfsTree::toLower(normalized));
+                }
+            }
+            return owned;
+        }
+
+        bool isOwnedFile(const RuntimeMount& mount, const std::wstring& relLower)
+        {
+            return !mount.ownedFilesLower.empty() && mount.ownedFilesLower.contains(relLower);
+        }
+
         bool isExcludedRelativePath(const RuntimeMount& mount, const std::wstring& relLower)
         {
             if (relLower.empty())
@@ -755,11 +778,33 @@ namespace fluxora::vfs
             RuntimeMount& mount = g_mounts[mountIndex];
             const std::wstring relN = VfsTree::normalizeRel(rel);
             const std::wstring relLower = VfsTree::toLower(relN);
-            const VfsTree::PathInfo info = mount.tree.classify(relN);
 
             OpenDecision decision;
             decision.mountIndex = mountIndex;
             decision.relLower = relLower;
+
+            // Source-owned state files are never copied on write. Both reads and
+            // writes go straight to the manager's copy, so the game and Fluxora
+            // always agree on files such as the profile plugin list.
+            if (!directoryOpen && isOwnedFile(mount, relLower))
+            {
+                if (std::wstring ownedPath = mount.tree.ownedFilePath(relN); !ownedPath.empty())
+                {
+                    if (dispositionCreates(disposition) || writeAccess)
+                    {
+                        makeParentDirectories(ownedPath);
+                        ++g_redirectedWrites;
+                        // The source file is about to change size/contents, so
+                        // drop the cached metadata the merged listing holds.
+                        mount.tree.notifyMutation(relN);
+                    }
+                    decision.redirect = true;
+                    decision.path = std::move(ownedPath);
+                    return decision;
+                }
+            }
+
+            const VfsTree::PathInfo info = mount.tree.classify(relN);
             switch (info.kind)
             {
             case VfsTree::PathInfo::Kind::Directory:
@@ -1449,13 +1494,31 @@ namespace fluxora::vfs
             }
 
             RuntimeMount& mount = g_mounts[match.mountIndex];
+            const std::wstring rel = VfsTree::normalizeRel(match.rel);
+
+            // Renaming onto an owned file (the atomic "write temp, replace"
+            // pattern every serious writer uses) must land on the source copy,
+            // not fork it into overwrite.
+            if (isOwnedFile(mount, VfsTree::toLower(rel)))
+            {
+                std::wstring ownedPath = mount.tree.ownedFilePath(rel);
+                if (ownedPath.empty())
+                {
+                    return false;
+                }
+
+                makeParentDirectories(ownedPath);
+                overwritePath = std::move(ownedPath);
+                return true;
+            }
+
             if (mount.overwrite.empty())
             {
                 return false;
             }
 
-            overwritePath = overwritePathForRel(mount, VfsTree::normalizeRel(match.rel));
-            clearWhiteout(mount, VfsTree::normalizeRel(match.rel));
+            overwritePath = overwritePathForRel(mount, rel);
+            clearWhiteout(mount, rel);
             makeParentDirectories(overwritePath);
             return true;
         }
@@ -1950,6 +2013,7 @@ namespace fluxora::vfs
                         rewritten.size(),
                         FileInformationClass);
                     if (status == StatusSuccess && tracked &&
+                        !isOwnedFile(g_mounts[trackedState.mountIndex], trackedState.relLower) &&
                         !createWhiteout(g_mounts[trackedState.mountIndex], trackedState.relLower))
                     {
                         VfsLog::writef(
@@ -1978,7 +2042,10 @@ namespace fluxora::vfs
 
             const NTSTATUS status = Real_NtSetInformationFile(
                 FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass);
+            // An owned file lives in its source, so a delete already removed the
+            // real file. A whiteout would only leave a marker the tree ignores.
             if (status == StatusSuccess && deleteRequested && tracked &&
+                !isOwnedFile(g_mounts[trackedState.mountIndex], trackedState.relLower) &&
                 !createWhiteout(g_mounts[trackedState.mountIndex], trackedState.relLower))
             {
                 VfsLog::writef(
@@ -2008,6 +2075,24 @@ namespace fluxora::vfs
 
             RuntimeMount& mount = g_mounts[match.mountIndex];
             const std::wstring rel = VfsTree::normalizeRel(match.rel);
+
+            // Deleting an owned file deletes the source copy: a whiteout would
+            // hide a file the manager is about to rewrite anyway.
+            if (isOwnedFile(mount, VfsTree::toLower(rel)))
+            {
+                const std::wstring ownedPath = mount.tree.ownedFilePath(rel);
+                if (ownedPath.empty())
+                {
+                    return StatusObjectNameNotFound;
+                }
+
+                RedirectScope redirect(ObjectAttributes, ownedPath);
+                const NTSTATUS status = Real_NtDeleteFile(ObjectAttributes);
+                redirect.restore();
+                mount.tree.notifyMutation(rel);
+                return status;
+            }
+
             if (mount.tree.classify(rel).kind == VfsTree::PathInfo::Kind::Whiteout)
             {
                 return StatusObjectNameNotFound;
@@ -2343,6 +2428,7 @@ namespace fluxora::vfs
             mount.overwrite = mount.tree.overwrite();
             mount.whiteoutRoot = mount.tree.whiteoutRoot();
             mount.excludedRootNames = normalizedExcludedRootNames(mountConfig.excludedRootNames);
+            mount.ownedFilesLower = normalizedOwnedFiles(mountConfig.ownedFiles);
             g_mountSourceCount += mountConfig.mods.size();
             g_mounts.push_back(std::move(mount));
         }

@@ -135,6 +135,32 @@ namespace fluxora::tests
         EXPECT_EQ(
             skyrim.externalProviderGameSlugs.at(L"moddingflow"),
             (std::vector<std::wstring>{L"skyrim-se-ae", L"skyrim-se"}));
+        ASSERT_EQ(skyrim.installDiscovery.providers.size(), 4U);
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[0].id,
+            GameInstallDiscoveryProviderId::Fluxora);
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[1].id,
+            GameInstallDiscoveryProviderId::Steam);
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[1].productIds,
+            (std::vector<std::wstring>{L"489830"}));
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[2].id,
+            GameInstallDiscoveryProviderId::Gog);
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[2].productIds,
+            (std::vector<std::wstring>{L"1711230643"}));
+        EXPECT_EQ(
+            skyrim.installDiscovery.providers[3].id,
+            GameInstallDiscoveryProviderId::Windows);
+        EXPECT_TRUE(std::none_of(
+            skyrim.installDiscovery.providers.begin(),
+            skyrim.installDiscovery.providers.end(),
+            [](const GameInstallDiscoveryProviderDefinition& provider)
+            {
+                return provider.id == GameInstallDiscoveryProviderId::Epic;
+            }));
         EXPECT_EQ(skyrim.dataFolder, L"Data");
         EXPECT_TRUE(skyrim.capabilities.has(GameCapability::Plugins));
         EXPECT_TRUE(skyrim.capabilities.has(GameCapability::LoadOrder));
@@ -179,6 +205,66 @@ namespace fluxora::tests
         EXPECT_EQ(
             skyrim.launchRules.scriptExtender->launchTrackingKind,
             LaunchTrackingKind::ExpectedChildProcess);
+    }
+
+    TEST(GameDefinitionLoaderTests, LoadsDeclarativeInstallDiscoveryProviders)
+    {
+        const std::wstring json = replaceFirst(
+            std::wstring(minimalDefinition),
+            L"\"installFolderAliases\": [\"Example Game\"],",
+            LR"json("installFolderAliases": ["Example Game"],
+            "installDiscovery": {
+                "providers": [
+                    {"id": "steam", "productIds": ["100", "200"]},
+                    {"id": "windows", "productIds": []}
+                ]
+            },)json");
+
+        const GameDefinition definition = GameDefinitionLoader::loadDefinition(json);
+
+        ASSERT_EQ(definition.installDiscovery.providers.size(), 2U);
+        EXPECT_EQ(
+            definition.installDiscovery.providers.front().id,
+            GameInstallDiscoveryProviderId::Steam);
+        EXPECT_EQ(
+            definition.installDiscovery.providers.front().productIds,
+            (std::vector<std::wstring>{L"100", L"200"}));
+        EXPECT_EQ(
+            definition.installDiscovery.providers.back().id,
+            GameInstallDiscoveryProviderId::Windows);
+    }
+
+    TEST(GameDefinitionLoaderTests, RejectsUnknownOrDuplicateInstallDiscoveryProvidersAndIds)
+    {
+        const auto withProviders = [](std::wstring_view providers)
+        {
+            return replaceFirst(
+                std::wstring(minimalDefinition),
+                L"\"installFolderAliases\": [\"Example Game\"],",
+                L"\"installFolderAliases\": [\"Example Game\"], \"installDiscovery\": {\"providers\": [" +
+                    std::wstring(providers) + L"]},");
+        };
+
+        EXPECT_THROW(
+            (void)GameDefinitionLoader::loadDefinition(withProviders(
+                LR"json({"id":"unknown","productIds":[]})json")),
+            std::runtime_error);
+        EXPECT_THROW(
+            (void)GameDefinitionLoader::loadDefinition(withProviders(
+                LR"json({"id":"steam","productIds":["100"]},{"id":"steam","productIds":["200"]})json")),
+            std::runtime_error);
+        EXPECT_THROW(
+            (void)GameDefinitionLoader::loadDefinition(withProviders(
+                LR"json({"id":"steam","productIds":["100","100"]})json")),
+            std::runtime_error);
+        EXPECT_THROW(
+            (void)GameDefinitionLoader::loadDefinition(withProviders(
+                LR"json({"id":"steam","productIds":[]})json")),
+            std::runtime_error);
+        EXPECT_THROW(
+            (void)GameDefinitionLoader::loadDefinition(withProviders(
+                LR"json({"id":"windows","productIds":["not-used"]})json")),
+            std::runtime_error);
     }
 
     TEST(GameDefinitionLoaderTests, EmbeddedSkyrimDefinitionCarriesParityRules)

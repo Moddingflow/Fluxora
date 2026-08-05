@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2",
-  "definitionVersion": "2.0.0",
+  "definitionVersion": "2.1.0",
   "id": "skyrimse",
   "displayName": "Skyrim Special Edition",
   "summary": "Сборка для Skyrim SE: плагины .esp/.esm/.esl, порядок загрузки, INI-твики и SKSE64.",
@@ -25,6 +25,26 @@
     "Skyrim SE",
     "Skyrim"
   ],
+  "installDiscovery": {
+    "providers": [
+      {
+        "id": "fluxora",
+        "productIds": []
+      },
+      {
+        "id": "steam",
+        "productIds": ["489830"]
+      },
+      {
+        "id": "gog",
+        "productIds": ["1711230643"]
+      },
+      {
+        "id": "windows",
+        "productIds": []
+      }
+    ]
+  },
   "defaultProfileName": "Default",
   "dataFolder": "Data",
   "requiredFiles": [

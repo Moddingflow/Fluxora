@@ -49,6 +49,7 @@ add_executable(FluxoraCoreTests
     PgPatcherExecutableServiceTests.cpp
     GameDetectionHealthServiceTests.cpp
     GameDefinitionLoaderTests.cpp
+    GameInstallDiscoveryServiceTests.cpp
     GameSupportRegistryTests.cpp
     GameTypesTests.cpp
     HookServiceTests.cpp
@@ -113,6 +114,8 @@ add_executable(FluxoraCoreTests
     ../src/GameSupport/DefinitionBackedGameSupport.cpp
     ../src/GameSupport/GameDefinition.cpp
     ../src/GameSupport/GameDefinitionLoader.cpp
+    ../src/GameSupport/GameInstallDiscoveryService.cpp
+    ../src/GameSupport/GameInstallDiscoveryProviders.cpp
     ../src/GameSupport/GameDetectionService.cpp
     ../src/GameSupport/GameHealthCheckService.cpp
     ../src/GameSupport/GameSupportRegistry.cpp

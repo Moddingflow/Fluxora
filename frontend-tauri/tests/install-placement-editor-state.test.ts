@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   advancePlacementHistory,
+  applyPlacementDirectoryKeyMoves,
   buildInstallPlacementRows,
   createPlacementDirectory,
   deleteEmptyPlacementDirectory,
@@ -366,6 +367,86 @@ describe('install placement editor state', () => {
     expect(deleted.edits.directories).toEqual([]);
   });
 
+  it('keeps a collapsed folder collapsed after it is moved or renamed', () => {
+    const collapsed = new Set(['dir:data:meshes/armor', 'dir:data:scripts']);
+
+    const moved = movePlacementSelection(
+      preview(),
+      emptyPlacementEdits(),
+      new Set(['dir:data:meshes/armor']),
+      'root:gameRoot'
+    );
+    expect(moved.directoryKeyMoves).toEqual([
+      { from: 'dir:data:meshes/armor', to: 'dir:gameRoot:armor' }
+    ]);
+    const afterMove = applyPlacementDirectoryKeyMoves(collapsed, moved.directoryKeyMoves);
+    expect([...afterMove]).toEqual(['dir:gameRoot:armor', 'dir:data:scripts']);
+    expect(
+      buildInstallPlacementRows(preview(), moved.edits, afterMove)
+        .some((row) => row.parentKey === 'dir:gameRoot:armor')
+    ).toBe(false);
+
+    const renamed = renamePlacementDirectory(
+      preview(),
+      moved.edits,
+      'dir:gameRoot:armor',
+      'Equipment'
+    );
+    expect(renamed.directoryKeyMoves).toEqual([
+      { from: 'dir:gameRoot:armor', to: 'dir:gameRoot:equipment' }
+    ]);
+    expect([...applyPlacementDirectoryKeyMoves(afterMove, renamed.directoryKeyMoves)]).toEqual([
+      'dir:gameRoot:equipment',
+      'dir:data:scripts'
+    ]);
+  });
+
+  it('carries the collapsed branch below a moved folder without touching sibling keys', () => {
+    const moved = movePlacementSelection(
+      nestedFolderPreview(),
+      emptyPlacementEdits(),
+      new Set(['dir:data:skse/plugins']),
+      'root:data'
+    );
+
+    expect(moved.accepted).toBe(true);
+    const remapped = applyPlacementDirectoryKeyMoves(
+      new Set([
+        'dir:data:skse/plugins',
+        'dir:data:skse/plugins/backup',
+        'dir:data:skse/plugins/backup/2026',
+        'dir:data:skse/pluginsextra',
+        'dir:data:scripts',
+        'file:data/skse/plugins/keep.dll'
+      ]),
+      moved.directoryKeyMoves
+    );
+
+    expect([...remapped]).toEqual([
+      'dir:data:plugins',
+      'dir:data:plugins/backup',
+      'dir:data:plugins/backup/2026',
+      'dir:data:skse/pluginsextra',
+      'dir:data:scripts',
+      'file:data/skse/plugins/keep.dll'
+    ]);
+  });
+
+  it('leaves keys untouched when an edit relocates no directory', () => {
+    const included = setPlacementSelectionIncluded(
+      preview(),
+      emptyPlacementEdits(),
+      'dir:data:meshes/armor',
+      false
+    );
+    const keys = new Set(['dir:data:meshes/armor']);
+
+    expect(included.directoryKeyMoves).toBeUndefined();
+    expect([...applyPlacementDirectoryKeyMoves(keys, included.directoryKeyMoves)]).toEqual([
+      'dir:data:meshes/armor'
+    ]);
+  });
+
   it('renames every file in a subtree as one edit', () => {
     const result = renamePlacementDirectory(
       preview(),
@@ -450,6 +531,24 @@ describe('install placement editor state', () => {
     expect(markup.match(/role="treeitem"/g)?.length ?? 0).toBeLessThanOrEqual(31);
     expect(markup).not.toContain('Apply');
     expect(markup).not.toContain('.zip');
+  });
+
+  it('scrolls an edited row into view, keeps collapsed branches, and preselects a folder name', () => {
+    const source = readFileSync(
+      new URL('../src/renderer/features/install/InstallPlacementEditor.tsx', import.meta.url),
+      'utf8'
+    );
+
+    // The row an edit produces exists only after the rebuilt tree, so the scroll runs off `rows`.
+    expect(source).toContain('revealRequestedRef.current = nextFocusKey;');
+    expect(source).toMatch(
+      /const requested = revealRequestedRef\.current;[\s\S]*?scrollRowIntoView\(index\);[\s\S]*?\}, \[rows\]\);/
+    );
+    expect(source).toContain('applyPlacementDirectoryKeyMoves(current, result.directoryKeyMoves)');
+    // A new folder is created inside its parent branch, which has to be open to reach the row.
+    expect(source).toContain("toggleCollapsed(destinationKey, false);");
+    expect(source).toContain('element.select();');
+    expect(source).not.toContain('autoFocus');
   });
 
   it('renders inclusion checkboxes, the game name, and explicit drag feedback styles', () => {

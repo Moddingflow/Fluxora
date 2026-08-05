@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   emptyProjectDraft,
@@ -10,15 +10,54 @@ import {
 } from '../../project-catalog-state';
 import { previewProjectDirectory } from '../../services/project-catalog-service';
 import { createRendererOperationId } from '../../services/renderer-operation-service';
-import type { FluxoraGameTemplate } from '../../../shared/fluxora-api';
+import type {
+  FluxoraGameInstallDiscoverySnapshot,
+  FluxoraGameTemplate
+} from '../../../shared/fluxora-api';
 import { CREATE_BUILD_STEPS } from './CreateBuildWizard';
 import { useLocalization } from '../../../localization/react';
 
 interface UseCreateBuildWizardOptions {
   bridgeReady: boolean;
   defaultInstallRootDirectory: string;
+  gameInstalls: FluxoraGameInstallDiscoverySnapshot;
   templates: FluxoraGameTemplate[];
 }
+
+export type GamePathOrigin = 'empty' | 'auto' | 'manual';
+export interface GamePathSelection {
+  path: string;
+  origin: GamePathOrigin;
+}
+
+export const discoveredGamePathSelection = (
+  templateId: string,
+  templates: FluxoraGameTemplate[],
+  gameInstalls: FluxoraGameInstallDiscoverySnapshot
+): GamePathSelection => {
+  const template = templates.find((candidate) => candidate.id === templateId);
+  const discovered = gameInstalls.installs.find((candidate) => candidate.templateId === templateId);
+  if (
+    !template ||
+    discovered?.resolution !== 'found' ||
+    !discovered.primaryExecutablePath ||
+    !isOfficialGameExecutablePath(template, discovered.primaryExecutablePath)
+  ) {
+    return { path: '', origin: 'empty' };
+  }
+
+  return { path: discovered.primaryExecutablePath, origin: 'auto' };
+};
+
+export const refreshDiscoveredGamePathSelection = (
+  current: GamePathSelection,
+  templateId: string,
+  templates: FluxoraGameTemplate[],
+  gameInstalls: FluxoraGameInstallDiscoverySnapshot
+): GamePathSelection =>
+  current.origin === 'manual'
+    ? current
+    : discoveredGamePathSelection(templateId, templates, gameInstalls);
 
 const wizardErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error && error.message.trim()
@@ -28,6 +67,7 @@ const wizardErrorMessage = (error: unknown, fallback: string): string =>
 export function useCreateBuildWizard({
   bridgeReady,
   defaultInstallRootDirectory,
+  gameInstalls,
   templates
 }: UseCreateBuildWizardOptions) {
   const { locale, t } = useLocalization();
@@ -35,6 +75,8 @@ export function useCreateBuildWizard({
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [furthestStepIndex, setFurthestStepIndex] = useState(0);
   const [draft, setDraft] = useState<ProjectDraft>(() => emptyProjectDraft());
+  const [gamePathOrigin, setGamePathOriginState] = useState<GamePathOrigin>('empty');
+  const gamePathOriginRef = useRef<GamePathOrigin>('empty');
   const [error, setError] = useState<string | null>(null);
   const [previewDirectory, setPreviewDirectory] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -43,15 +85,21 @@ export function useCreateBuildWizard({
     [draft.templateId, templates]
   );
 
+  const setGamePathOrigin = useCallback((origin: GamePathOrigin) => {
+    gamePathOriginRef.current = origin;
+    setGamePathOriginState(origin);
+  }, []);
+
   const open = useCallback(() => {
     setDraft(emptyProjectDraft(defaultInstallRootDirectory));
+    setGamePathOrigin('empty');
     setActiveStepIndex(0);
     setFurthestStepIndex(0);
     setError(null);
     setPreviewDirectory('');
     setPreviewBusy(false);
     setIsOpen(true);
-  }, [defaultInstallRootDirectory]);
+  }, [defaultInstallRootDirectory, setGamePathOrigin]);
 
   const close = useCallback(() => {
     setError(null);
@@ -64,13 +112,16 @@ export function useCreateBuildWizard({
   }, []);
 
   const selectTemplate = useCallback((templateId: string) => {
-    setDraft((current) => ({
-      ...current,
-      gamePath: current.templateId === templateId ? current.gamePath : '',
-      templateId
-    }));
+    if (draft.templateId === templateId) {
+      setError(null);
+      return;
+    }
+
+    const selection = discoveredGamePathSelection(templateId, templates, gameInstalls);
+    setDraft((current) => ({ ...current, gamePath: selection.path, templateId }));
+    setGamePathOrigin(selection.origin);
     setError(null);
-  }, []);
+  }, [draft.templateId, gameInstalls, setGamePathOrigin, templates]);
 
   const changeInstallRoot = useCallback((value: string) => {
     setDraft((current) => ({ ...current, installRootDirectory: value }));
@@ -99,13 +150,36 @@ export function useCreateBuildWizard({
       }
 
       setDraft((current) => ({ ...current, gamePath: result.path ?? current.gamePath }));
+      setGamePathOrigin('manual');
       setError(null);
       return true;
     } catch (pickerError) {
       setError(wizardErrorMessage(pickerError, t('wizard.pickerUnavailable')));
       return false;
     }
-  }, [draft.gamePath, selectedTemplate, t]);
+  }, [draft.gamePath, selectedTemplate, setGamePathOrigin, t]);
+
+  useEffect(() => {
+    if (!isOpen || !draft.templateId || gamePathOriginRef.current === 'manual') {
+      return;
+    }
+
+    const selection = refreshDiscoveredGamePathSelection(
+      { path: draft.gamePath, origin: gamePathOriginRef.current },
+      draft.templateId,
+      templates,
+      gameInstalls
+    );
+    setDraft((current) => {
+      if (current.templateId !== draft.templateId || gamePathOriginRef.current === 'manual') {
+        return current;
+      }
+      return current.gamePath === selection.path
+        ? current
+        : { ...current, gamePath: selection.path };
+    });
+    setGamePathOrigin(selection.origin);
+  }, [draft.templateId, gameInstalls, isOpen, setGamePathOrigin, templates]);
 
   const browseInstallRoot = useCallback(async () => {
     try {
@@ -234,6 +308,7 @@ export function useCreateBuildWizard({
     draft,
     error,
     furthestStepIndex,
+    gamePathOrigin,
     isOpen,
     next,
     open,

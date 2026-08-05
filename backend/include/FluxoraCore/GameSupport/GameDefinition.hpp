@@ -52,6 +52,33 @@ namespace fluxora
         std::vector<std::wstring> domains;
     };
 
+    enum class GameInstallDiscoveryProviderId
+    {
+        Fluxora,
+        Steam,
+        Gog,
+        Epic,
+        Windows
+    };
+
+    [[nodiscard]] std::optional<GameInstallDiscoveryProviderId>
+        parseGameInstallDiscoveryProviderId(std::wstring_view value) noexcept;
+    [[nodiscard]] std::wstring_view gameInstallDiscoveryProviderIdName(
+        GameInstallDiscoveryProviderId value) noexcept;
+    [[nodiscard]] bool isCanonicalGameInstallProductId(
+        std::wstring_view value) noexcept;
+
+    struct GameInstallDiscoveryProviderDefinition
+    {
+        GameInstallDiscoveryProviderId id{GameInstallDiscoveryProviderId::Fluxora};
+        std::vector<std::wstring> productIds;
+    };
+
+    struct GameInstallDiscoveryRules
+    {
+        std::vector<GameInstallDiscoveryProviderDefinition> providers;
+    };
+
     struct GamePluginRules
     {
         std::vector<std::wstring> profileFiles;
@@ -103,6 +130,12 @@ namespace fluxora
         std::vector<std::wstring> profileIniFileNames;
         std::vector<std::wstring> saveDirectoryNames;
         std::vector<std::wstring> materializedLaunchCacheDirectories;
+        // Profile state files the manager owns end to end (plugins.txt,
+        // loadorder.txt, ...). They are compiled from the plugin rules rather
+        // than authored separately, and the VFS keeps them out of the writable
+        // overwrite overlay so the profile copy stays the single source of
+        // truth for both Fluxora and the game.
+        std::vector<std::wstring> profileStateFileNames;
     };
 
     struct GameScriptExtenderRules
@@ -137,6 +170,7 @@ namespace fluxora
         std::vector<std::wstring> domains;
         ExternalProviderGameSlugMap externalProviderGameSlugs;
         std::vector<std::wstring> installFolderAliases;
+        GameInstallDiscoveryRules installDiscovery;
         std::wstring defaultProfileName;
         std::wstring dataFolder;
         std::vector<std::wstring> requiredFiles;

@@ -641,23 +641,104 @@ namespace fluxora
 #endif
         }
 
+        // Profile state files the manager owns end to end. Keeping them out of
+        // the copy-on-write overlay is what stops a launch from forking, say,
+        // plugins.txt: once a fork exists it outranks the profile copy on every
+        // later launch, so the game keeps loading a stale plugin list while the
+        // Fluxora list shows the user's current choices.
+        std::vector<std::wstring> profileOwnedFileNames(const GameVfsRules& rules)
+        {
+            std::vector<std::wstring> ownedFiles;
+            for (const std::wstring& stateFile : rules.profileStateFileNames)
+            {
+                const std::filesystem::path relative(stateFile);
+                if (stateFile.empty() || relative.is_absolute())
+                {
+                    continue;
+                }
+
+                const std::wstring normalized = relative.lexically_normal().wstring();
+                if (normalized.empty() ||
+                    normalized.starts_with(L"..") ||
+                    std::find(ownedFiles.begin(), ownedFiles.end(), normalized) != ownedFiles.end())
+                {
+                    continue;
+                }
+
+                ownedFiles.push_back(normalized);
+            }
+
+            return ownedFiles;
+        }
+
+        // Repairs profiles that already carry a fork from a launch made before
+        // owned files existed. The profile copy is authoritative, so the fork is
+        // moved aside (never deleted outright) and the game stops seeing it. The
+        // quarantine sits outside the overwrite tree so it is never projected
+        // into the mount target.
+        void quarantineSupersededOwnedFiles(
+            Logger& logger,
+            const std::filesystem::path& overwrite,
+            const std::filesystem::path& quarantine,
+            const std::vector<std::wstring>& ownedFiles)
+        {
+            if (overwrite.empty() || quarantine.empty() || ownedFiles.empty())
+            {
+                return;
+            }
+
+            for (const std::wstring& ownedFile : ownedFiles)
+            {
+                const std::filesystem::path fork = overwrite / std::filesystem::path(ownedFile);
+                std::error_code status;
+                if (!std::filesystem::is_regular_file(fork, status))
+                {
+                    continue;
+                }
+
+                const std::filesystem::path archived = quarantine / std::filesystem::path(ownedFile);
+                std::error_code ignored;
+                std::filesystem::create_directories(archived.parent_path(), ignored);
+                std::filesystem::remove(archived, ignored);
+
+                std::error_code archiveError;
+                std::filesystem::rename(fork, archived, archiveError);
+                if (archiveError)
+                {
+                    // The fork must not survive even when it cannot be kept:
+                    // leaving it in place would keep shadowing the profile copy.
+                    std::filesystem::remove(fork, ignored);
+                }
+
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "VfsDiagnostics",
+                    "vfsOperation supersededProfileStateFile file=\"" + toUtf8(ownedFile) +
+                        "\", archived=" + std::to_string(archiveError ? 0 : 1) +
+                        ". The profile copy is authoritative again.");
+            }
+        }
+
         void appendProfileSettingsMount(
             std::vector<VfsMountDescriptor>& mounts,
             const std::filesystem::path& target,
             const std::filesystem::path& overwrite,
-            const std::filesystem::path& profileDirectory)
+            const std::filesystem::path& profileDirectory,
+            std::vector<std::wstring> ownedFiles)
         {
             if (target.empty())
             {
                 return;
             }
 
-            mounts.push_back(VfsMountDescriptor{
+            VfsMountDescriptor mount{
                 target,
                 overwrite,
                 {profileDirectory},
                 {}
-            });
+            };
+            mount.ownedFiles = std::move(ownedFiles);
+            mounts.push_back(std::move(mount));
         }
 
         void appendProfileSavesMount(
@@ -693,6 +774,7 @@ namespace fluxora
         }
 
         void appendGameProfileSettingsMounts(
+            Logger& logger,
             std::vector<VfsMountDescriptor>& mounts,
             const GameVfsRules& rules,
             const ContentLayoutSupportRules& contentRules,
@@ -701,6 +783,7 @@ namespace fluxora
             const std::filesystem::path& profileDirectory,
             const std::filesystem::path& profileOverwriteRoot,
             const std::filesystem::path& whiteoutRoot,
+            const std::filesystem::path& supersededProfileStateRoot,
             std::wstring_view profileName)
         {
             const bool hasProfileEntries = directoryHasEntries(profileDirectory);
@@ -716,19 +799,29 @@ namespace fluxora
 
             const std::filesystem::path profileOverwrite =
                 profileOverwriteRoot / safePathSegment(std::wstring(profileName), L"Default");
+            const std::vector<std::wstring> ownedFiles = profileOwnedFileNames(rules);
             for (const GameVfsMountRule& rule : contentRules.mountRules)
             {
                 const std::filesystem::path target = resolveVfsMountTarget(rule, gameDirectory);
                 if (rule.sourceKind == GameVfsMountSourceKind::ProfileSettings && hasProfileEntries)
                 {
+                    const std::filesystem::path mountOverwrite = rule.overwritePath.empty()
+                        ? profileOverwrite
+                        : profileOverwrite / rule.overwritePath;
+                    quarantineSupersededOwnedFiles(
+                        logger,
+                        mountOverwrite,
+                        supersededProfileStateRoot /
+                            safePathSegment(std::wstring(profileName), L"Default") /
+                            rule.id,
+                        ownedFiles);
                     const std::size_t originalSize = mounts.size();
                     appendProfileSettingsMount(
                         mounts,
                         target,
-                        rule.overwritePath.empty()
-                            ? profileOverwrite
-                            : profileOverwrite / rule.overwritePath,
-                        profileDirectory);
+                        mountOverwrite,
+                        profileDirectory,
+                        ownedFiles);
                     if (mounts.size() != originalSize)
                     {
                         mounts.back().whiteoutRoot = whiteoutRoot / rule.id;
@@ -772,6 +865,7 @@ namespace fluxora
             writePathArray(writer, mount.mods);
             writer.stringArray(vfs::protocol::fields::excludedRootNames, mount.excludedRootNames);
             writer.field(vfs::protocol::fields::whiteoutRoot, mount.whiteoutRoot.wstring());
+            writer.stringArray(vfs::protocol::fields::ownedFiles, mount.ownedFiles);
             writer.endObject();
         }
 
@@ -1126,6 +1220,7 @@ namespace fluxora
         if (rules != nullptr)
         {
             appendGameProfileSettingsMounts(
+                logger_,
                 mounts,
                 *rules,
                 *contentRules,
@@ -1134,6 +1229,7 @@ namespace fluxora
                 profileDirectory,
                 vfsDirectory / L"profile-overwrite",
                 vfsDirectory / L"whiteouts",
+                vfsDirectory / L"superseded-profile-state",
                 profile);
         }
         if (bodySlidePreparation.has_value())

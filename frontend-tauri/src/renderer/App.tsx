@@ -107,7 +107,10 @@ import {
 } from './features/mods/ModUpdateCheckSplash';
 import { ModConflictScrollbar } from './features/mods/ModConflictScrollbar';
 import { AiChatPanel } from './features/ai/AiChatPanel';
-import { openModdingFlowRegistration } from './features/ai/ai-account-access';
+import {
+  openModdingFlowBilling,
+  openModdingFlowRegistration
+} from './features/ai/ai-account-access';
 import { resolveAiManagedFileLocation } from './features/ai/ai-managed-file-location';
 import {
   aiMicrophonePermissionChangedEvent,
@@ -140,6 +143,10 @@ import {
   AI_CONTEXT_SOURCE_URL_PREFIX,
   safeAiSourceUrl
 } from './features/ai/ai-chat-security';
+import {
+  aiQuotaSignalSourceFromImportMeta,
+  createAiQuotaRefreshGate
+} from './features/ai/ai-quota-signal';
 import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
@@ -454,6 +461,7 @@ import type {
   FluxoraFluxPackSourceInstallPlan,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
+  FluxoraGameInstallDiscoverySnapshot,
   FluxoraInstalledMod,
   FluxoraInstalledModSummary,
   FluxoraInstallOperation,
@@ -568,6 +576,9 @@ const buildScopedAiRoutes = new Set<RouteId>([
   'profiles'
 ]);
 const aiRollbackCheckpointResetMarker = 'fluxora.ai.rollback-checkpoints.v1';
+// Null when the build has no ModdingFlow Supabase configuration; the panel then
+// falls back to refreshing on open, on window focus, and after every run.
+const aiQuotaSignalSource = aiQuotaSignalSourceFromImportMeta();
 
 type CatalogState = LibraryCatalogState;
 
@@ -1412,6 +1423,10 @@ export const App = () => {
     initialBuildSettingsBootstrap?.project ? [initialBuildSettingsBootstrap.project] : []
   );
   const [templates, setTemplates] = useState<FluxoraGameTemplate[]>([]);
+  const [gameInstalls, setGameInstalls] = useState<FluxoraGameInstallDiscoverySnapshot>({
+    installs: [],
+    operationId: ''
+  });
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() =>
     isBuildSettingsWindow ? buildSettingsProjectId : null
   );
@@ -1430,6 +1445,14 @@ export const App = () => {
     () => window.localStorage.getItem(aiRollbackCheckpointResetMarker) === 'ready'
   );
   const [aiHostStatus, setAiHostStatus] = useState<FluxoraAiHostStatus | null>(null);
+  const refreshAiQuotaStatus = useCallback(() => {
+    const operationId = createRendererOperationId('ai_quota_refresh');
+    void window.fluxora.ai.getStatus({ operationId }).then(setAiHostStatus, () => undefined);
+  }, []);
+  const requestAiQuotaRefresh = useMemo(
+    () => createAiQuotaRefreshGate(refreshAiQuotaStatus),
+    [refreshAiQuotaStatus]
+  );
   const [aiChatSettings] = useState<AiChatSettings>(() =>
     loadAiChatSettings(window.localStorage)
   );
@@ -1580,6 +1603,7 @@ export const App = () => {
   const createWizard = useCreateBuildWizard({
     bridgeReady: Boolean(bridgeStatus?.ready),
     defaultInstallRootDirectory: catalog.defaultInstallRootDirectory,
+    gameInstalls,
     templates
   });
   const isCreateOpen = createWizard.isOpen;
@@ -3218,7 +3242,11 @@ export const App = () => {
     setMessage(null);
 
     try {
-      const { catalog: nextCatalog, templates: nextTemplates } = await loadProjectCatalog();
+      const {
+        catalog: nextCatalog,
+        templates: nextTemplates,
+        gameInstalls: nextGameInstalls
+      } = await loadProjectCatalog();
       const mergedCatalog = options.mergeProject
         ? mergeProjectIntoCatalog(nextCatalog, options.mergeProject)
         : nextCatalog;
@@ -3227,6 +3255,7 @@ export const App = () => {
       setCatalog(mergedCatalog);
       setProjects(nextProjects);
       setTemplates(nextTemplates);
+      setGameInstalls(nextGameInstalls);
       setCatalogState('ready');
       setSelectedProjectId((current) => {
         const preferred = options.preferredProjectId ?? current;
@@ -9069,6 +9098,8 @@ export const App = () => {
             available: false,
             eligibility: false,
             reason: 'ai.host.unavailable',
+            tier: 'unknown',
+            signalTopic: null,
             periodStart: null,
             resetAt: null,
             rollover: false,
@@ -9097,6 +9128,36 @@ export const App = () => {
       isCurrent = false;
     };
   }, [aiChat.isOpen, isSecondaryWindow, isSettingsWindow]);
+
+  // ModdingFlow billing decides the managed AI allowance. The server-side
+  // topic pushes a content-free change signal, so subscribing, renewing,
+  // lapsing, or refunding is reflected in the open panel without waiting for
+  // the next run. Window focus covers the case where the change happened while
+  // Fluxora was in the background or the socket was down.
+  useEffect(() => {
+    const topic = aiHostStatus?.quota.signalTopic;
+    if (!aiChat.isOpen || (isSecondaryWindow && !isSettingsWindow) || !topic) {
+      return;
+    }
+
+    const source = aiQuotaSignalSource;
+    const unsubscribe = source
+      ? source.subscribe(topic, { onChanged: () => requestAiQuotaRefresh() })
+      : () => undefined;
+    const handleFocus = () => requestAiQuotaRefresh();
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      unsubscribe();
+    };
+  }, [
+    aiChat.isOpen,
+    aiHostStatus?.quota.signalTopic,
+    isSecondaryWindow,
+    isSettingsWindow,
+    requestAiQuotaRefresh
+  ]);
 
   useEffect(
     () => () => {
@@ -10393,6 +10454,9 @@ export const App = () => {
   };
 
   const startCreate = () => {
+    if (catalogState !== 'ready') {
+      return;
+    }
     createWizard.open();
     changeRoute('home');
     setMessage(null);
@@ -12466,6 +12530,7 @@ export const App = () => {
         }
         isNewBuildDisabled={
           !bridgeStatus?.ready ||
+          catalogState !== 'ready' ||
           isTransferRunning ||
           isOpeningBuildLocked ||
           openingBuildSplash !== null
@@ -16013,11 +16078,6 @@ export const App = () => {
 
   const aiChatProviderDiagnostic = aiProviderDiagnostic(aiHostStatus, bridgeStatus?.language);
 
-  const refreshAiQuotaStatus = () => {
-    const operationId = createRendererOperationId('ai_quota_refresh');
-    void window.fluxora.ai.getStatus({ operationId }).then(setAiHostStatus, () => undefined);
-  };
-
   const finishAiRunAsStopped = (run: Pick<AiRun, 'id' | 'operationId'>) => {
     const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
     dispatchAiChat({
@@ -16654,6 +16714,10 @@ export const App = () => {
             )}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
+            onOpenBilling={() => void openModdingFlowBilling(
+              window.fluxora.links.openExternal,
+              appLocale
+            ).catch(() => undefined)}
             onOpenSource={openAiSource}
             onOpenFileChange={openAiFileChange}
             onRevealFileChange={revealAiFileChange}

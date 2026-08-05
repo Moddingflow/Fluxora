@@ -1,6 +1,7 @@
 import type { ProjectDraft } from '../project-catalog-state';
 import type {
   DeleteFluxoraProjectResult,
+  FluxoraGameInstallDiscoverySnapshot,
   FluxoraGameTemplate,
   FluxoraProject,
   FluxoraProjectCatalog,
@@ -12,6 +13,7 @@ import { createRendererOperationId } from './renderer-operation-service';
 export interface ProjectCatalogLoadResult {
   catalog: FluxoraProjectCatalog;
   templates: FluxoraGameTemplate[];
+  gameInstalls: FluxoraGameInstallDiscoverySnapshot;
   operationId: string;
 }
 
@@ -98,12 +100,26 @@ export const mergeProjectIntoCatalog = (
 
 export const loadProjectCatalog = async (): Promise<ProjectCatalogLoadResult> => {
   const operationId = createRendererOperationId('projects_list');
-  const [catalog, templates] = await Promise.all([
+  const [catalog, templates, discoveredInstalls] = await Promise.all([
     window.fluxora.projects.list({ operationId }),
-    window.fluxora.templates.list({ operationId })
+    window.fluxora.templates.list({ operationId }),
+    window.fluxora.gameInstalls.discover({ operationId }).then(
+      (snapshot) => ({ ok: true as const, snapshot }),
+      () => ({ ok: false as const })
+    )
   ]);
 
-  return { catalog, templates, operationId };
+  const gameInstalls: FluxoraGameInstallDiscoverySnapshot = discoveredInstalls.ok
+    ? discoveredInstalls.snapshot
+    : {
+        installs: templates.map((template) => ({
+          templateId: template.id,
+          resolution: 'notFound' as const
+        })),
+        operationId
+      };
+
+  return { catalog, templates, gameInstalls, operationId };
 };
 
 export const previewProjectDirectory = (

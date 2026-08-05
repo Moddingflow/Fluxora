@@ -500,4 +500,133 @@ namespace fluxora::tests
         EXPECT_EQ(first->front().name, L"MixedCase.DDS");
         EXPECT_EQ(first->front().nameLower, L"mixedcase.dds");
     }
+
+    TEST(VfsTreeTests, OwnedProfileStateFileOutranksAStaleOverwriteFork)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path target = temp.path() / L"AppData" / L"Game";
+        const std::filesystem::path profile = temp.path() / L"profiles" / L"Default";
+        const std::filesystem::path overwrite = temp.path() / L"profile-overwrite";
+
+        writeTextFile(profile / L"plugins.txt", "*Current.esp\n");
+        writeTextFile(profile / L"settings.ini", "profile");
+        // Written by the game during an earlier session, before the plugin was
+        // re-enabled in Fluxora.
+        writeTextFile(overwrite / L"plugins.txt", "*Stale.esp\n");
+        writeTextFile(overwrite / L"settings.ini", "overwrite");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            target.wstring(),
+            overwrite.wstring(),
+            {profile.wstring()},
+            {},
+            {},
+            {L"plugins.txt"}
+        });
+
+        const vfs::VfsTree::PathInfo plugins = tree.classify(L"plugins.txt");
+        ASSERT_EQ(plugins.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(plugins.winner, profile / L"plugins.txt");
+
+        // Only the declared files bypass copy-on-write; everything else keeps
+        // the normal overwrite-wins precedence.
+        const vfs::VfsTree::PathInfo settings = tree.classify(L"settings.ini");
+        ASSERT_EQ(settings.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(settings.winner, overwrite / L"settings.ini");
+
+        EXPECT_TRUE(tree.isOwnedFile(L"Plugins.TXT"));
+        EXPECT_FALSE(tree.isOwnedFile(L"settings.ini"));
+        expectSamePath(tree.ownedFilePath(L"plugins.txt"), profile / L"plugins.txt");
+    }
+
+    TEST(VfsTreeTests, OwnedProfileStateFileEnumeratesFromTheProfileNotTheFork)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path target = temp.path() / L"AppData" / L"Game";
+        const std::filesystem::path profile = temp.path() / L"profiles" / L"Default";
+        const std::filesystem::path overwrite = temp.path() / L"profile-overwrite";
+
+        writeTextFile(profile / L"plugins.txt", "*Current.esp\n");
+        writeTextFile(overwrite / L"plugins.txt", "*Stale.esp\n");
+        writeTextFile(overwrite / L"crash.log", "log");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            target.wstring(),
+            overwrite.wstring(),
+            {profile.wstring()},
+            {},
+            {},
+            {L"plugins.txt"}
+        });
+
+        const auto root = tree.listing(L"");
+        ASSERT_TRUE(containsChild(*root, L"plugins.txt"));
+        EXPECT_TRUE(containsChild(*root, L"crash.log"));
+
+        const auto entry = std::find_if(
+            root->begin(),
+            root->end(),
+            [](const vfs::DirChild& child)
+            {
+                return child.nameLower == L"plugins.txt";
+            });
+        ASSERT_NE(entry, root->end());
+        expectSamePath(entry->realPath, profile / L"plugins.txt");
+    }
+
+    TEST(VfsTreeTests, OwnedProfileStateFileIgnoresAWhiteoutFromAnEarlierSession)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path target = temp.path() / L"AppData" / L"Game";
+        const std::filesystem::path profile = temp.path() / L"profiles" / L"Default";
+        const std::filesystem::path overwrite = temp.path() / L"profile-overwrite";
+        const std::filesystem::path whiteouts = temp.path() / L"whiteouts";
+
+        writeTextFile(profile / L"plugins.txt", "*Current.esp\n");
+        writeTextFile(whiteouts / L"plugins.txt", "");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            target.wstring(),
+            overwrite.wstring(),
+            {profile.wstring()},
+            {},
+            whiteouts.wstring(),
+            {L"plugins.txt"}
+        });
+
+        const vfs::VfsTree::PathInfo plugins = tree.classify(L"plugins.txt");
+        ASSERT_EQ(plugins.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(plugins.winner, profile / L"plugins.txt");
+    }
+
+    TEST(VfsTreeTests, OwnedProfileStateFileResolvesToTheProfileBeforeItExists)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path target = temp.path() / L"AppData" / L"Game";
+        const std::filesystem::path profile = temp.path() / L"profiles" / L"Default";
+        const std::filesystem::path overwrite = temp.path() / L"profile-overwrite";
+
+        writeTextFile(profile / L"plugins.txt", "*Current.esp\n");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            target.wstring(),
+            overwrite.wstring(),
+            {profile.wstring()},
+            {},
+            {},
+            {L"plugins.txt", L"loadorder.txt"}
+        });
+
+        EXPECT_EQ(tree.classify(L"loadorder.txt").kind, vfs::VfsTree::PathInfo::Kind::Unknown);
+        // A first write still has to land in the profile, never in overwrite.
+        expectSamePath(tree.ownedFilePath(L"loadorder.txt"), profile / L"loadorder.txt");
+    }
 }

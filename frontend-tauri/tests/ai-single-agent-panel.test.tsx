@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import type { FluxoraAiQuotaSnapshot } from '../src/shared/fluxora-api';
 import { AiChatPanel } from '../src/renderer/features/ai/AiChatPanel';
 import { createAiMessage, createAiSession, initialAiChatState } from '../src/renderer/features/ai/ai-chat-state';
 import { renderLocalized } from './localization-test-utils';
@@ -16,7 +17,6 @@ describe('single-agent panel', () => {
 
     expect(styles).toContain('grid-template-areas:');
     expect(styles).toContain('"tabs"');
-    expect(styles).toContain('"context"');
     expect(styles).toContain('"quota"');
     expect(styles).toContain('"diagnostic"');
     expect(styles).toContain('"messages"');
@@ -27,6 +27,124 @@ describe('single-agent panel', () => {
     expect(styles).toContain('padding: 12px 16px 16px;');
     expect(styles).toContain('border-top: 0;');
     expect(styles).not.toContain('.ai-chat-panel__resize');
+  });
+
+  it('labels the resolved plan, shows consumed share, and offers an upgrade only on the free tier', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    const chat = session.chats[0];
+    const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: [], session };
+    const noop = () => undefined;
+    const common = {
+      hostReady: true,
+      state,
+      language: 'en-US',
+      onCancel: noop,
+      onClose: noop,
+      onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
+      onCreateChat: noop,
+      onDraftChange: noop,
+      onOpenBilling: noop,
+      onOpenSource: noop,
+      onOpenFileChange: noop,
+      onRollbackFileRun: noop,
+      onUndoCapability: noop,
+      onSend: noop,
+      onSelectChat: noop,
+      onToggleCollapse: noop
+    };
+    const freeQuota: FluxoraAiQuotaSnapshot = {
+      schema: 'fluxora.ai.quota.v1',
+      availability: 'available',
+      available: true,
+      eligibility: true,
+      reason: 'ai_quota_ready',
+      tier: 'free',
+      periodStart: '2026-08-01T00:00:00.000Z',
+      resetAt: '2026-09-01T00:00:00.000Z',
+      rollover: false,
+      limit: 1_000_000,
+      used: 200_000,
+      reserved: 0,
+      remaining: 800_000,
+      remainingInputTokenEquivalent: 154_000,
+      search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
+      model: 'gemini-3.1-flash-lite',
+      priceVersion: '2026-07',
+      signalTopic: `fluxora-ai-quota-${'a'.repeat(48)}`
+    };
+
+    const free = renderToStaticMarkup(createElement(AiChatPanel, { ...common, quota: freeQuota }));
+    expect(free).toContain('Free plan');
+    expect(free).toContain('20% used');
+    expect(free).toContain('data-tier="free"');
+    expect(free).toContain('aria-label="Free plan, 20% used"');
+    expect(free).toContain('>Upgrade<');
+    // A zero search allowance is not rendered as an empty "0 / 0" pair.
+    expect(free).not.toContain('Search <strong>');
+
+    const premium = renderToStaticMarkup(createElement(AiChatPanel, {
+      ...common,
+      quota: {
+        ...freeQuota,
+        tier: 'premium',
+        search: { limit: 24, used: 6, reserved: 0, remaining: 18 }
+      }
+    }));
+    expect(premium).toContain('Premium plan');
+    expect(premium).toContain('data-tier="premium"');
+    expect(premium).toContain('Search <strong>18 / 24</strong>');
+    expect(premium).not.toContain('>Upgrade<');
+  });
+
+  it('counts in-flight reserved cost as consumed so the rail never moves backwards', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    const chat = session.chats[0];
+    const state = { ...initialAiChatState, activeChatId: chat.id, chats: [chat], messages: [], session };
+    const noop = () => undefined;
+    const html = renderToStaticMarkup(createElement(AiChatPanel, {
+      hostReady: true,
+      language: 'en-US',
+      state,
+      quota: {
+        schema: 'fluxora.ai.quota.v1',
+        availability: 'available',
+        available: true,
+        eligibility: true,
+        reason: 'ai_quota_ready',
+        tier: 'premium',
+        periodStart: '2026-08-01T00:00:00.000Z',
+        resetAt: '2026-09-01T00:00:00.000Z',
+        rollover: false,
+        limit: 1_000_000,
+        used: 400_000,
+        reserved: 500_000,
+        remaining: 100_000,
+        remainingInputTokenEquivalent: 19_000,
+        search: { limit: 24, used: 0, reserved: 0, remaining: 24 },
+        model: 'gemini-3.1-flash-lite',
+        priceVersion: '2026-07',
+        signalTopic: null
+      },
+      onCancel: noop,
+      onClose: noop,
+      onCloseChat: noop,
+      onConnectAccount: noop,
+      onCreateAccount: noop,
+      onCreateChat: noop,
+      onDraftChange: noop,
+      onOpenSource: noop,
+      onOpenFileChange: noop,
+      onRollbackFileRun: noop,
+      onUndoCapability: noop,
+      onSend: noop,
+      onSelectChat: noop,
+      onToggleCollapse: noop
+    }));
+
+    expect(html).toContain('90% used');
+    expect(html).toContain('data-level="critical"');
   });
 
   it('shows agent limits as an accessible usage rail and clearly separates BYOK', () => {
@@ -61,6 +179,7 @@ describe('single-agent panel', () => {
         available: true,
         eligibility: true,
         reason: 'eligible',
+        tier: 'premium',
         periodStart: '2026-07-01T00:00:00.000Z',
         resetAt: '2026-08-01T00:00:00.000Z',
         rollover: false,
@@ -71,14 +190,15 @@ describe('single-agent panel', () => {
         remainingInputTokenEquivalent: 100_000,
         search: { limit: 24, used: 6, reserved: 0, remaining: 18 },
         model: 'gemini-3.1-flash-lite',
-        priceVersion: '2026-07'
+        priceVersion: '2026-07',
+        signalTopic: null
       }
     }));
-    expect(managed).toContain('Agent limit');
-    expect(managed).toContain('75% remaining');
+    expect(managed).toContain('Premium plan');
+    expect(managed).toContain('25% used');
     expect(managed).toContain('role="progressbar"');
-    expect(managed).toContain('aria-label="Agent limit, 75% remaining"');
-    expect(managed).toContain('aria-valuenow="75"');
+    expect(managed).toContain('aria-label="Premium plan, 25% used"');
+    expect(managed).toContain('aria-valuenow="25"');
     expect(managed).toContain('Search <strong>18 / 24</strong>');
     expect(managed).toContain('dateTime="2026-08-01T00:00:00.000Z"');
 
@@ -91,6 +211,7 @@ describe('single-agent panel', () => {
         available: true,
         eligibility: true,
         reason: 'byok_user_paid',
+        tier: 'unknown',
         periodStart: null,
         resetAt: null,
         rollover: false,
@@ -101,7 +222,8 @@ describe('single-agent panel', () => {
         remainingInputTokenEquivalent: 0,
         search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
         model: 'gemini-3.1-flash-lite',
-        priceVersion: null
+        priceVersion: null,
+        signalTopic: null
       }
     }));
     expect(byok).toContain('Eigener Schlüssel');
@@ -122,6 +244,7 @@ describe('single-agent panel', () => {
         available: false,
         eligibility: false,
         reason: 'ai_oauth_invalid',
+        tier: 'unknown',
         periodStart: null,
         resetAt: null,
         rollover: false,
@@ -132,7 +255,8 @@ describe('single-agent panel', () => {
         remainingInputTokenEquivalent: 0,
         search: { limit: 0, used: 0, reserved: 0, remaining: 0 },
         model: 'gemini-3.1-flash-lite',
-        priceVersion: null
+        priceVersion: null,
+        signalTopic: null
       },
       state,
       onCancel: noop,
@@ -242,6 +366,12 @@ describe('single-agent panel', () => {
       onToggleCollapse: noop
     }), 'ru-RU');
 
+    // The context meter is one ring in the composer toolbar; the numbers stay
+    // in its accessible label instead of taking a row of their own.
+    expect(html).toMatch(/class="ai-context-usage"[^>]*data-level="normal"/);
+    expect(html).toContain('ai-context-usage__fill');
+    expect(html).toMatch(/ai-context-usage[\s\S]*aria-label="Отправить сообщение"/);
+    expect(html).not.toMatch(/>Использовано контекста/);
     expect(html).toContain('Использовано контекста:');
     expect(html).toContain('1 048 576');
     expect(html).toContain('Google result');

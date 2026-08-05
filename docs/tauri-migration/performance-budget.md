@@ -1,6 +1,6 @@
 # Fluxora Tauri performance budget
 
-Дата обновления: 2026-07-24
+Дата обновления: 2026-08-04
 
 Статус: Phase 13 budget and automated smoke gates are in place. After Phase 17, WPF baseline capture is historical/superseded; ongoing acceptance uses Tauri screenshots, performance budgets and release smoke evidence.
 
@@ -13,6 +13,7 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Scenario | Budget | Gate |
 | --- | --- | --- |
 | Startup shell visible | Home heading and bridge/runtime state visible after app launch | Playwright startup smoke |
+| Game install discovery | metadata-only Windows discovery `<= 150 ms` cold and `<= 5 ms` warm on a local SSD, including a large Steam/Epic manifest set; an unavailable metadata source must not block the UI | focused C++ provider/cache/performance GTest, shared-bootstrap Vitest and Create Build Playwright smoke |
 | External connection startup gate | local provider snapshot published immediately; linked providers restored in parallel within `2.5 s` native / `3 s` shell; only catalog/workspace wait, and non-linked providers perform no network work | C++ provider deadline/parallel tests, coordinator Vitest and Playwright startup/settings smoke |
 | External connection recovery | retryable states use one deduplicated `2/5/15/30/60 s`, then `5 min` schedule; online/focus/visible trigger an immediate retry; `ready`, `notLinked`, `notConfigured` and `reauthRequired` stop timers | fake-timer coordinator Vitest |
 | Renderer Node exposure | `window.process` and `window.require` are unavailable | Playwright startup smoke |
@@ -45,6 +46,7 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 ## Implementation notes
 
 - `frontend-tauri/src/renderer/ui-performance.ts` is the shared renderer helper for virtual windows.
+- Game-install discovery fingerprints each definition version and provider metadata independently, so a changed build config, registry key or store manifest invalidates only that source. Warm calls still revalidate the selected executable and health, while cached scans avoid reparsing unchanged metadata. Windows Epic enumeration reads filename, size and last-write time in one non-recursive Win32 directory pass; no drive scan, Windows Search, network call or renderer filesystem API is allowed.
 - `frontend-tauri/src/renderer/components/virtualization/AdaptiveVirtualList.tsx` owns
   mods/plugins scroll position locally, measures the actual viewport with
   `ResizeObserver`, coalesces updates on `requestAnimationFrame`, and expands
@@ -82,6 +84,7 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 Before closing final parity:
 
 - Startup: measure time from process launch to Home shell visible, local connection snapshot publication, connection restore completion/timeout and catalog readiness separately.
+- Game install discovery: record cold/warm duration with multiple Steam libraries, 500+ Epic manifests and an unavailable library; verify the Create Build entry stays gated until the fail-soft snapshot is ready and no absolute candidate path enters logs.
 - Project open: measure time from selecting a build to workspace route ready.
 - List scroll: test 5k mods, 5k plugins and 5k downloads with smooth wheel/trackpad scrolling.
 - Search: test fast typing against large mods/plugins/downloads lists.

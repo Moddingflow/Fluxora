@@ -24,7 +24,7 @@ namespace fluxora::vfs::protocol
 
     // Current descriptor schema version. Bump when the JSON layout changes in a
     // way the injected DLL must be able to detect.
-    inline constexpr int schemaVersion = 4;
+    inline constexpr int schemaVersion = 5;
 
     // JSON field names of the descriptor document.
     namespace fields
@@ -75,5 +75,13 @@ namespace fluxora::vfs::protocol
         // relative path hides every lower layer until a new overwrite write
         // removes the marker.
         inline constexpr const wchar_t* whiteoutRoot = L"whiteoutRoot";
+
+        // Relative file paths this mount's source owns end to end. Copy-on-write
+        // is disabled for them: reads never look at the overwrite overlay and
+        // writes land straight back in the source file. The manager keeps state
+        // such as the profile plugin list here, so a write by the game or by an
+        // external tool updates the very file Fluxora reads instead of forking a
+        // shadow copy into overwrite that silently outranks it forever after.
+        inline constexpr const wchar_t* ownedFiles = L"ownedFiles";
     }
 }
